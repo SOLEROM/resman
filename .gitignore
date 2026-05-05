@@ -1,0 +1,41 @@
+# ── Reference repos (dev only, cloned for design reference) ──────────────────
+.ref/
+
+# ── Runtime state (generated at runtime, not source) ─────────────────────────
+config/budget.json
+config/tasks.jsonl
+config/task-logs/
+
+# ── Server runtime logs ───────────────────────────────────────────────────────
+control-plane/runtime/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+pip-log.txt
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
