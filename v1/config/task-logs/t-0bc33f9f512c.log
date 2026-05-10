@@ -1,0 +1,4 @@
+$ claude -p /claude-obsidian:wiki --dangerously-skip-permissions
+cwd: /tmp/bootstrap-demo
+
+Unknown command: /claude-obsidian:wiki

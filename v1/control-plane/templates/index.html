@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>resman</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <!-- Apply saved theme before render so the page never flashes the wrong palette. -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("resman-theme");
+        var theme = saved || (window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (_) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+          crossorigin="anonymous"></script>
+  <!-- Markdown rendering for the Wiki tab. Marked is small (~30KB) and
+       has no runtime deps. -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"
+          crossorigin="anonymous"></script>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-brand">
+    <span class="header-icon">⚗</span>
+    <span class="header-title">resman</span>
+    <span class="header-tagline">— Research Vault Manager</span>
+  </div>
+  <nav class="header-tabs" id="header-tabs">
+    <button class="tab" data-tab="wiki">Wiki</button>
+    <button class="tab" data-tab="tasks">Tasks</button>
+    <button class="tab" data-tab="config">Config</button>
+    <button class="tab" data-tab="help">Help</button>
+  </nav>
+  <div class="header-status">
+    <span class="status-dot" id="conn-dot"></span>
+    <span id="conn-label">connecting...</span>
+    <button id="btn-theme" class="theme-toggle"
+            title="Toggle dark / light theme" aria-label="Toggle theme">
+      <span class="icon-moon">☾</span><span class="icon-sun">☀</span>
+    </button>
+  </div>
+</header>
+
+<div class="app">
+  <div class="layout">
+
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span>Vaults</span>
+        <button class="btn btn-xs" id="btn-refresh" title="Refresh vaults">↻</button>
+      </div>
+      <div class="filter-bar">
+        <input id="vault-search" type="text" placeholder="Search vaults..." />
+        <select id="status-filter">
+          <option value="any">any status</option>
+          <option value="session">active session</option>
+          <option value="task">has tasks</option>
+          <option value="error">has error</option>
+        </select>
+      </div>
+      <div id="vault-list" class="vault-list"></div>
+      <div id="discovered-section" class="discovered" hidden>
+        <div class="divider">Unregistered</div>
+        <div id="discovered-list"></div>
+      </div>
+      <div class="sidebar-footer">
+        <button id="btn-new-vault" class="btn btn-sm" style="flex:1">+ New Vault</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section id="tab-terminal" class="tab-panel active">
+        <div class="toolbar vault-toolbar">
+          <span class="vault-context" id="vault-context">No vault selected</span>
+          <div class="spacer"></div>
+          <button id="btn-rename-tab" class="btn btn-sm" title="Rename active tab" aria-label="Rename active tab">✎</button>
+          <button id="btn-shell" class="btn btn-sm">+ Shell</button>
+          <button id="btn-claude" class="btn btn-sm btn-accent">+ Claude</button>
+          <button id="btn-obsidian" class="btn btn-sm">Open Obsidian</button>
+          <span class="ttyd-warning" id="ttyd-warning" hidden>
+            ttyd not installed — terminal sessions disabled
+          </span>
+        </div>
+        <div class="term-tabs" id="term-tabs"></div>
+        <div class="term-frames" id="term-frames"></div>
+      </section>
+
+      <section id="tab-wiki" class="tab-panel">
+        <div class="toolbar wiki-toolbar">
+          <span id="wiki-context" class="vault-context empty">No vault selected</span>
+          <span id="wiki-file" class="muted" style="margin-left:8px;font-size:12px"></span>
+          <div class="spacer"></div>
+          <button class="btn btn-sm" data-wiki-page="wiki/hot.md" title="Load wiki/hot.md">Hot</button>
+          <button class="btn btn-sm" data-wiki-page="wiki/index.md" title="Load wiki/index.md">Index</button>
+          <button class="btn btn-sm" data-wiki-page="wiki/overview.md" title="Load wiki/overview.md">Overview</button>
+          <button id="btn-wiki-refresh" class="btn btn-sm" title="Reload current page">↻</button>
+        </div>
+        <div id="wiki-content" class="wiki-body">
+          <p class="muted">Select a vault to view its wiki.</p>
+        </div>
+      </section>
+
+      <section id="tab-tasks" class="tab-panel">
+        <div id="cron-skip-banner" class="cron-skip-banner" hidden>
+          <span id="cron-skip-text"></span>
+          <button class="btn btn-xs" id="cron-skip-dismiss">Dismiss</button>
+        </div>
+        <div class="toolbar">
+          <select id="task-priority-filter">
+            <option value="">all priorities</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+          </select>
+          <div class="spacer"></div>
+          <button id="btn-task-compact" class="btn btn-sm" title="Compact tasks.jsonl (snapshot terminal-state tasks &gt; 90 days old)">Compact log</button>
+          <button id="btn-new-task" class="btn btn-sm btn-accent">+ New Task</button>
+        </div>
+        <div style="overflow:auto;flex:1">
+          <table class="task-table">
+            <thead>
+              <tr>
+                <th></th><th>state</th><th>operation</th><th>vault</th>
+                <th>priority</th><th>updated</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="task-rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-config" class="tab-panel">
+        <div class="toolbar">
+          <select id="config-file">
+            <option value="system.yaml">system.yaml</option>
+            <option value="schedule.yaml">schedule.yaml</option>
+          </select>
+          <button id="btn-config-save" class="btn btn-sm btn-success">Save</button>
+          <span id="config-status" class="muted"></span>
+        </div>
+        <textarea id="config-editor" spellcheck="false"></textarea>
+      </section>
+
+      <section id="tab-help" class="tab-panel">
+        <div class="help-layout">
+          <aside class="help-tree" id="help-tree">
+            <div class="help-tree-header">
+              <span>Help</span>
+              <button id="btn-help-refresh" class="btn btn-xs" title="Reload tree">↻</button>
+            </div>
+            <div id="help-tree-list"></div>
+          </aside>
+          <div class="help-content wiki-body" id="help-content">
+            <p class="muted">Loading help…</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="status-bar" id="status-bar">
+    <span class="status-dot" id="window-dot"></span>
+    <span id="window-label">Window: loading...</span>
+    <span id="window-time" class="muted"></span>
+    <button id="btn-window-overrun" class="btn btn-sm btn-danger" hidden>End window now</button>
+    <div class="spacer"></div>
+    <div class="dropdown">
+      <button id="btn-sync" class="btn btn-sm">sync ▾</button>
+      <div class="dropdown-menu" id="sync-menu" hidden>
+        <button data-action="start">Start window now</button>
+        <button data-action="end">End window now</button>
+        <button data-action="start_weekly">Start weekly period</button>
+        <button data-action="end_weekly">End weekly period</button>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modal-backdrop" hidden>
+  <div class="modal" id="modal">
+    <header>
+      <h3 id="modal-title"></h3>
+      <button class="close" id="modal-close">×</button>
+    </header>
+    <div id="modal-body"></div>
+    <footer id="modal-footer"></footer>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

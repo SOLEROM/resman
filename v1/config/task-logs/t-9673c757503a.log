@@ -1,0 +1,10 @@
+$ claude -p /claude-obsidian:wiki --dangerously-skip-permissions
+cwd: /tmp/val5
+
+Here's what I found:
+
+- **Obsidian**: Installed at `/data/sysadmin/local/brainStorm/Obsidian-1.6.7.AppImage`
+- **Vault**: No `.obsidian/` folder here — this directory is empty, ready for a new vault
+- **MCP**: No Obsidian MCP server is configured (Gmail, Drive, Calendar are present, but no vault connector). I can set that up after we scaffold the structure.
+
+**What is this vault for?**

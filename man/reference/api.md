@@ -1,0 +1,80 @@
+# API reference
+
+resman speaks JSON over HTTP plus a Socket.IO channel for live events. All
+mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
+`X-Requested-With: resman` header.
+
+## Vaults
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/vaults` | List registered + discovered vaults |
+| POST | `/api/vaults` | Register a vault |
+| POST | `/api/vaults/scaffold` | Create `.obsidian/` for a path that lacks it |
+| GET | `/api/vaults/<name>/health` | Health summary (path, .obsidian, wiki home, …) |
+| GET | `/api/vaults/<name>/wiki?file=…` | Read a wiki page; default `wiki/overview.md` (toolbar buttons: Hot / Index / Overview) |
+| POST | `/api/vaults/<name>/open` | Launch `obsidian_cmd` on this vault |
+
+## Sessions
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/sessions` | List live sessions + orphaned tmux sessions |
+| POST | `/api/sessions` | Spawn a session. Body: `{vault, type, initial_command?}` |
+| DELETE | `/api/sessions/<id>` | Kill the ttyd process; tmux session lives on |
+
+## Tasks
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/tasks` | List tasks |
+| POST | `/api/tasks` | Create a task |
+| POST | `/api/tasks/<id>/promote` | Bump priority |
+| DELETE | `/api/tasks/<id>` | Cancel a pending or running task |
+| POST | `/api/tasks/compact` | Snapshot terminal-state tasks > 90 days old |
+| GET | `/api/tasks/<id>/log` | Stream the task's stdout/stderr |
+
+## Window
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/window` | Current window state |
+| POST | `/api/window/sync` | `{action: start|end|start_weekly|end_weekly}` |
+
+## Config
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/config/system.yaml` | Return file contents |
+| PUT | `/api/config/system.yaml` | Replace + validate |
+| GET | `/api/config/schedule.yaml` | Return file contents |
+| PUT | `/api/config/schedule.yaml` | Replace + validate |
+
+## Filesystem
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/fs/list?path=…` | List subdirectories. Used by the new-vault picker. |
+
+## Help
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/help/tree` | Walk `man/`, return nested dirs + .md files |
+| GET | `/api/help/page?file=…` | Read one page; default `index.md` |
+
+## Socket.IO events (server → client)
+
+| Event | Payload |
+|-------|---------|
+| `task_updated` | task dict |
+| `window_state_changed` | new state |
+| `session_crashed` | `{session_id, vault, message}` |
+| `cron_skip_warning` | `{name, skip_count, last_attempt}` |
+| `vault_dot_changed` | `{vault, color}` |
+
+## Errors
+
+All endpoints return `{"error": "<message>"}` on failure with a non-2xx
+status. Validation errors are 400; missing resources are 404; CSRF or auth
+failures are 403; misconfiguration (no ttyd, no obsidian_cmd) is 503.

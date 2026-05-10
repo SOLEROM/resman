@@ -1,0 +1,6 @@
+{"ts":"2026-05-08T07:58:56Z","event":"created","task_id":"t-0bc33f9f512c","data":{"name":"bootstrap","vault":"bootstrap-demo","operation":"wiki-bootstrap","params":{},"priority":"high","schedule":"background","parent_id":null}}
+{"ts":"2026-05-08T07:58:56Z","event":"started","task_id":"t-0bc33f9f512c"}
+{"ts":"2026-05-08T07:58:58Z","event":"completed","task_id":"t-0bc33f9f512c","exit_code":0}
+{"ts":"2026-05-08T08:01:09Z","event":"created","task_id":"t-9673c757503a","data":{"name":"bootstrap-val5","vault":"val5","operation":"wiki-bootstrap","params":{},"priority":"high","schedule":"background","parent_id":null}}
+{"ts":"2026-05-08T08:01:09Z","event":"started","task_id":"t-9673c757503a"}
+{"ts":"2026-05-08T08:01:36Z","event":"completed","task_id":"t-9673c757503a","exit_code":0}

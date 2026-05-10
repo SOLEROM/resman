@@ -1,0 +1,27 @@
+# resman system.yaml — copy to system.yaml and edit.
+# All paths are absolute; vaults may live anywhere on the filesystem.
+
+app:
+  host: 127.0.0.1
+  port: 5090
+  tmux_socket: resman              # isolated tmux socket name
+  tmux_prefix: "rsm-"
+  scrollback_limit: 10000
+  claude_cmd: "claude --dangerously-skip-permissions"
+  obsidian_cmd: "flatpak run md.obsidian.Obsidian"
+  ttyd_port_base: 7680             # port range for ttyd processes
+  ttyd_port_max: 7999
+
+window_budget:
+  weekly_start: "Monday 09:00"
+  weekly_end:   "Sunday 23:00"
+
+# Each vault has its own explicit path — no required common root.
+vaults:
+  - name: example-vault
+    path: /tmp/example-vault
+    tags: [example]
+
+# Optional: directories to scan for unregistered vaults (folders containing .obsidian/).
+# Remove or leave empty to disable discovery. Max scan depth is 2 levels.
+scan_paths: []

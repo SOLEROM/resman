@@ -1,0 +1,11 @@
+# resman schedule.yaml — cron tasks. Validated with CronTrigger.from_crontab().
+# Cron tasks fire only while the window is active; otherwise a `cron_skipped`
+# event is appended to tasks.jsonl and the next scheduled occurrence is the retry.
+
+cron_tasks: []
+# Example:
+#   - name: weekly-lint-all
+#     cron: "0 8 * * 0"         # every Sunday 08:00
+#     vault: ALL
+#     operation: wiki-lint
+#     priority: low
