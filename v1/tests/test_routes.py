@@ -131,6 +131,67 @@ def test_create_task_validates(tmp_path):
     assert rv.status_code == 400
 
 
+def test_create_task_with_scheduled_for(tmp_path):
+    """scheduled_for in the future parks the task in `scheduled` state
+    without invoking the runner."""
+    from datetime import datetime, timedelta, timezone
+    app, ctx, runner_calls = make_test_app(tmp_path)
+    ctx["window"].start_window(2)
+    when = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(microsecond=0)
+    rv = app.test_client().post(
+        "/api/tasks",
+        json={
+            "name": "lint", "vault": "alpha", "operation": "wiki-lint",
+            "priority": "high",
+            "scheduled_for": when.isoformat().replace("+00:00", "Z"),
+        },
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 201, rv.get_data(as_text=True)
+    body = rv.get_json()
+    assert body["state"] == "scheduled"
+    assert body["scheduled_for"]
+    # The runner must NOT have fired yet — the whole point of scheduling.
+    assert not runner_calls
+
+
+def test_create_task_scheduled_for_in_past_rejected(tmp_path):
+    """The API must reject past timestamps with 400 rather than silently
+    treating them as 'run now'."""
+    from datetime import datetime, timedelta, timezone
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["window"].start_window(2)
+    when = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(microsecond=0)
+    rv = app.test_client().post(
+        "/api/tasks",
+        json={
+            "name": "lint", "vault": "alpha", "operation": "wiki-lint",
+            "priority": "high",
+            "scheduled_for": when.isoformat().replace("+00:00", "Z"),
+        },
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 400
+
+
+def test_create_task_scheduled_for_with_all_vault_rejected(tmp_path):
+    """ALL + scheduled_for combinatorics are out of scope for v1."""
+    from datetime import datetime, timedelta, timezone
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["window"].start_window(2)
+    when = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(microsecond=0)
+    rv = app.test_client().post(
+        "/api/tasks",
+        json={
+            "name": "lint", "vault": "ALL", "operation": "wiki-lint",
+            "priority": "high",
+            "scheduled_for": when.isoformat().replace("+00:00", "Z"),
+        },
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 400
+
+
 def test_window_start_end(tmp_path):
     app, ctx, _ = make_test_app(tmp_path)
     client = app.test_client()
@@ -493,6 +554,66 @@ def test_vault_wiki_unknown_vault(tmp_path):
     app, _, _ = make_test_app(tmp_path)
     rv = app.test_client().get("/api/vaults/zzz/wiki")
     assert rv.status_code == 404
+
+
+def test_vault_wiki_tree_lists_markdown_recursively(tmp_path):
+    """The tree endpoint walks wiki/ recursively, sorts dirs before files,
+    and emits vault-relative paths so the SPA can navigate directly."""
+    app, ctx, _ = make_test_app(tmp_path)
+    vault = Path(ctx["vault_registry"].get("alpha").path)
+    (vault / "wiki").mkdir()
+    (vault / "wiki" / "overview.md").write_text("# Overview")
+    (vault / "wiki" / "index.md").write_text("# Index")
+    (vault / "wiki" / "sources").mkdir()
+    (vault / "wiki" / "sources" / "alpha.md").write_text("# Alpha")
+    # Non-markdown is ignored.
+    (vault / "wiki" / "ignored.txt").write_text("nope")
+    rv = app.test_client().get("/api/vaults/alpha/wiki/tree")
+    assert rv.status_code == 200
+    data = rv.get_json()
+    assert data["missing"] is False
+    tree = data["tree"]
+    # Dirs sort before files, both alpha-sorted within their bucket.
+    assert [n["name"] for n in tree] == ["sources", "index.md", "overview.md"]
+    # Subdir paths are wiki-rooted, vault-relative.
+    sources = tree[0]
+    assert sources["type"] == "dir"
+    assert sources["path"] == "wiki/sources"
+    assert sources["children"][0]["path"] == "wiki/sources/alpha.md"
+    # Top-level file path also wiki-prefixed.
+    assert tree[1]["path"] == "wiki/index.md"
+
+
+def test_vault_wiki_tree_missing_dir_returns_missing_flag(tmp_path):
+    """No wiki/ folder yet (fresh vault) → missing:true so the UI can
+    render a 'no wiki' state instead of an empty list."""
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().get("/api/vaults/alpha/wiki/tree")
+    assert rv.status_code == 200
+    data = rv.get_json()
+    assert data["missing"] is True
+    assert data["tree"] == []
+
+
+def test_vault_wiki_tree_unknown_vault(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().get("/api/vaults/zzz/wiki/tree")
+    assert rv.status_code == 404
+
+
+def test_vault_wiki_tree_skips_dotfiles_and_symlinks(tmp_path):
+    """Hidden entries and symlinks are excluded — keeps the surface small
+    and prevents accidental loops if the user drops one in."""
+    app, ctx, _ = make_test_app(tmp_path)
+    vault = Path(ctx["vault_registry"].get("alpha").path)
+    (vault / "wiki").mkdir()
+    (vault / "wiki" / "visible.md").write_text("# Visible")
+    (vault / "wiki" / ".hidden.md").write_text("# Hidden")
+    (vault / "wiki" / "link.md").symlink_to(vault / "wiki" / "visible.md")
+    rv = app.test_client().get("/api/vaults/alpha/wiki/tree")
+    assert rv.status_code == 200
+    names = [n["name"] for n in rv.get_json()["tree"]]
+    assert names == ["visible.md"]
 
 
 def test_help_tree_walks_man_directory(tmp_path):

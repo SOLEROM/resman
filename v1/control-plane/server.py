@@ -116,6 +116,14 @@ def build_app(
     )
     replay_summary = task_manager.replay()
 
+    # When running under eventlet, spawn each task in its own greenlet so the
+    # request handler that created the task returns immediately while the
+    # streaming runner pushes task_log_appended events on the bus.
+    if EVENTLET_OK:
+        task_manager.set_executor(
+            lambda task: eventlet.spawn(task_manager._execute, task)
+        )
+
     obsidian_push = ObsidianPush(
         vault_iter=lambda: vault_registry.registered,
         get_task_states=lambda n: [

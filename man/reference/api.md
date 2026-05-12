@@ -27,12 +27,14 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/tasks` | List tasks |
-| POST | `/api/tasks` | Create a task |
-| POST | `/api/tasks/<id>/promote` | Bump priority |
-| DELETE | `/api/tasks/<id>` | Cancel a pending or running task |
+| GET | `/api/tasks` | List tasks (filters: `vault`, `priority`, `state`, `limit`, `offset`) |
+| POST | `/api/tasks` | Create a task. Optional `scheduled_for: <ISO8601>` parks the task in `scheduled` state for a single future fire. Past timestamps and combinations with `vault: ALL` return 400. |
+| POST | `/api/tasks/<id>/promote` | Transition a `deferred` or `scheduled` task to `pending` and dispatch immediately |
+| DELETE | `/api/tasks/<id>` | Cancel a `pending` / `deferred` / `scheduled` / **`running`** task. Running tasks receive `SIGTERM`, then `SIGKILL` after a 5 s grace. Writes a `cancelled` event |
+| POST | `/api/tasks/<id>/archive` | Soft-delete a terminal-state task (excluded from default view, preserved in log) |
 | POST | `/api/tasks/compact` | Snapshot terminal-state tasks > 90 days old |
-| GET | `/api/tasks/<id>/log` | Stream the task's stdout/stderr |
+| GET | `/api/tasks/<id>` | Get a single task's current state |
+| GET | `/api/tasks/<id>/log` | Read the task's captured stdout/stderr backlog. Live tailing is via the `task_log_appended` Socket.IO event |
 
 ## Window
 
@@ -65,13 +67,17 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 
 ## Socket.IO events (server → client)
 
-| Event | Payload |
-|-------|---------|
-| `task_updated` | task dict |
-| `window_state_changed` | new state |
-| `session_crashed` | `{session_id, vault, message}` |
-| `cron_skip_warning` | `{name, skip_count, last_attempt}` |
-| `vault_dot_changed` | `{vault, color}` |
+| Event | Payload | When |
+|-------|---------|------|
+| `task_updated` | task dict | Any task state transition |
+| `task_log_appended` | `{task_id, chunk}` | A line of stdout/stderr from a running task — the Tasks tab uses this for live tailing without polling |
+| `task_scheduled` | `{task_id, scheduled_for}` | A task entered `scheduled` state and the Scheduler should register a one-shot DateTrigger |
+| `window_state_changed` | new state | Window transitions between `active` / `between` / `ended` |
+| `session_crashed` | `{session_id, vault, message}` | A ttyd process died unexpectedly |
+| `session_error` | `{vault, reason}` | `TmuxManager.create_session()` failed |
+| `child_state_changed` | `{parent_id, child_id, state}` | ALL-vault child completed/failed; parent re-aggregates |
+| `config_reloaded` | `{}` | system.yaml or schedule.yaml saved successfully |
+| `cron_skip_warning` | `{cron_name, skip_count, last_fired_at}` | Cron task skipped > 2 times in a row |
 
 ## Errors
 

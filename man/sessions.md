@@ -1,19 +1,35 @@
 # Terminal sessions
 
 Each session is a **tmux session** wrapped in a **ttyd process** that exposes
-it to the browser as an `<iframe>`. resman launches both for you.
+it to the browser as an `<iframe>`. resman launches both for you. The
+**Ops** tab in the header bar is where the iframes live.
 
 ## Spawning a session
 
-In the **Terminal** view (the default tab), with a vault selected:
+The spawn buttons live in the **header bar** (centered between the tab
+strip and the connection indicator) and act on the currently selected
+vault:
 
 - **+ Claude** — runs `claude --dangerously-skip-permissions` (configurable
   via `app.claude_cmd`) in the vault directory.
 - **+ Shell** — drops you into a plain bash session in the vault directory.
 
-The new tab appears at the top of the terminal frame, and the iframe loads
-once ttyd is accepting connections (resman blocks the API response until then
-to avoid the iframe racing ttyd's startup and showing "connection refused").
+Clicking either button **auto-switches the main panel to the Ops tab** so
+the new iframe is immediately visible. The iframe loads once ttyd is
+accepting connections (resman blocks the API response until then to avoid
+the iframe racing ttyd's startup and showing "connection refused").
+
+## Returning to your sessions
+
+Two equivalent shortcuts open the Ops tab for the active vault:
+
+- Click the **Ops** tab in the header.
+- Click the **vault-name label** in the header (e.g. `val6`) — it doubles
+  as a one-click way back to the terminal view when you're reading wiki
+  content.
+
+Each vault remembers its own last-seen panel, so hopping between vaults
+restores each one's own view (Wiki / Ops / Tasks / Config).
 
 ## The tab strip
 
@@ -37,15 +53,15 @@ tmux -L resman attach -t rsm-vla6-claude-1
 
 This is intentional — long-running Claude sessions survive a panel restart.
 
-## Open Obsidian
+## Obsidian
 
-The **Open Obsidian** button launches `app.obsidian_cmd` (e.g.
-`flatpak run md.obsidian.Obsidian`) with the vault path appended. Configure it
-in `system.yaml`. Resman launches a detached subprocess and returns
-immediately.
+The **Obsidian** button (in the header, renamed from "Open Obsidian")
+launches `app.obsidian_cmd` (e.g. `flatpak run md.obsidian.Obsidian`) with
+the vault path appended. Configure it in `system.yaml`. Resman launches a
+detached subprocess and returns immediately.
 
 ## ttyd not installed?
 
 The whole panel works without ttyd — the **+ Shell** / **+ Claude** buttons
-will just respond `503 Service Unavailable`, and the tab strip shows
-"ttyd not installed — terminal sessions disabled".
+will just respond `503 Service Unavailable`, and a `ttyd not installed`
+note appears in the header next to the spawn buttons.

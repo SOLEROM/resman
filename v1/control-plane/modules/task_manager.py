@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import pty
 import re
 import shlex
 import string
@@ -39,6 +40,7 @@ STATES = (
     "completed",
     "failed",
     "deferred",
+    "scheduled",
     "cancelled",
     "interrupted",
     "archived",
@@ -58,10 +60,42 @@ PRINTABLE_RE = re.compile(r"^[\x20-\x7E\t\n\r]*$")
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 COMPACTION_THRESHOLD = 50000  # lines
+LOG_MAX_BYTES = 5 * 1024 * 1024  # cap streaming log file per task at 5 MB
 
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso(ts: str) -> Optional[datetime]:
+    """Parse an ISO 8601 timestamp; treat naive timestamps as UTC."""
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True if a process with the given PID is currently alive.
+
+    Uses os.kill(pid, 0) which raises ProcessLookupError if the process is
+    gone and PermissionError if the process exists but we can't signal it
+    (still alive). Returns False on any other error.
+    """
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
 
 
 def _validate_params(operation: str, params: dict) -> dict:
@@ -112,6 +146,8 @@ class Task:
     finished_at: Optional[str] = None
     exit_code: Optional[int] = None
     error: Optional[str] = None
+    pid: Optional[int] = None
+    scheduled_for: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -130,6 +166,8 @@ class Task:
             "finished_at": self.finished_at,
             "exit_code": self.exit_code,
             "error": self.error,
+            "pid": self.pid,
+            "scheduled_for": self.scheduled_for,
         }
 
 
@@ -165,7 +203,12 @@ class TaskManager:
         self._bad_line_count = 0
         self._partial_truncated = False
         self._integrity_warnings: List[str] = []
-        self._runner = runner or _default_runner
+        # If a runner is injected (tests), it has the legacy 3-arg signature:
+        # runner(cmd, cwd, log_file) -> int. When None, the production
+        # streaming runner is used; it writes the same log file and additionally
+        # emits task_log_appended events on the bus for live tailing.
+        self._runner = runner
+        self._procs: Dict[str, subprocess.Popen] = {}
         self._executor: Optional[Callable[[Task], None]] = None
         self.bus.subscribe("window_activated", self._on_window_activated)
 
@@ -200,13 +243,24 @@ class TaskManager:
                     )
                     continue
                 self._apply(event)
-        # Detect tasks left in 'started'/'running' with no terminal event → interrupted
+        # Detect tasks left in 'started'/'running' with no terminal event.
+        # If the recorded PID is still alive, the process survived a control-plane
+        # restart and the task is genuinely still running — don't mark interrupted.
         for tid, task in self._tasks.items():
-            if task.state in ("running",):
+            if task.state == "running":
+                if task.pid and _pid_alive(task.pid):
+                    continue
                 task.state = "interrupted"
+                task.pid = None
                 self._integrity_warnings.append(
                     f"task {tid} was running at last shutdown — marked interrupted"
                 )
+            elif task.state == "scheduled":
+                sched = _parse_iso(task.scheduled_for or "")
+                if sched is not None and sched <= datetime.now(timezone.utc):
+                    self._integrity_warnings.append(
+                        f"task {tid} scheduled for {task.scheduled_for} is overdue"
+                    )
         return self._replay_summary()
 
     def _replay_summary(self) -> dict:
@@ -271,25 +325,37 @@ class TaskManager:
         if kind == "started":
             task.state = "running"
             task.started_at = ts
+            pid = event.get("pid")
+            if isinstance(pid, int):
+                task.pid = pid
         elif kind == "completed":
             task.state = "completed"
             task.finished_at = ts
             task.exit_code = event.get("exit_code", 0)
+            task.pid = None
         elif kind == "failed":
             task.state = "failed"
             task.finished_at = ts
             task.exit_code = event.get("exit_code", 1)
             task.error = event.get("error")
+            task.pid = None
         elif kind == "deferred":
             task.state = "deferred"
+        elif kind == "scheduled":
+            task.state = "scheduled"
+            sf = event.get("scheduled_for")
+            if isinstance(sf, str):
+                task.scheduled_for = sf
         elif kind == "promoted":
             task.state = "pending"
         elif kind == "interrupted":
             task.state = "interrupted"
             task.finished_at = ts
+            task.pid = None
         elif kind == "cancelled":
             task.state = "cancelled"
             task.finished_at = ts
+            task.pid = None
         elif kind == "archived":
             task.state = "archived"
         elif kind == "updated":
@@ -322,6 +388,7 @@ class TaskManager:
         schedule: str = "background",
         parent_id: Optional[str] = None,
         run_now: bool = True,
+        scheduled_for: Optional[str] = None,
     ) -> Task:
         if not NAME_RE.match(name or ""):
             raise ValueError("task name must match [a-zA-Z0-9_-]")
@@ -335,10 +402,33 @@ class TaskManager:
                 raise ValueError(f"vault {vault!r} is not registered")
         validated_params = _validate_params(operation, params)
 
+        normalized_scheduled = None
+        if scheduled_for:
+            if vault == "ALL":
+                raise ValueError(
+                    "scheduled_for is not supported together with vault=ALL"
+                )
+            sched_dt = _parse_iso(scheduled_for)
+            if sched_dt is None:
+                raise ValueError("scheduled_for must be an ISO 8601 timestamp")
+            if sched_dt <= datetime.now(timezone.utc):
+                raise ValueError("scheduled_for must be in the future")
+            # Normalize to a canonical UTC Z form so downstream consumers get
+            # a single representation regardless of what the caller sent.
+            normalized_scheduled = (
+                sched_dt.astimezone(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
         with self._dispatch_lock:
             if vault == "ALL" and parent_id is None:
                 return self._create_parent_all(name, operation, validated_params, priority, schedule, run_now)
-            return self._create_single(name, vault, operation, validated_params, priority, schedule, parent_id, run_now)
+            return self._create_single(
+                name, vault, operation, validated_params, priority, schedule,
+                parent_id, run_now, normalized_scheduled,
+            )
 
     def _create_single(
         self,
@@ -350,6 +440,7 @@ class TaskManager:
         schedule: str,
         parent_id: Optional[str],
         run_now: bool,
+        scheduled_for: Optional[str] = None,
     ) -> Task:
         tid = f"t-{uuid.uuid4().hex[:12]}"
         ts = _utcnow_iso()
@@ -362,20 +453,40 @@ class TaskManager:
             "schedule": schedule,
             "parent_id": parent_id,
         }
+        if scheduled_for:
+            data["scheduled_for"] = scheduled_for
         self._append({"ts": ts, "event": "created", "task_id": tid, "data": data})
         if parent_id:
             self._append({"ts": ts, "event": "child_created", "task_id": parent_id, "child_id": tid})
-        # Window gating
-        if not self.is_window_active():
+
+        # Routing precedence: an explicit scheduled_for wins over window-gating.
+        # A scheduled task waits for the Scheduler's one-shot trigger; it does
+        # not auto-promote on window activation.
+        if scheduled_for:
+            self._append({
+                "ts": ts, "event": "scheduled", "task_id": tid,
+                "scheduled_for": scheduled_for,
+            })
+            initial_state = "scheduled"
+        elif not self.is_window_active():
             self._append({"ts": ts, "event": "deferred", "task_id": tid})
+            initial_state = "deferred"
+        else:
+            initial_state = "pending"
+
         task = Task(
             id=tid, name=name, vault=vault, operation=operation, params=params,
             priority=priority, schedule=schedule, parent_id=parent_id,
-            state="pending" if self.is_window_active() else "deferred",
-            created_at=ts, updated_at=ts,
+            state=initial_state, created_at=ts, updated_at=ts,
+            scheduled_for=scheduled_for,
         )
         self._tasks[tid] = task
         self.bus.emit("task_updated", {"task_id": tid, "state": task.state})
+        if initial_state == "scheduled":
+            self.bus.emit(
+                "task_scheduled",
+                {"task_id": tid, "scheduled_for": scheduled_for},
+            )
         if run_now and task.state == "pending":
             self._dispatch(task)
         return task
@@ -434,7 +545,7 @@ class TaskManager:
 
     def promote(self, task_id: str) -> Optional[Task]:
         task = self._tasks.get(task_id)
-        if not task or task.state != "deferred":
+        if not task or task.state not in ("deferred", "scheduled"):
             return None
         ts = _utcnow_iso()
         self._append({"ts": ts, "event": "promoted", "task_id": task_id})
@@ -446,15 +557,38 @@ class TaskManager:
 
     def cancel(self, task_id: str) -> bool:
         task = self._tasks.get(task_id)
-        if not task or task.state not in ("pending", "deferred"):
+        if not task:
             return False
-        ts = _utcnow_iso()
-        self._append({"ts": ts, "event": "cancelled", "task_id": task_id})
-        task.state = "cancelled"
-        task.updated_at = ts
-        task.finished_at = ts
-        self.bus.emit("task_updated", {"task_id": task_id, "state": "cancelled"})
-        return True
+        if task.state == "running":
+            proc = self._procs.get(task_id)
+            if proc is not None:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                except Exception:
+                    log.exception("cancel: terminate/kill failed for %s", task_id)
+            ts = _utcnow_iso()
+            self._append({"ts": ts, "event": "cancelled", "task_id": task_id})
+            task.state = "cancelled"
+            task.updated_at = ts
+            task.finished_at = ts
+            task.pid = None
+            self.bus.emit("task_updated", {"task_id": task_id, "state": "cancelled"})
+            if task.parent_id:
+                self._aggregate_parent(task.parent_id)
+            return True
+        if task.state in ("pending", "deferred", "scheduled"):
+            ts = _utcnow_iso()
+            self._append({"ts": ts, "event": "cancelled", "task_id": task_id})
+            task.state = "cancelled"
+            task.updated_at = ts
+            task.finished_at = ts
+            self.bus.emit("task_updated", {"task_id": task_id, "state": "cancelled"})
+            return True
+        return False
 
     def archive(self, task_id: str) -> bool:
         task = self._tasks.get(task_id)
@@ -483,25 +617,222 @@ class TaskManager:
         self._executor = fn
 
     def _execute(self, task: Task) -> None:
-        ts = _utcnow_iso()
-        self._append({"ts": ts, "event": "started", "task_id": task.id})
-        task.state = "running"
-        task.started_at = ts
-        task.updated_at = ts
-        self.bus.emit("task_updated", {"task_id": task.id, "state": "running"})
         cmd, cwd = self._build_command(task)
         if cmd is None:
+            ts = _utcnow_iso()
+            self._append({"ts": ts, "event": "started", "task_id": task.id})
+            task.state = "running"
+            task.started_at = ts
+            task.updated_at = ts
+            self.bus.emit("task_updated", {"task_id": task.id, "state": "running"})
             self._finalize(task, exit_code=1, error="vault path not found")
             return
         log_file = self.log_dir / f"{task.id}.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            rc = self._runner(cmd, cwd, log_file)
-        except FileNotFoundError as exc:
-            self._finalize(task, exit_code=127, error=f"executable not found: {exc}")
+
+        # Legacy 3-arg runner path (tests). Emit `started` first so the event
+        # ordering matches the streaming path.
+        if self._runner is not None:
+            ts = _utcnow_iso()
+            self._append({"ts": ts, "event": "started", "task_id": task.id})
+            task.state = "running"
+            task.started_at = ts
+            task.updated_at = ts
+            self.bus.emit("task_updated", {"task_id": task.id, "state": "running"})
+            try:
+                rc = self._runner(cmd, cwd, log_file)
+            except FileNotFoundError as exc:
+                self._finalize(task, exit_code=127, error=f"executable not found: {exc}")
+                return
+            except Exception as exc:
+                self._finalize(task, exit_code=1, error=str(exc))
+                return
+            if rc == 0:
+                self._finalize(task, exit_code=0)
+            else:
+                self._finalize(task, exit_code=rc, error=f"non-zero exit {rc}")
             return
+
+        # Streaming production runner — emits task_log_appended chunks on the
+        # bus while writing the same log file. The `started` event is written
+        # after Popen returns so its PID can be recorded; cancellation reaches
+        # the live process via _procs[task.id].
+        try:
+            self._run_streaming(task, cmd, cwd, log_file)
+        except FileNotFoundError as exc:
+            ts = _utcnow_iso()
+            self._append({"ts": ts, "event": "started", "task_id": task.id})
+            task.state = "running"
+            task.started_at = ts
+            task.updated_at = ts
+            self.bus.emit("task_updated", {"task_id": task.id, "state": "running"})
+            self._finalize(task, exit_code=127, error=f"executable not found: {exc}")
         except Exception as exc:
+            ts = _utcnow_iso()
+            self._append({"ts": ts, "event": "started", "task_id": task.id})
+            task.state = "running"
+            task.started_at = ts
+            task.updated_at = ts
+            self.bus.emit("task_updated", {"task_id": task.id, "state": "running"})
             self._finalize(task, exit_code=1, error=str(exc))
+
+    def _run_streaming(
+        self,
+        task: Task,
+        cmd: List[str],
+        cwd: Optional[str],
+        log_file: Path,
+        max_bytes: Optional[int] = None,
+    ) -> None:
+        """Spawn cmd in a pseudo-tty, stream output to log_file + bus, finalize.
+
+        We allocate a PTY for the child's stdout/stderr so CLIs that switch to
+        block-buffering when stdout is a pipe (claude -p among them) keep
+        line-buffering toward what they think is a terminal. Without the PTY
+        the live-tail UI would sit idle for the whole task and only show the
+        log once the process exited and flushed.
+
+        A dedicated reader thread does the blocking os.read() on the PTY
+        master so we don't depend on eventlet patching os-level fds. The
+        thread emits task_log_appended chunks and writes the same bytes to
+        the log file. The dispatching greenlet/thread waits on proc.wait()
+        and joins the reader.
+        """
+        # Resolve at call time so tests can patch LOG_MAX_BYTES on the module
+        # without having to re-import.
+        if max_bytes is None:
+            max_bytes = LOG_MAX_BYTES
+
+        # Allocate a PTY pair. If it fails (rare; e.g., container with no
+        # /dev/ptmx), fall back to a pipe — output won't live-stream from
+        # block-buffered children, but the task still runs and the log file
+        # captures the eventual flush.
+        slave_fd: Optional[int] = None
+        master_fd: Optional[int] = None
+        try:
+            master_fd, slave_fd = pty.openpty()
+        except OSError:
+            log.warning("pty.openpty() failed; falling back to pipes")
+
+        with log_file.open("wb", buffering=0) as logf:
+            header = (
+                f"$ {' '.join(shlex.quote(x) for x in cmd)}\n"
+                f"cwd: {cwd}\n\n"
+            ).encode("utf-8")
+            logf.write(header)
+
+            popen_kwargs = dict(
+                cwd=cwd, stdin=subprocess.DEVNULL, close_fds=True,
+            )
+            if master_fd is not None and slave_fd is not None:
+                popen_kwargs["stdout"] = slave_fd
+                popen_kwargs["stderr"] = slave_fd
+                popen_kwargs["start_new_session"] = True  # own pty session
+            else:
+                popen_kwargs["stdout"] = subprocess.PIPE
+                popen_kwargs["stderr"] = subprocess.STDOUT
+
+            try:
+                proc = subprocess.Popen(cmd, **popen_kwargs)
+            finally:
+                if slave_fd is not None:
+                    try:
+                        os.close(slave_fd)
+                    except OSError:
+                        pass
+            self._procs[task.id] = proc
+
+            ts = _utcnow_iso()
+            self._append({
+                "ts": ts, "event": "started", "task_id": task.id, "pid": proc.pid,
+            })
+            task.state = "running"
+            task.started_at = ts
+            task.updated_at = ts
+            task.pid = proc.pid
+            self.bus.emit("task_updated", {"task_id": task.id, "state": "running"})
+
+            counter = {"written": 0, "truncated": False}
+            log_lock = threading.Lock()
+
+            def emit_chunk(text: str, raw_len: int) -> None:
+                with log_lock:
+                    if counter["truncated"]:
+                        return
+                    if counter["written"] >= max_bytes:
+                        return
+                    try:
+                        logf.write(text.encode("utf-8", errors="replace"))
+                    except Exception:
+                        log.exception("log write failed for %s", task.id)
+                    counter["written"] += raw_len
+                    self.bus.emit("task_log_appended", {
+                        "task_id": task.id, "chunk": text,
+                    })
+                    if counter["written"] >= max_bytes:
+                        marker = (
+                            f"\n... [output capped at {max_bytes} bytes; "
+                            f"tail discarded]\n"
+                        )
+                        try:
+                            logf.write(marker.encode("utf-8"))
+                        except Exception:
+                            pass
+                        self.bus.emit("task_log_appended", {
+                            "task_id": task.id, "chunk": marker,
+                        })
+                        counter["truncated"] = True
+
+            def pty_reader():
+                try:
+                    while True:
+                        try:
+                            chunk = os.read(master_fd, 4096)
+                        except OSError:
+                            # Slave end closed (child exited) → EIO on Linux.
+                            break
+                        if not chunk:
+                            break
+                        emit_chunk(chunk.decode("utf-8", errors="replace"), len(chunk))
+                finally:
+                    try:
+                        os.close(master_fd)
+                    except OSError:
+                        pass
+
+            def pipe_reader():
+                stream = proc.stdout
+                if stream is None:
+                    return
+                try:
+                    while True:
+                        chunk = stream.read1(4096) if hasattr(stream, "read1") else stream.read(4096)
+                        if not chunk:
+                            break
+                        if isinstance(chunk, bytes):
+                            text = chunk.decode("utf-8", errors="replace")
+                            raw = len(chunk)
+                        else:
+                            text = chunk
+                            raw = len(chunk.encode("utf-8", errors="replace"))
+                        emit_chunk(text, raw)
+                finally:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+
+            reader_target = pty_reader if master_fd is not None else pipe_reader
+            reader = threading.Thread(target=reader_target, daemon=True)
+            reader.start()
+            rc = proc.wait()
+            reader.join(timeout=2)
+
+        # If cancel() already wrote a terminal event, don't overwrite it.
+        if task.state == "cancelled":
+            self._procs.pop(task.id, None)
+            if task.parent_id:
+                self._aggregate_parent(task.parent_id)
             return
         if rc == 0:
             self._finalize(task, exit_code=0)
@@ -544,6 +875,14 @@ class TaskManager:
         return None, vault_path
 
     def _finalize(self, task: Task, exit_code: int, error: Optional[str] = None) -> None:
+        # If a cancel raced ahead and already wrote a terminal event, don't
+        # overwrite it with completed/failed. Still drop proc tracking and
+        # re-aggregate the parent if any.
+        if task.state == "cancelled":
+            self._procs.pop(task.id, None)
+            if task.parent_id:
+                self._aggregate_parent(task.parent_id)
+            return
         ts = _utcnow_iso()
         if exit_code == 0:
             self._append({"ts": ts, "event": "completed", "task_id": task.id, "exit_code": 0})
@@ -558,6 +897,8 @@ class TaskManager:
         task.exit_code = exit_code
         task.finished_at = ts
         task.updated_at = ts
+        task.pid = None
+        self._procs.pop(task.id, None)
         self.bus.emit("task_updated", {"task_id": task.id, "state": task.state})
         if task.parent_id:
             self._aggregate_parent(task.parent_id)

@@ -16,8 +16,8 @@ window status bar at the bottom.
 ├────────────────────┬────────────────────────────────────────────────┤
 │ VAULTS         ↻  │ vla6                  ✎  + Shell  + Claude  …  │   ← terminal toolbar
 │ [search/filter]    ├────────────────────────────────────────────────┤
-│ ● ai-agents  [▶]  │ vla6·claude·08:25 ×                             │   ← per-vault tab strip
-│ ○ llm-bench  [▶]  ├────────────────────────────────────────────────┤
+│ ● ai-agents  [↘]  │ vla6·claude·08:25 ×                             │   ← per-vault tab strip
+│ ○ llm-bench  [↘]  ├────────────────────────────────────────────────┤
 │ ─ unregistered    │                                                  │
 │   found-vault     │  ttyd iframe  OR  Markdown / Tasks / Config      │
 │ [+ New Vault]     │                                                  │
@@ -26,11 +26,43 @@ window status bar at the bottom.
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-Tabs (Wiki / Tasks / Config / Help) live in the **top header bar** — they are
-top-level navigation, not nested under the vault. The default panel is
-the Terminal view; clicking a vault always returns to the Terminal view
-and clears the active header tab. There is no separate "Terminal" tab in
-the header; "no header tab active" is the terminal state.
+Tabs (Wiki / Ops / Tasks / Config / Help) live in the **top header bar** — they
+are top-level navigation, not nested under the vault. **Per-vault panel
+memory**: each vault remembers its own last-seen panel (Wiki / Ops /
+Tasks / Config) and re-selecting the vault restores it. Stored in
+`localStorage` under `resman-last-panel-by-vault` so it survives reloads.
+Legacy `"terminal"` entries from the pre-Ops-tab build are migrated to
+`"ops"` on load.
+
+First-visit resolution order when no panel is remembered (or the
+remembered panel is Ops but the vault has no live sessions):
+- Land on **Ops** if the vault has at least one live session.
+- Otherwise land on **Wiki** (best entry point for a fresh research vault).
+
+Help is treated as vault-independent and is not remembered per-vault —
+re-selecting a vault should not surprise the user by dropping them onto
+the Help tab.
+
+**Ops** is the terminal-sessions view — one `<iframe>` per ttyd session,
+filtered to the current vault. It is a first-class header tab (between
+Wiki and Tasks). Clicking the vault-name label in the header is an
+equivalent shortcut to the Ops tab.
+
+The per-vault action buttons — `✎` rename, `+ Shell`, `+ Claude`,
+`Obsidian` — live in the **header bar**, centered between the tab strip
+and the connection indicator. They act on the currently selected vault
+(shown as a label next to the buttons) and are hidden when no vault is
+selected. The `ttyd not installed` warning appears in the same group when
+ttyd is missing.
+
+**Spawn → auto-switch to Ops.** Clicking `+ Shell` or `+ Claude` spawns the
+session and immediately switches the main panel to the **Ops** view so
+the new iframe is visible — otherwise the buttons would appear to do
+nothing while the user is on the Wiki/Tasks/Config/Help tab.
+
+**Return to Ops.** Two equivalent paths: click the **Ops** header tab, or
+click the vault-name label in the header. Both are the explicit fast-path
+to the terminal sessions for vaults already running.
 
 Layout uses a flex-column root so the status bar is always visible at a fixed height
 and never overlaps terminal content.
@@ -44,9 +76,9 @@ and never overlaps terminal content.
 - Present in Phase 1; a sidebar with 20+ gray dots is unusable without it
 
 **Vault list:**
-- Each row: status dot, vault name, tags (dimmed), `[▶]` button
-- Clicking vault name selects the vault and switches main panel to Terminal tab
-- `[▶]` opens a mini-menu with exactly two options: "Open Claude" and "Open Shell" — no hidden default
+- Each row: status dot, vault name, tags (dimmed), `[↘]` button
+- Clicking vault name selects the vault and switches main panel to the vault's remembered panel; on first visit, **Ops** if the vault has live sessions, otherwise **Wiki**. The header's vault-action buttons become visible either way
+- `[↘]` is the **ingest-URL shortcut** — prompts for a URL, queues a `wiki-ingest` task for that vault, selects the vault, reloads the task list, and switches to the **Tasks** tab so the user immediately sees the task progress. URL validation is light (presence + `http(s)://` prefix); operation-level validation is authoritative on the backend
 - A `⚠` (path missing) or `?` (`.obsidian/` missing) icon appears next to the vault name when a validation check failed; clicking the icon opens a **vault health modal** that shows the table from `03-vault-registry.md` (path checks, last session, last completed task, tags). Click propagation is stopped so the icon click does not also select the vault.
 
 **Unregistered vaults** (from `scan_paths`):
@@ -78,29 +110,42 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 
 ## Main Panel Tabs
 
-**Terminal view (default):**
+**Ops tab** (terminal sessions; was "Terminal view"):
 - Each tab is an independent ttyd session (one `<iframe>` per session)
 - The tab strip is **filtered to the currently selected vault** — switching vaults swaps both the tab strip and the visible iframe (every iframe stays in the DOM so its WebSocket persists; only `display` toggles)
 - Default tab label: `<vault> · <type> · <HH:MM>` (e.g., `vla6 · claude · 08:25`)
 - Tab switching: click anywhere on a tab → switch; click `×` → kill the session; tab labels are persisted to `localStorage` so renames survive reload
-- Toolbar buttons (left → right): `✎` rename active tab, `+ Shell`, `+ Claude`, `Open Obsidian`
+- The per-vault toolbar is **the header bar**: `✎` rename active tab, `+ Shell`, `+ Claude`, `Obsidian` (renamed from `Open Obsidian`) — these are global controls now, not panel-specific, and stay visible on every tab while a vault is selected
 - The `✎` button opens a modal asking for a new label (blank restores the default); each user's custom labels live only in their browser
 - Per-vault session memory: `state.lastSessionByVault` remembers which session was last active for each vault, so revisiting a vault restores the same terminal
 - If ttyd unavailable: tab strip shows "ttyd not installed — terminal sessions disabled"
 
 **Wiki tab** (formerly "Docs"):
 - Markdown viewer for the vault's Claude-wiki-plugin output. Defaults to `wiki/overview.md` (the landing page resman opens when the tab is shown).
-- Endpoint: `GET /api/vaults/{name}/wiki?file=…` — defaults to `wiki/overview.md`, accepts any `.md` under the vault root, traversal blocked.
+- Two-pane layout: **left sidebar tree** of all `<vault>/wiki/**/*.md` pages + **content pane** for the rendered markdown.
+- Endpoints:
+  - `GET /api/vaults/{name}/wiki/tree` — recursive tree of `wiki/`; returns `{missing:true, tree:[]}` if the dir is absent. Hidden entries and symlinks are skipped.
+  - `GET /api/vaults/{name}/wiki?file=…` — defaults to `wiki/overview.md`, accepts any `.md` under the vault root, traversal blocked.
 - Renders client-side with marked.js loaded from CDN; falls back to raw `<pre>` if the CDN is blocked.
-- Toolbar: vault context label + current file name + three canonical-page buttons — **Hot** (`wiki/hot.md`), **Index** (`wiki/index.md`), **Overview** (`wiki/overview.md`) — and `↻` reload. Buttons are wired declaratively via `data-wiki-page` so adding another canonical page is HTML-only.
+- **Wikilinks**: `[[Page]]` and `[[Page|alias]]` are rewritten to inline `<a class="wikilink" data-wiki-target="…">` anchors *before* marked.parse runs. A delegated click handler on `#wiki-content` intercepts the click, resolves the target against the cached tree (case-insensitive, `.md` optional, subdir tolerated), and re-renders the new page in place. Embeds (`![[Foo]]`) collapse to a regular link in v1.
+- Toolbar: vault context label + current file name + three canonical-page buttons — **Hot** (`wiki/hot.md`), **Index** (`wiki/index.md`), **Overview** (`wiki/overview.md`) — and `↻` reload (reloads both the tree and the current page). Buttons are wired declaratively via `data-wiki-page` so adding another canonical page is HTML-only.
+- Sidebar mirrors the Help tab's tree styling: dirs sort before files, alpha within their bucket, active page highlighted.
 - When `wiki/overview.md` does not exist, the panel shows a "no wiki yet" empty state nudging the user to spawn a Claude session and run the plugin.
 - Edit mode is not yet built (read-only).
 
 **Tasks tab:**
-- Task queue panel for selected vault, or all vaults if no vault selected
-- Toolbar: priority filter, `Compact log` (snapshots terminal-state tasks > 90 days old), `+ New Task`
-- A dismissible **cron-skip banner** appears at the top when a `cron_skip_warning` SocketIO event arrives (cron task fired but the window is inactive); it shows cron name, skip count, and the last attempted fire time
-- See `06-task-management.md` for the task UI panel details
+- Operations-first layout. The top of the tab is a **trigger panel** with: vault selector + `all vaults` toggle, operation dropdown grouped by Wiki / Research / Custom, per-operation parameter fields (URL, topic, prompt, argv — no JSON textarea), priority, and a `When` `datetime-local` input (empty = run now). One **Run task** button submits.
+- Operation registry lives client-side in `OPERATIONS` (`app.js`). It mirrors the operation list in `plugin_commands.py` + `task_manager.py`; no `/api/operations` endpoint.
+- The queue below the trigger renders **task cards** (one card per task; left border tinted by state). Clicking the card head or the `log` button expands the card to reveal params, error, scheduled time, and a **live-tailing log pane** that subscribes to `task_log_appended` Socket.IO chunks. The pane is seeded from `GET /api/tasks/{id}/log` on first open.
+- Queue filters: priority + state (`active` default | `recent (24h)` | `all`). When a vault is selected, the queue is filtered to its tasks plus all `ALL`-vault tasks.
+- Per-card actions vary by state:
+  - `running` → `cancel` (sends SIGTERM via `DELETE /api/tasks/{id}`)
+  - `pending` / `deferred` → `cancel`, plus `promote` on deferred
+  - `scheduled` → `run-now` (promotes immediately) and `cancel`; an **overdue** badge appears when `scheduled_for` is past
+  - `completed` / `failed` / `cancelled` / `interrupted` → `re-run` (pre-fills the trigger panel with the original task's params)
+- A dismissible **cron-skip banner** at the top of the tab shows up when a `cron_skip_warning` SocketIO event arrives (cron task fired but the window is inactive).
+- **Compact log** button stays in the queue toolbar (snapshots terminal-state tasks > 90 days old via `POST /api/tasks/compact`).
+- See `06-task-management.md` for the live-log streaming, log size cap, and cancel-running semantics.
 
 **Config tab:**
 - Live YAML editors for `system.yaml` and `schedule.yaml` (Option J pattern)
@@ -145,7 +190,7 @@ flashes the wrong palette.
 - **ttyd iframes** — xterm.js is not loaded by the SPA; ttyd serves its own xterm.js internally
 - **Tab switching via display:none** — iframes persist their WebSocket connections; toggling visibility is instant and reconnection-free
 - **Filter bar in Phase 1** — sidebar is unusable at scale without it; not deferred to later phases
-- **`[▶]` mini-menu** — two explicit choices; no implicit default session type
+- **`[↘]` ingest-URL shortcut** — single-purpose action; one click + URL prompt queues a `wiki-ingest` task and jumps to the Tasks tab. Spawning sessions has moved entirely to the header's `+ Shell` / `+ Claude` buttons
 - **CSRF header via fetch wrapper** — single function in `app.js` wraps all fetch calls
 - **Header tabs, not panel tabs** — Docs / Tasks / Config are top-level navigation in the header bar; the terminal is the default and has no tab
 - **Per-vault tab strip** — vaults are independent workspaces; mixing all vaults' tabs in one strip turned out to be confusing in practice

@@ -33,8 +33,12 @@ On failure: `ttyd: MISSING (terminal sessions disabled — install ttyd to enabl
 | `system.yaml` invalid YAML | Same |
 | `tasks.jsonl` corrupt line | Skip line; log byte offset and error; continue replay; report skipped count in startup output |
 | `tasks.jsonl` partial final line | Truncate; emit warning; continue |
-| Task in `started` state with no terminal event | Replay as `interrupted`; surface to user |
+| Task in `started` state with no terminal event | Replay checks `os.kill(pid, 0)`: process still alive → stay `running`; process gone → mark `interrupted` and surface to user |
 | `dispatch_started` child count mismatch | Warn in startup report: "Partial dispatch detected for task {id} — {N} of {M} children created" |
+| Task in `scheduled` state whose `scheduled_for` already passed | Stay `scheduled`; emit overdue warning into `_integrity_warnings`. UI shows an "overdue" badge with a `run-now` action — never auto-promotes |
+| `pty.openpty()` fails (no `/dev/ptmx`) | Streaming runner falls back to a pipe + warning log. Task still runs; live tail degrades for block-buffered children |
+| Task output exceeds 5 MB (`LOG_MAX_BYTES`) | Write a `... [output capped]` marker to the log file and emit one final `task_log_appended` chunk with the marker; discard subsequent output. Subprocess return code is unaffected |
+| Cancel called on a `running` task | `proc.terminate()`; if not exited within 5 s, `proc.kill()`. Always write `cancelled` event. `_finalize` checks `state == "cancelled"` to avoid overwriting on race |
 | tmux not installed | Fail loudly on startup; do not start |
 | ttyd not installed | Warn in startup report; disable terminal session endpoints (503); rest of server starts |
 | ttyd process crashes mid-session | SessionMonitor detects within 5s; emit `session_crashed` SocketIO event; browser shows toast with [Restart] |
@@ -70,13 +74,16 @@ On failure: `ttyd: MISSING (terminal sessions disabled — install ttyd to enabl
 
 - Every line read through `try/except JSONDecodeError`; bad lines logged with byte offset
 - Partial final line (no trailing `\n`): truncated on startup with warning
-- Tasks that were `started` at crash and have no subsequent terminal event: replayed as `interrupted`
+- Tasks that were `started` at crash and have no subsequent terminal event: PID-checked via `os.kill(pid, 0)`. Alive → stay `running` (the subprocess survived a control-plane restart); gone → replayed as `interrupted`
+- Tasks in `scheduled` state with `scheduled_for` already in the past at replay: stay `scheduled` and surface an overdue warning — never auto-promoted, never silently dropped
 - `dispatch_started` / `child_created` count mismatch: surfaced as a startup warning, not an error
 - Empty file and blank lines tolerated without raising; blank lines are not counted as `bad_lines`
 
-These behaviors are exercised by the Phase-6 crash-recovery tests in
+These behaviors are exercised by the crash-recovery tests in
 `tests/test_task_manager.py` (corrupt-line skip, partial-final-line truncate,
-running-at-crash → interrupted, empty-file replay, blank-line tolerance).
+running-at-crash with alive PID → stay running, running-at-crash with dead
+PID → interrupted, scheduled-overdue surfaces warning, empty-file replay,
+blank-line tolerance).
 
 ## Key Decisions
 

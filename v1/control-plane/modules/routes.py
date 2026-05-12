@@ -250,6 +250,65 @@ def vault_wiki(name):
     return jsonify({"file": rel, "content": content})
 
 
+def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path(".")) -> list[dict]:
+    """Walk <vault>/wiki/ recursively, returning sorted dirs + .md files.
+
+    Paths in the response are relative to the vault root (so the SPA can pass
+    them straight to GET /api/vaults/<name>/wiki?file=…). Hidden entries and
+    symlinks are skipped.
+    """
+    entries: list[dict] = []
+    base = wiki_root / rel
+    try:
+        children = sorted(base.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+    except OSError:
+        return entries
+    for child in children:
+        if child.name.startswith("."):
+            continue
+        if child.is_symlink():
+            continue
+        rel_child = (rel / child.name) if str(rel) != "." else Path(child.name)
+        vault_rel = (Path("wiki") / rel_child).as_posix()
+        if child.is_dir():
+            entries.append({
+                "type": "dir",
+                "name": child.name,
+                "path": vault_rel,
+                "children": _build_wiki_tree(wiki_root, vault_root, rel_child),
+            })
+        elif child.is_file() and child.suffix.lower() == ".md":
+            entries.append({
+                "type": "file",
+                "name": child.name,
+                "path": vault_rel,
+            })
+    return entries
+
+
+@bp.get("/api/vaults/<name>/wiki/tree")
+def vault_wiki_tree(name):
+    """Return the tree of markdown pages under <vault>/wiki/.
+
+    Powers the Wiki tab sidebar. Paths in the response are rooted at the
+    vault (e.g. ``wiki/overview.md``) so each entry can be passed straight
+    to ``GET /api/vaults/<name>/wiki?file=…``. Returns ``{"missing": true}``
+    when the vault has no ``wiki/`` directory yet (new vault, pre-bootstrap).
+    """
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    try:
+        vault_root = Path(v.path).resolve()
+    except (OSError, RuntimeError):
+        return jsonify({"error": "invalid vault path"}), 500
+    wiki_root = vault_root / "wiki"
+    if not wiki_root.is_dir():
+        return jsonify({"missing": True, "tree": []})
+    return jsonify({"missing": False, "tree": _build_wiki_tree(wiki_root, vault_root)})
+
+
 # ----- Help (in-app docs from the repo's man/ tree) -----
 def _man_root() -> Path:
     """Locate the man/ help tree.
@@ -454,6 +513,9 @@ def list_tasks():
 def create_task():
     body = request.get_json(force=True, silent=True) or {}
     tm = _ctx()["task_manager"]
+    scheduled_for = body.get("scheduled_for")
+    if isinstance(scheduled_for, str) and not scheduled_for.strip():
+        scheduled_for = None
     try:
         t = tm.create_task(
             name=body.get("name") or "task",
@@ -463,6 +525,7 @@ def create_task():
             priority=body.get("priority", "medium"),
             schedule=body.get("schedule", "background"),
             run_now=True,
+            scheduled_for=scheduled_for,
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -498,7 +561,7 @@ def promote_task(tid):
     tm = _ctx()["task_manager"]
     t = tm.promote(tid)
     if not t:
-        return jsonify({"error": "task not deferred"}), 400
+        return jsonify({"error": "task is not deferred or scheduled"}), 400
     return jsonify(t.to_dict())
 
 

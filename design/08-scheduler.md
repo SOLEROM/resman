@@ -14,6 +14,7 @@ startup report rather than causing silent job registration failures.
 | Job | Source | Fire condition | Cadence |
 |-----|--------|----------------|---------|
 | User cron tasks | `schedule.yaml` | `is_window_active()` must be true | User-defined cron expression |
+| One-shot scheduled tasks | EventBus `task_scheduled` event (i.e., a task created with `scheduled_for`) | Always (window-gating not applied to one-shots) | Single `DateTrigger` per task |
 | ObsidianPush | Built-in | Always (regardless of window state) | Every 60 seconds |
 
 ## Cron Task Fire Logic
@@ -54,13 +55,43 @@ APScheduler must never receive an invalid cron trigger string.
 Cron tasks with `vault: ALL` follow the same parent/child expansion as manual ALL-vault tasks.
 See `06-task-management.md` for the parent/child model.
 
+## One-Shot Scheduled Tasks
+
+A task created via `POST /api/tasks` with `scheduled_for: <future-ISO>` lands
+directly in `scheduled` state (see `06-task-management.md`). The TaskManager
+emits a `task_scheduled` event on the bus carrying `{task_id, scheduled_for}`.
+The Scheduler subscribes to this event and registers a one-shot
+`DateTrigger` keyed `task::<task_id>`:
+
+- Fire time: `scheduled_for` parsed as UTC.
+- Callback: `task_manager.promote(task_id)`, which transitions
+  `scheduled → pending` and dispatches through the existing path.
+- Job is removed automatically once fired.
+
+The Scheduler also subscribes to `task_updated`: if a `scheduled` task
+transitions to anything other than `scheduled` (the user cancelled it, or
+clicked `run-now`), the pending one-shot job is removed so it can't fire a
+second time. The map `_one_shot_jobs: Dict[task_id, job_id]` tracks live
+registrations.
+
+At startup, `start()` walks the in-memory task index for tasks already in
+`scheduled` state (from replay) and re-arms their triggers. Tasks whose
+`scheduled_for` is in the past at that moment are not auto-promoted —
+replay surfaces them as **overdue** warnings, and the UI shows a `run-now`
+button on the card so the user explicitly chooses to fire or cancel.
+
+One-shot scheduling and `vault: ALL` are mutually exclusive in v1; the
+combination is rejected at the API boundary.
+
 ## Key Decisions
 
 - **`GeventScheduler` required** — `BackgroundScheduler` deadlocks with eventlet subprocess
 - **Cron tasks skip, not defer** — no deferred-cron complexity; next scheduled occurrence is the retry; skips are visible in the event log
+- **One-shot scheduled tasks live in APScheduler, not in a separate timer thread** — same scheduler instance handles cron + one-shot; restart re-arms both via replay
+- **One-shot triggers re-armed via bus subscription** — TaskManager doesn't import Scheduler. The decoupling pays off here: `scheduled_for` paths just emit `task_scheduled` and the Scheduler reacts.
 - **ObsidianPush is a separate job** — not gated on window state; always runs
 - **Cron strings validated before APScheduler** — invalid strings surface at load time, not at first fire
-- **Dispatch goes through TaskManager** — cron tasks appear in the task list, get log files, and participate in the same state machine as manual tasks
+- **Dispatch goes through TaskManager** — cron tasks and one-shot scheduled tasks appear in the task list, get log files, and participate in the same state machine as manual tasks
 
 ## Constraints
 

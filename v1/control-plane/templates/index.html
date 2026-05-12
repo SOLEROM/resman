@@ -34,10 +34,21 @@
   </div>
   <nav class="header-tabs" id="header-tabs">
     <button class="tab" data-tab="wiki">Wiki</button>
+    <button class="tab" data-tab="ops" title="Open terminal sessions for this vault">Ops</button>
     <button class="tab" data-tab="tasks">Tasks</button>
     <button class="tab" data-tab="config">Config</button>
     <button class="tab" data-tab="help">Help</button>
   </nav>
+  <div class="header-vault-actions empty" id="header-vault-actions">
+    <span class="vault-context" id="vault-context">No vault selected</span>
+    <button id="btn-rename-tab" class="btn btn-sm" title="Rename active tab" aria-label="Rename active tab">✎</button>
+    <button id="btn-shell" class="btn btn-sm">+ Shell</button>
+    <button id="btn-claude" class="btn btn-sm btn-accent">+ Claude</button>
+    <button id="btn-obsidian" class="btn btn-sm">Obsidian</button>
+    <span class="ttyd-warning" id="ttyd-warning" hidden>
+      ttyd not installed
+    </span>
+  </div>
   <div class="header-status">
     <span class="status-dot" id="conn-dot"></span>
     <span id="conn-label">connecting...</span>
@@ -76,18 +87,7 @@
     </aside>
 
     <main class="main">
-      <section id="tab-terminal" class="tab-panel active">
-        <div class="toolbar vault-toolbar">
-          <span class="vault-context" id="vault-context">No vault selected</span>
-          <div class="spacer"></div>
-          <button id="btn-rename-tab" class="btn btn-sm" title="Rename active tab" aria-label="Rename active tab">✎</button>
-          <button id="btn-shell" class="btn btn-sm">+ Shell</button>
-          <button id="btn-claude" class="btn btn-sm btn-accent">+ Claude</button>
-          <button id="btn-obsidian" class="btn btn-sm">Open Obsidian</button>
-          <span class="ttyd-warning" id="ttyd-warning" hidden>
-            ttyd not installed — terminal sessions disabled
-          </span>
-        </div>
+      <section id="tab-ops" class="tab-panel active">
         <div class="term-tabs" id="term-tabs"></div>
         <div class="term-frames" id="term-frames"></div>
       </section>
@@ -102,8 +102,19 @@
           <button class="btn btn-sm" data-wiki-page="wiki/overview.md" title="Load wiki/overview.md">Overview</button>
           <button id="btn-wiki-refresh" class="btn btn-sm" title="Reload current page">↻</button>
         </div>
-        <div id="wiki-content" class="wiki-body">
-          <p class="muted">Select a vault to view its wiki.</p>
+        <div class="wiki-layout">
+          <aside class="wiki-tree" id="wiki-tree">
+            <div class="wiki-tree-header">
+              <span>Pages</span>
+              <button id="btn-wiki-tree-refresh" class="btn btn-xs" title="Reload tree">↻</button>
+            </div>
+            <div id="wiki-tree-list">
+              <p class="muted" style="padding:8px 12px">Select a vault.</p>
+            </div>
+          </aside>
+          <div id="wiki-content" class="wiki-body">
+            <p class="muted">Select a vault to view its wiki.</p>
+          </div>
         </div>
       </section>
 
@@ -112,27 +123,62 @@
           <span id="cron-skip-text"></span>
           <button class="btn btn-xs" id="cron-skip-dismiss">Dismiss</button>
         </div>
-        <div class="toolbar">
-          <select id="task-priority-filter">
-            <option value="">all priorities</option>
-            <option value="high">high</option>
-            <option value="medium">medium</option>
-            <option value="low">low</option>
-          </select>
-          <div class="spacer"></div>
-          <button id="btn-task-compact" class="btn btn-sm" title="Compact tasks.jsonl (snapshot terminal-state tasks &gt; 90 days old)">Compact log</button>
-          <button id="btn-new-task" class="btn btn-sm btn-accent">+ New Task</button>
+
+        <div class="task-trigger" id="task-trigger">
+          <div class="trigger-grid">
+            <label for="t-vault">Vault</label>
+            <div class="trigger-vault">
+              <select id="t-vault"></select>
+              <label class="all-toggle">
+                <input type="checkbox" id="t-all"> all vaults
+              </label>
+            </div>
+
+            <label for="t-op">Operation</label>
+            <select id="t-op"></select>
+
+            <label for="t-params-row" class="op-params-label">Parameters</label>
+            <div id="t-params-row" class="op-params"></div>
+
+            <label for="t-pri">Priority</label>
+            <div class="trigger-meta">
+              <select id="t-pri">
+                <option value="medium" selected>medium</option>
+                <option value="high">high</option>
+                <option value="low">low</option>
+              </select>
+            </div>
+
+            <label for="t-when">When</label>
+            <div class="trigger-meta">
+              <input type="datetime-local" id="t-when">
+              <span class="muted small">empty = run now</span>
+            </div>
+          </div>
+          <div class="trigger-actions">
+            <span id="t-error" class="trigger-error"></span>
+            <div class="spacer"></div>
+            <button id="btn-task-run" class="btn btn-accent">Run task</button>
+          </div>
         </div>
-        <div style="overflow:auto;flex:1">
-          <table class="task-table">
-            <thead>
-              <tr>
-                <th></th><th>state</th><th>operation</th><th>vault</th>
-                <th>priority</th><th>updated</th><th></th>
-              </tr>
-            </thead>
-            <tbody id="task-rows"></tbody>
-          </table>
+
+        <div class="task-queue">
+          <div class="toolbar">
+            <select id="task-priority-filter">
+              <option value="">all priorities</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+            <select id="task-state-filter">
+              <option value="active" selected>active</option>
+              <option value="recent">recent (24h)</option>
+              <option value="all">all</option>
+            </select>
+            <div class="spacer"></div>
+            <button id="btn-task-compact" class="btn btn-sm" title="Compact tasks.jsonl (snapshot terminal-state tasks &gt; 90 days old)">Compact log</button>
+          </div>
+          <div id="task-list" class="task-list"></div>
         </div>
       </section>
 

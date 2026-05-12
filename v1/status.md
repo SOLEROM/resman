@@ -1,11 +1,151 @@
 # resman — status snapshot
 
-**Last updated:** 2026-05-10
+**Last updated:** 2026-05-12
 **Branch:** main
-**Tests:** 126 passing (`/tmp/resman-venv/bin/python -m pytest`)
+**Tests:** 147 passing (`/tmp/resman-venv/bin/python -m pytest`)
 **Server entry:** `./run.sh` (use `--vname /path/to/venv` to point at a non-default Python venv; pass `--public` to expose on LAN)
 
 ## Recent additions (post-Phase 6)
+
+### Ops tab promoted to first-class header tab (2026-05-12)
+
+The terminal-sessions view (formerly nameless, accessed by clicking the
+vault label) is now a header tab named **Ops**, between Wiki and Tasks.
+Header order: Wiki · Ops · Tasks · Config · Help. The vault-name label in
+the header still works as an equivalent shortcut. Panel id renamed
+`tab-terminal` → `tab-ops`. Legacy `"terminal"` entries in the per-vault
+`localStorage` panel-memory are migrated to `"ops"` on load.
+
+Docs updated: `design/10-frontend.md`.
+
+### Sidebar `↘` button → ingest URL shortcut (2026-05-12)
+
+The `[▶]` mini-menu on each sidebar row (which used to ask "claude or
+shell?" and spawn a session) is repurposed as a one-click **URL ingest
+shortcut**. Click `↘`, paste a URL, and resman:
+1. selects that vault,
+2. POSTs a `wiki-ingest` task with `params:{url}` at normal priority,
+3. reloads the task list and switches to the **Tasks** tab so the new
+   task is immediately visible.
+
+Session spawning has moved entirely to the header's `+ Shell` / `+ Claude`
+buttons; the sidebar no longer offers that path. Light client-side URL
+validation (presence + `http(s)://` prefix); the operation-level params
+validator on the backend is authoritative.
+
+Docs updated: `design/10-frontend.md`.
+
+### Header layout + Wiki as default tab (2026-05-12)
+
+- **Per-vault action buttons moved to the header bar**, centered between
+  the tab strip and the connection indicator. The group contains the vault
+  name label + `✎` rename + `+ Shell` + `+ Claude` + `Obsidian` (renamed
+  from `Open Obsidian`) + the `ttyd not installed` warning. Hidden when no
+  vault is selected so the header stays clean on first paint.
+- **Per-vault panel memory**: each vault remembers its own last-seen
+  panel (Wiki / Tasks / Config / Terminal). Re-selecting the vault
+  restores its own state. Persisted to `localStorage` under
+  `resman-last-panel-by-vault` so it survives reload. Help is vault-
+  independent and is not remembered.
+- First-visit fallback (or remembered "terminal" but no live sessions):
+  vault with a live session → **Terminal**; vault with no sessions →
+  **Wiki**. Previously every click went to Terminal regardless.
+- Terminal panel no longer carries its own per-vault toolbar — the buttons
+  live globally in the header now.
+- `+ Shell` / `+ Claude` **auto-switch to the Terminal panel** after
+  spawning so the new iframe is visible (otherwise the click would appear
+  to do nothing from Wiki/Tasks/Config/Help).
+- Vault-name label in the header is **clickable** — jumps back to the
+  Terminal view. Restores the "open my sessions" navigation path the old
+  `click-vault → Terminal` behavior used to provide.
+
+Docs updated: `design/10-frontend.md`.
+
+### Wiki tab — page tree + clickable wikilinks (2026-05-12)
+
+- **Left sidebar tree** on the Wiki tab listing every `.md` under
+  `<vault>/wiki/`, recursively. Click to load; active page highlighted.
+  New endpoint `GET /api/vaults/{name}/wiki/tree` walks the directory
+  server-side (hidden + symlinks skipped) and returns sorted dirs + files
+  with vault-relative paths. Fresh vault → `{missing:true, tree:[]}` so
+  the SPA renders a "no wiki/ dir yet" placeholder.
+- **Clickable `[[wikilinks]]`** — a regex pass on the markdown source
+  before `marked.parse` rewrites `[[Page]]`, `[[Page|alias]]`, and
+  `![[Page]]` to inline `<a class="wikilink" data-wiki-target="…">`
+  anchors. A delegated click handler on `#wiki-content` resolves the
+  target against the cached tree (case-insensitive, `.md` optional,
+  subdir tolerated) and re-renders the new page in place — no browser
+  navigation. Missing target surfaces as the standard 404 in the content
+  pane.
+- 4 new tests in `test_routes.py` covering the tree endpoint (recursive
+  walk + sort + vault-relative paths, missing dir flag, unknown vault,
+  dotfile + symlink exclusion).
+
+Docs updated: `design/00-README.md`, `design/09-api.md`,
+`design/10-frontend.md`, `man/wiki.md`.
+
+### Phase 8 — Tasks UX redesign (Phase A from `plan5.md`)
+
+- **Operations-first trigger panel** replacing the old `+ New Task` modal:
+  inline form at the top of the Tasks tab with vault selector + `all vaults`
+  toggle, operation dropdown grouped by Wiki / Research / Custom, per-op
+  parameter fields (no JSON textarea), priority, and a `datetime-local`
+  **When** input (empty = run now, future = schedule one-shot).
+- **Task cards** replace the flat table. Click the card head or the `log`
+  button to expand; the card shows params, error, scheduled time, and a
+  **live-tailing log pane** subscribed to `task_log_appended` Socket.IO
+  chunks. State filter (`active` default | `recent (24h)` | `all`).
+- **Cancel running** — `DELETE /api/tasks/{id}` now terminates running
+  subprocesses (`SIGTERM` → 5 s grace → `SIGKILL`) and writes a `cancelled`
+  event. Streaming runner tracks Popen handles in `task_manager._procs`.
+- **`scheduled` task state** — new discrete state in the lifecycle. The
+  Scheduler arms a one-shot APScheduler `DateTrigger` that calls
+  `promote(task_id)` at the chosen moment. Cancelling a scheduled task
+  removes the trigger. Mixing `scheduled_for` with `vault: ALL` is rejected
+  in v1. Overdue scheduled tasks (server was down at fire time) keep the
+  state and surface in startup warnings; the UI shows an overdue badge with
+  a `run-now` button.
+- **PTY-based streaming runner + 5 MB log cap** — production
+  `_run_streaming` spawns the child against a `pty.openpty()` master so
+  CLIs that block-buffer when stdout is a pipe (`claude -p` among them)
+  keep line-buffering and produce live output. A dedicated reader thread
+  drains the master fd and emits `task_log_appended` chunks while writing
+  the same bytes to `config/task-logs/<task_id>.log`. Output beyond
+  `LOG_MAX_BYTES` is dropped with a marker so a runaway claude session
+  can't OOM the browser. Pipe fallback if `/dev/ptmx` is unavailable.
+- **PID-aware replay** — `started` events carry the PID; replay uses
+  `os.kill(pid, 0)` to distinguish "control-plane restarted with subprocess
+  still alive" (stays `running`) from "process is gone" (flips to
+  `interrupted`).
+- **Async dispatch under eventlet** — `server.py` wires
+  `task_manager.set_executor(eventlet.spawn)` so `POST /api/tasks` returns
+  immediately while the streaming runner runs in its own greenlet; cancel
+  and live-log subscriptions reach the live process via the bus.
+- 17 new tests across `test_task_manager.py` and `test_routes.py` covering
+  scheduling, cancel-running, streaming chunks, log cap, PID-aware replay,
+  and route-level `scheduled_for` validation.
+
+Design + man docs updated for the redesign:
+- `design/00-README.md` — added Phase 8 table.
+- `design/01-architecture.md` — TaskManager/Scheduler component notes.
+- `design/06-task-management.md` — PTY note, async dispatch, scheduled
+  state, cancel-running semantics, key decisions section.
+- `design/08-scheduler.md` — one-shot DateTrigger model, `task_scheduled`
+  bus subscription, overdue-replay rules.
+- `design/09-api.md` — `scheduled_for`, `task_log_appended`,
+  `task_scheduled`, cancel-running on DELETE.
+- `design/10-frontend.md` — operations-first Tasks tab rewrite.
+- `design/12-error-handling.md` — PID-aware replay, overdue-scheduled,
+  PTY-fallback, log-cap, cancel-running rows.
+- `man/index.md` — Tasks bullet updated.
+- `man/tasks.md` — full rewrite.
+- `man/scheduler.md` — recurring vs one-shot distinction.
+- `man/troubleshooting.md` — added live-log/buffering, log-cap,
+  cancel-stuck, and "connecting…" entries.
+- `man/reference/api.md` — full Socket.IO event table including the two
+  new events; Tasks endpoint table reflects scheduled_for + cancel.
+
+### Earlier in 2026-05-10
 
 - **`--public` / `--host` flags** — expose Flask + ttyd on the LAN; CORS
   relaxed; iframe URLs derived from `window.location.hostname` so they work

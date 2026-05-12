@@ -45,10 +45,11 @@ is fine — the window is just closed. See [window-state](window-state.md).
 If the banner is *not* there and the task didn't run, check the server log
 where you started `run.sh` — APScheduler logs every fire.
 
-## "Open Obsidian" button does nothing
+## "Obsidian" button does nothing
 
-The button uses `app.obsidian_cmd` from `system.yaml`. If that command
-doesn't exist on `$PATH` you'll get a 400 with `obsidian binary not found`.
+The header **Obsidian** button uses `app.obsidian_cmd` from `system.yaml`.
+If that command doesn't exist on `$PATH` you'll get a 400 with
+`obsidian binary not found`.
 Common values:
 
 ```yaml
@@ -84,6 +85,62 @@ app:
 ```
 
 Then click ↻ in the Help tab.
+
+## Task is running but its log pane is empty / not updating
+
+Live tailing depends on the child process flushing its stdout. Most CLIs
+line-buffer when they detect a TTY and block-buffer (~4 KB) when they
+detect a pipe. resman gives every task a **pseudo-terminal** (`pty.openpty`)
+specifically to keep CLIs in line-buffered mode — so this should be rare.
+
+If it's still happening:
+
+- Confirm the card's state is actually `running` (yellow border, ▶ icon).
+  If it's `completed` the run is already over; click `re-run` and watch
+  again.
+- Check that the child isn't doing its own internal buffering. For Python
+  children, prefer `python -u`. For `claude -p`, the PTY handles it.
+- In a container without `/dev/ptmx`, `pty.openpty()` fails and the runner
+  falls back to a pipe. A warning is logged at startup. Output will only
+  appear in chunks when the child flushes, typically at exit. To regain
+  live tailing, ensure the host exposes `/dev/ptmx` (most Docker setups
+  do by default; some `lxc` profiles don't).
+
+The full log is always captured to `config/task-logs/<task_id>.log`
+regardless of whether live tailing works.
+
+## Output stopped mid-task with "[output capped]"
+
+A single task's log file is capped at 5 MB (`LOG_MAX_BYTES` in
+`task_manager.py`). When the cap is hit the runner writes one marker and
+discards the rest of the output — this prevents a runaway plugin from
+filling your disk or OOMing the browser via Socket.IO. The subprocess keeps
+running normally; only the visible/recorded output is dropped.
+
+If you need the full output, raise the cap by editing the constant or wrap
+the task to redirect its own output to a file you control.
+
+## Can't cancel a stuck task
+
+The `cancel` button on a `running` card sends `SIGTERM`, waits 5 seconds,
+then `SIGKILL`. If the card still says `running` after that:
+
+- A child of the child (e.g., `claude` shelling out to git) may have
+  inherited the signal mask and ignored TERM. Find the process tree with
+  `ps -ef --forest | grep <pid>` (PID is on the card's expanded view) and
+  kill the leaf yourself.
+- The task manager's `_finalize` won't run until `proc.wait()` returns, so
+  the card stays `running` until the process actually exits.
+
+After manual kill the next replay/load will pick up the dead PID and flip
+the state to `interrupted`.
+
+## "Connecting..." spinner that never goes away
+
+Almost always a JavaScript syntax error or a 5xx on the index page —
+nothing resman-specific. Open the browser dev tools console and look at the
+first red line. The most common cause across edits is a duplicated
+`const`/`let` declaration in `app.js`. Reload after fixing.
 
 ## Tests fail with import errors
 

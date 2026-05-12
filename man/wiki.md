@@ -16,18 +16,27 @@ is shown. The toolbar exposes three explicit page buttons plus a reload:
 - **Hot** — loads `wiki/hot.md`
 - **Index** — loads `wiki/index.md`
 - **Overview** — loads `wiki/overview.md`
-- **↻** — reloads the current page
+- **↻** — reloads the current page (also reloads the tree)
+
+## Sidebar page tree
+
+The Wiki tab has a **left sidebar** listing every markdown page under
+`<vault>/wiki/` (recursively). Click a page to load it. The active page is
+highlighted. Subdirectories nest under their parent. Click the sidebar's
+**↻** to refresh the tree without reloading the current page.
 
 ## API
 
-The browser fetches:
+The browser fetches two endpoints:
 
 ```
-GET /api/vaults/<name>/wiki?file=wiki/overview.md
+GET /api/vaults/<name>/wiki/tree            ← the sidebar tree
+GET /api/vaults/<name>/wiki?file=…          ← a single page's markdown
 ```
 
 Path traversal is blocked server-side — the resolved file must live under the
-vault directory.
+vault directory. The tree endpoint returns `{"missing": true, "tree": []}` if
+the vault has no `wiki/` directory yet.
 
 ## When there is no wiki yet
 
@@ -46,16 +55,24 @@ That's the cue to:
 ## Editing wiki pages
 
 The Wiki tab is **read-only**. Edit pages either inside Obsidian (click
-**Open Obsidian** in the Terminal tab) or by editing the file on disk
+the **Obsidian** button in the header) or by editing the file on disk
 directly.
 
 ## Linking between pages
 
-Internal markdown links inside a wiki page are not yet rewritten. If your
-wiki uses Obsidian-style `[[wikilinks]]` they will render as plain text.
-Standard markdown links to relative `.md` files work via the URL bar but the
-SPA does not yet provide a navigation overlay — open the file directly via
-Obsidian or the terminal.
+**Obsidian-style `[[wikilinks]]` are clickable.** They render as dashed
+underlined links inside the wiki page; clicking one loads the target page in
+the Wiki tab. Both syntaxes are supported:
+
+- `[[Page Name]]` — link text is the page name, target resolves to
+  `wiki/Page Name.md` (or a near match in the tree if the file lives in a
+  subdir or uses a different case).
+- `[[Page Name|alias]]` — link text is `alias`, target resolves the same way.
+- `![[Page Name]]` — embed syntax collapses to a regular link in v1.
+
+If the target doesn't exist on disk, the content pane shows the standard
+"not found" error and the sidebar tree stays as-is — useful for spotting
+broken links.
 
 ## Where the field "wiki home" comes from
 

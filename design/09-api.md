@@ -18,17 +18,18 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | POST | `/api/vaults/scaffold` | Run `tools/new-vault.sh` to create the directory tree (path, `.obsidian/`, `inbox/`, `_resman/`, README, gitignore). Body: `{name, path}` |
 | GET | `/api/vaults/{name}/health` | Vault health check: path, .obsidian/, wiki home (`wiki/overview.md`), last session, last completed task, tags |
 | GET | `/api/vaults/{name}/wiki` | Read raw markdown of a wiki page produced by the Claude wiki plugin. Defaults to `wiki/overview.md`; the three canonical pages exposed in the toolbar are `wiki/hot.md`, `wiki/index.md`, `wiki/overview.md`. Other pages reachable via `?file=wiki/<page>.md`. Path-traversal blocked. Used by the **Wiki** tab |
+| GET | `/api/vaults/{name}/wiki/tree` | Walk `<vault>/wiki/` recursively, returning sorted dirs + `.md` files for the Wiki tab's sidebar tree. Paths are vault-relative (e.g. `wiki/sources/foo.md`). Hidden entries and symlinks are skipped. Returns `{missing: true, tree: []}` when the vault has no `wiki/` directory yet (fresh / pre-bootstrap) |
 | POST | `/api/vaults/{name}/open` | Launch Obsidian for this vault using `obsidian_cmd` from system.yaml; subprocess detached, vault path appended as a final arg |
 | GET | `/api/fs/list?path=…` | Read-only directory listing for the server-side folder picker. Returns `{path, parent, home, entries: [{name, path, is_obsidian}]}`. Hides dotfile directories. No CSRF (read-only GET) |
 | GET | `/api/sessions` | List live terminal sessions and `available` flag (ttyd installed) |
 | POST | `/api/sessions` | Spawn terminal session (vault, type: `claude`\|`shell`, optional `initial_command`); 503 if ttyd missing |
 | DELETE | `/api/sessions/{id}` | Kill a terminal session (terminate ttyd; tmux session survives) |
 | GET | `/api/tasks` | List tasks (filters: vault, priority, status, limit, offset) |
-| POST | `/api/tasks` | Create a task |
+| POST | `/api/tasks` | Create a task. Optional `scheduled_for: ISO8601` parks the task in `scheduled` state for one-shot future firing; rejected if combined with `vault: ALL` or with a past timestamp |
 | GET | `/api/tasks/{id}` | Get single task state |
-| GET | `/api/tasks/{id}/log` | Get task execution log |
-| DELETE | `/api/tasks/{id}` | Cancel a pending/deferred task (writes `cancelled` event) |
-| POST | `/api/tasks/{id}/promote` | Promote deferred task to pending |
+| GET | `/api/tasks/{id}/log` | Get task execution log (full backlog; live tail is via the `task_log_appended` Socket.IO event) |
+| DELETE | `/api/tasks/{id}` | Cancel a pending / deferred / scheduled / **running** task. Running tasks receive `SIGTERM` then `SIGKILL` after a 5 s grace. Writes `cancelled` event |
+| POST | `/api/tasks/{id}/promote` | Promote a deferred **or** scheduled task to pending and dispatch immediately |
 | POST | `/api/tasks/{id}/archive` | Archive a terminal-state task |
 | POST | `/api/tasks/compact` | Trigger manual JSONL compaction |
 | GET | `/api/window` | Get current window state |
@@ -93,6 +94,8 @@ Individual call sites do not check or set the header directly.
 | `child_state_changed` | A child task changes state | `{parent_id, child_id, state}` |
 | `config_reloaded` | Config saved successfully | `{}` |
 | `task_updated` | Any task state change | `{task_id, state}` |
+| `task_log_appended` | A line of stdout/stderr from a running task | `{task_id, chunk}` |
+| `task_scheduled` | A task entered `scheduled` state and needs a one-shot trigger | `{task_id, scheduled_for}` |
 | `cron_skip_warning` | cron task skip_count > 2 | `{cron_name, skip_count, last_fired_at}` |
 
 ## ttyd Graceful Degradation

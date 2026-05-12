@@ -9,8 +9,9 @@ resman expects a Linux host with:
 - **ttyd** — optional. Without it, terminal sessions are disabled but the rest
   of the panel works fine.
 - **Python 3.10+** — for the venv that runs Flask + Socket.IO.
-- **Obsidian** — optional. Only needed if you want the *Open Obsidian* button
-  to do anything; otherwise resman just reads files from your vault paths.
+- **Obsidian** — optional. Only needed if you want the *Obsidian* button
+  in the header to do anything; otherwise resman just reads files from
+  your vault paths.
 
 Run `./deps.sh --check` from `v1/` to verify what's installed.
 

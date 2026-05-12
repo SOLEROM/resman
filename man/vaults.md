@@ -58,6 +58,15 @@ Click the `⚠` or `?` icon next to a vault to see:
 - **Last active session** — last time you spawned a terminal here
 - **Last completed task** — last time a task finished or failed
 
+## The `↘` button (ingest URL shortcut)
+
+Each vault row has a small `↘` button on the right. Click it to queue a
+**wiki-ingest** task for that vault — resman prompts for a URL, posts a
+task with `operation: wiki-ingest, params: {url}`, and switches to the
+**Tasks** tab so you can watch it run. Equivalent to filling the trigger
+form on the Tasks tab with `wiki-ingest` and the URL, but a single click
+away.
+
 ## Removing a vault
 
 Delete it from `system.yaml` and reload. resman never deletes vault

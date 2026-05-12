@@ -13,9 +13,9 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 
 - [Getting started](getting-started.md) — first-run setup, deps, launching
 - [Vaults](vaults.md) — registering, discovering, scaffolding, health
-- [Sessions](sessions.md) — Claude vs shell, tabs, renaming, opening Obsidian
-- [Tasks](tasks.md) — the task queue, ALL-vault parent/child, compaction
-- [Wiki](wiki.md) — the per-vault Wiki tab and the Claude wiki plugin
+- [Sessions](sessions.md) — Ops tab, Claude vs shell, tabs, renaming, Obsidian
+- [Tasks](tasks.md) — operations-first trigger, live logs, scheduling, ALL-vault parent/child, cancel/compaction; sidebar `↘` shortcut for URL ingest
+- [Wiki](wiki.md) — the per-vault Wiki tab, sidebar page tree, clickable `[[wikilinks]]`
 - [Window state](window-state.md) — when work is allowed to run
 - [Scheduler](scheduler.md) — cron tasks and skip-when-inactive
 - [Configuration](config.md) — `system.yaml` and `schedule.yaml`

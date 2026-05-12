@@ -67,9 +67,12 @@ Flask + eventlet (port 5090)
   ├── EventBus          — internal pub/sub; decouples WindowState ↔ TaskManager
   ├── VaultRegistry     — vault list from system.yaml + .obsidian/ validation
   ├── SessionManager    — spawn/kill ttyd processes; port registry; SessionMonitor
-  ├── TaskManager       — priority queue, dispatch mutex, parent/child, JSONL log
+  ├── TaskManager       — priority queue, dispatch mutex, parent/child, JSONL log,
+  │                        PTY-based streaming runner (live log chunks on bus),
+  │                        scheduled state + Popen tracking for cancel-running
   ├── WindowState       — is_window_active() gate
-  ├── Scheduler         — GeventScheduler cron; ObsidianPush 60s job
+  ├── Scheduler         — GeventScheduler cron; ObsidianPush 60s job;
+  │                        one-shot DateTrigger per scheduled task
   ├── TmuxManager       — tmux session lifecycle; reconcile() on restart
   └── ObsidianPush      — writes _resman/status.md into each vault
 

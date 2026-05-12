@@ -16,6 +16,8 @@ EVENT_NAMES = (
     "child_state_changed",
     "config_reloaded",
     "task_updated",
+    "task_log_appended",
+    "task_scheduled",
     "cron_skip_warning",
 )
 

@@ -16,7 +16,10 @@ class FakeWindow:
         return self.active
 
 
-def make_tm(tmp_path: Path, vaults=("alpha",), active=True, runner=None):
+_DEFAULT_RUNNER = object()  # sentinel — distinct from None ("production streaming")
+
+
+def make_tm(tmp_path: Path, vaults=("alpha",), active=True, runner=_DEFAULT_RUNNER):
     log_path = tmp_path / "tasks.jsonl"
     log_dir = tmp_path / "task-logs"
     bus = EventBus()
@@ -24,8 +27,11 @@ def make_tm(tmp_path: Path, vaults=("alpha",), active=True, runner=None):
     vault_paths = {v: str(tmp_path / v) for v in vaults}
     for v in vaults:
         Path(vault_paths[v]).mkdir(parents=True, exist_ok=True)
-    if runner is None:
+    if runner is _DEFAULT_RUNNER:
         runner = lambda cmd, cwd, log_file: 0
+    # Passing runner=None to make_tm now exercises the production streaming
+    # runner (real subprocess + bus chunk emission); useful for the streaming
+    # / cancel-running tests below.
     tm = TaskManager(
         log_path=log_path,
         log_dir=log_dir,
@@ -406,3 +412,282 @@ def test_replay_skips_blank_lines(tmp_path):
     summary = _replay_at(tm, log)
     assert summary["bad_lines"] == 0
     assert tm.get("t-ddd") is not None
+
+
+# ============================================================================
+# scheduled_for / scheduled state
+# ============================================================================
+
+def _future_iso(seconds: int = 3600) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (
+        datetime.now(timezone.utc).replace(microsecond=0)
+        + timedelta(seconds=seconds)
+    ).isoformat().replace("+00:00", "Z")
+
+
+def _past_iso(seconds: int = 3600) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (
+        datetime.now(timezone.utc).replace(microsecond=0)
+        - timedelta(seconds=seconds)
+    ).isoformat().replace("+00:00", "Z")
+
+
+def test_scheduled_for_creates_scheduled_state(tmp_path):
+    """A task with scheduled_for in the future does not dispatch immediately;
+    it sits in `scheduled` state and writes a `scheduled` JSONL event so the
+    Scheduler can re-arm its one-shot trigger across restarts."""
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append(cmd); return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    when = _future_iso(3600)
+    t = tm.create_task("x", "alpha", "wiki-lint", {}, "high", scheduled_for=when)
+    assert t.state == "scheduled"
+    assert t.scheduled_for is not None
+    # Runner was never called — task is parked.
+    assert runner_calls == []
+    # The scheduled event is in the log.
+    events = [json.loads(l) for l in (tmp_path / "tasks.jsonl").read_text().splitlines() if l]
+    kinds = [e["event"] for e in events if e.get("task_id") == t.id]
+    assert "scheduled" in kinds
+    assert "started" not in kinds
+
+
+def test_scheduled_for_in_past_rejected(tmp_path):
+    """Scheduling in the past is a user error — fail loud at the API boundary
+    instead of silently re-interpreting it as 'now'."""
+    tm, _, _ = make_tm(tmp_path)
+    with pytest.raises(ValueError):
+        tm.create_task("x", "alpha", "wiki-lint", {}, "high",
+                       scheduled_for=_past_iso(60))
+
+
+def test_scheduled_for_with_all_vault_rejected(tmp_path):
+    """Mixing scheduled_for with vault=ALL is rejected in v1 — parent/child
+    fan-out plus one-shot scheduling combinatorics are not worth the
+    complexity until someone actually asks for it."""
+    tm, _, _ = make_tm(tmp_path, vaults=("alpha", "beta"))
+    with pytest.raises(ValueError):
+        tm.create_task("x", "ALL", "wiki-lint", {}, "high",
+                       scheduled_for=_future_iso(60))
+
+
+def test_scheduled_task_emits_task_scheduled_event_on_bus(tmp_path):
+    """The Scheduler subscribes to `task_scheduled` to arm a one-shot
+    DateTrigger; the bus event must carry both task_id and scheduled_for."""
+    tm, _, bus = make_tm(tmp_path)
+    seen = []
+    bus.subscribe("task_scheduled", lambda p: seen.append(p))
+    when = _future_iso(3600)
+    t = tm.create_task("x", "alpha", "wiki-lint", {}, "high", scheduled_for=when)
+    assert any(p.get("task_id") == t.id and p.get("scheduled_for") for p in seen)
+
+
+def test_promote_works_on_scheduled_state(tmp_path):
+    """`promote` is the same code path used by the Scheduler's one-shot
+    fire — it must transition `scheduled` to `pending` and dispatch."""
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append(cmd); return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    t = tm.create_task("x", "alpha", "wiki-lint", {}, "high",
+                       scheduled_for=_future_iso(3600))
+    promoted = tm.promote(t.id)
+    assert promoted is not None
+    # After promote, the task ran to completion via the runner.
+    assert runner_calls
+    assert tm.get(t.id).state == "completed"
+
+
+def test_cancel_scheduled_task(tmp_path):
+    """A scheduled task must be cancellable before it fires — otherwise the
+    user has no way to abort a 'do this at 23:00' decision they regret at
+    22:55."""
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("x", "alpha", "wiki-lint", {}, "high",
+                       scheduled_for=_future_iso(3600))
+    assert tm.cancel(t.id) is True
+    assert tm.get(t.id).state == "cancelled"
+
+
+def test_replay_overdue_scheduled_surfaces_warning(tmp_path):
+    """If the server was down at the moment a scheduled task should have
+    fired, replay leaves the task in `scheduled` state but surfaces a
+    warning. The UX shows it with an 'overdue' badge so the user picks
+    whether to run-now or cancel."""
+    created = json.dumps({
+        "ts": "2026-01-01T00:00:00Z", "event": "created", "task_id": "t-sch",
+        "data": {"name": "x", "vault": "alpha", "operation": "wiki-lint",
+                  "params": {}, "priority": "high", "schedule": "background",
+                  "parent_id": None, "scheduled_for": "2026-01-01T00:00:00Z"},
+    })
+    scheduled = json.dumps({
+        "ts": "2026-01-01T00:00:00Z", "event": "scheduled", "task_id": "t-sch",
+        "scheduled_for": "2026-01-01T00:00:00Z",
+    })
+    log = _write_corrupt_log(tmp_path, created + "\n" + scheduled + "\n")
+    tm, _, _ = make_tm(tmp_path)
+    summary = _replay_at(tm, log)
+    t = tm.get("t-sch")
+    assert t is not None
+    assert t.state == "scheduled"
+    assert any("overdue" in w for w in summary.get("warnings", []))
+
+
+# ============================================================================
+# cancel running + streaming + PID-aware replay
+# ============================================================================
+
+def _spawn_threaded(tm):
+    """Use a background thread to run the streaming dispatch so tests can
+    race with cancel/inspect _procs while the task is still running.
+    Mirrors what server.py does with eventlet.spawn in production."""
+    import threading
+    tm.set_executor(
+        lambda task: threading.Thread(
+            target=tm._execute, args=(task,), daemon=True,
+        ).start()
+    )
+
+
+def test_cancel_running_task_terminates_process(tmp_path):
+    """A `running` task must be killable — the v0 implementation only
+    accepted pending/deferred, leaving the user with no way to stop a
+    hung claude session."""
+    import time
+    tm, _, _ = make_tm(tmp_path, runner=None)  # production streaming path
+    _spawn_threaded(tm)
+    t = tm.create_task(
+        "sleep", "alpha", "run-shell", {"cmd_parts": ["sleep", "30"]}, "high",
+    )
+    for _ in range(200):
+        if t.id in tm._procs:
+            break
+        time.sleep(0.02)
+    assert t.id in tm._procs, "Popen handle should be tracked for running task"
+    ok = tm.cancel(t.id)
+    assert ok is True
+    assert tm.get(t.id).state == "cancelled"
+
+
+def test_streaming_runner_emits_task_log_appended(tmp_path):
+    """The streaming runner must emit log chunks on the bus so the SPA can
+    live-tail the output without polling /api/tasks/<id>/log."""
+    import time
+    tm, _, bus = make_tm(tmp_path, runner=None)
+    _spawn_threaded(tm)
+    chunks = []
+    bus.subscribe("task_log_appended", lambda p: chunks.append(p))
+    t = tm.create_task(
+        "echo", "alpha", "run-shell",
+        {"cmd_parts": ["sh", "-c", "echo hello && echo world"]}, "high",
+    )
+    deadline = time.time() + 5
+    while time.time() < deadline and tm.get(t.id).state == "running":
+        time.sleep(0.02)
+    # Give the bus a brief moment to drain final chunks after process exit.
+    time.sleep(0.05)
+    matching = [c for c in chunks if c.get("task_id") == t.id]
+    text = "".join(c.get("chunk", "") for c in matching)
+    assert "hello" in text and "world" in text
+
+
+def test_streaming_runner_records_pid_in_started_event(tmp_path):
+    """The `started` event must carry the PID so replay can use
+    os.kill(pid, 0) to distinguish 'crashed during run' from 'survived
+    server reload' instead of unconditionally marking interrupted."""
+    import time
+    tm, _, _ = make_tm(tmp_path, runner=None)
+    _spawn_threaded(tm)
+    t = tm.create_task(
+        "echo", "alpha", "run-shell",
+        {"cmd_parts": ["sh", "-c", "echo done"]}, "high",
+    )
+    deadline = time.time() + 5
+    while time.time() < deadline and tm.get(t.id).state == "running":
+        time.sleep(0.02)
+    time.sleep(0.05)
+    events = [json.loads(l) for l in (tmp_path / "tasks.jsonl").read_text().splitlines() if l]
+    started = [e for e in events if e.get("event") == "started" and e.get("task_id") == t.id]
+    assert started, "expected a started event"
+    assert isinstance(started[0].get("pid"), int)
+    assert started[0]["pid"] > 0
+
+
+def test_streaming_runner_caps_log_size(tmp_path):
+    """A runaway plugin output (GB-scale) would OOM the browser if we
+    streamed every byte. The runner truncates with a marker once the cap
+    is exceeded."""
+    import time
+    tm, _, bus = make_tm(tmp_path, runner=None)
+    _spawn_threaded(tm)
+    chunks = []
+    bus.subscribe("task_log_appended", lambda p: chunks.append(p))
+    from modules import task_manager as tm_mod
+    original_cap = tm_mod.LOG_MAX_BYTES
+    tm_mod.LOG_MAX_BYTES = 128
+    try:
+        t = tm.create_task(
+            "noise", "alpha", "run-shell",
+            {"cmd_parts": ["sh", "-c", "yes hello | head -c 5000"]}, "high",
+        )
+        deadline = time.time() + 10
+        while time.time() < deadline and tm.get(t.id).state == "running":
+            time.sleep(0.02)
+        time.sleep(0.05)
+    finally:
+        tm_mod.LOG_MAX_BYTES = original_cap
+    text = "".join(c.get("chunk", "") for c in chunks if c.get("task_id") == t.id)
+    assert "output capped" in text
+
+
+def test_replay_with_alive_pid_keeps_task_running(tmp_path):
+    """A `running` task whose recorded PID is still alive must NOT be
+    marked interrupted on replay. Only genuinely dead PIDs flip to
+    interrupted. Use os.getpid() as a guaranteed-alive PID."""
+    import os
+    alive_pid = os.getpid()
+    created = json.dumps({
+        "ts": "2026-01-01T00:00:00Z", "event": "created", "task_id": "t-live",
+        "data": {"name": "x", "vault": "alpha", "operation": "wiki-lint",
+                  "params": {}, "priority": "high", "schedule": "background",
+                  "parent_id": None},
+    })
+    started = json.dumps({
+        "ts": "2026-01-01T00:00:01Z", "event": "started",
+        "task_id": "t-live", "pid": alive_pid,
+    })
+    log = _write_corrupt_log(tmp_path, created + "\n" + started + "\n")
+    tm, _, _ = make_tm(tmp_path)
+    _replay_at(tm, log)
+    t = tm.get("t-live")
+    assert t is not None
+    # Process is alive → task stays in running, not interrupted.
+    assert t.state == "running"
+
+
+def test_replay_with_dead_pid_marks_interrupted(tmp_path):
+    """A `running` task whose PID is gone is genuinely interrupted — same
+    behavior as the v0 unconditional rule, but now backed by a real check."""
+    # PID 1 is init/systemd and exists on Linux; we want a definitely-dead PID.
+    # Pick a very high PID number that won't be in use. Use the 32-bit max
+    # range; the kernel won't have allocated this.
+    dead_pid = 999999
+    created = json.dumps({
+        "ts": "2026-01-01T00:00:00Z", "event": "created", "task_id": "t-dead",
+        "data": {"name": "x", "vault": "alpha", "operation": "wiki-lint",
+                  "params": {}, "priority": "high", "schedule": "background",
+                  "parent_id": None},
+    })
+    started = json.dumps({
+        "ts": "2026-01-01T00:00:01Z", "event": "started",
+        "task_id": "t-dead", "pid": dead_pid,
+    })
+    log = _write_corrupt_log(tmp_path, created + "\n" + started + "\n")
+    tm, _, _ = make_tm(tmp_path)
+    _replay_at(tm, log)
+    t = tm.get("t-dead")
+    assert t is not None
+    assert t.state == "interrupted"

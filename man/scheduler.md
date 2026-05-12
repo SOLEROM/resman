@@ -1,9 +1,15 @@
 # Scheduler
 
 resman ships an APScheduler `GeventScheduler` (cooperative with eventlet) that
-runs cron-style tasks defined in `config/schedule.yaml`. It also runs the
-**ObsidianPush** job — a 60-second loop that writes `_resman/status.md` into
-each vault so the panel's state shows up in Obsidian's graph view.
+runs three kinds of jobs:
+
+1. **Recurring cron tasks** defined in `config/schedule.yaml`.
+2. **One-shot scheduled tasks** — anything created from the **Tasks** tab
+   with a `When` value set. These are individually-registered `DateTrigger`
+   jobs that fire once and disappear.
+3. **ObsidianPush** — a built-in 60-second loop that writes
+   `_resman/status.md` into each vault so the panel's state shows up in
+   Obsidian's graph view.
 
 ## Defining a cron task
 
@@ -22,7 +28,8 @@ runs at save time — bad strings are rejected before the file is written.
 
 ## Skip when inactive
 
-When a cron fires while the [window is inactive](window-state.md), resman:
+When a recurring cron fires while the [window is inactive](window-state.md),
+resman:
 
 1. Increments a per-cron `skip_count`.
 2. Records the last attempted fire time.
@@ -30,6 +37,27 @@ When a cron fires while the [window is inactive](window-state.md), resman:
    banner.
 
 The task is **not** queued — it just skips this fire.
+
+> Window-gating applies to recurring cron tasks **only**. One-shot scheduled
+> tasks (set via `When` on the trigger panel) fire at their exact moment
+> regardless of window state — they were chosen explicitly by the operator,
+> so resman does not second-guess them.
+
+## One-shot scheduled tasks
+
+When you set **When** on the Tasks trigger panel, resman writes a `scheduled`
+event to `tasks.jsonl`, parks the task in `scheduled` state, and registers a
+single APScheduler `DateTrigger` keyed `task::<task_id>`. When the moment
+arrives the trigger calls `promote(task_id)` and the task flows through the
+normal dispatch path (just like clicking Run task with no `When`).
+
+Cancelling a `scheduled` task removes its trigger immediately. If the
+control-plane was offline when the trigger should have fired, the task stays
+in `scheduled` state with an **overdue** badge on its card — click `run-now`
+to fire it or `cancel` to abandon. resman never auto-promotes overdue
+tasks; the decision is yours.
+
+`When` and `all vaults` are mutually exclusive in v1.
 
 ## ObsidianPush
 
@@ -64,5 +92,7 @@ For development:
 ./run.sh --no-scheduler
 ```
 
-The cron tasks defined in `schedule.yaml` won't fire, and ObsidianPush won't
-push. Manually-created tasks are unaffected.
+The cron tasks defined in `schedule.yaml` won't fire, ObsidianPush won't
+push, and **one-shot scheduled tasks won't auto-fire either** — they'll sit
+in `scheduled` state until you either re-enable the scheduler or click
+`run-now` on the card. Manually-created (run-now) tasks are unaffected.

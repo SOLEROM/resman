@@ -112,8 +112,39 @@ html, body {
   color: var(--text-primary); border-bottom-color: var(--accent);
 }
 
+/* Per-vault action buttons live in the header, between the tabs and the
+   connection indicator. The whole group is hidden until a vault is
+   selected so the header stays empty on first paint. The vault-context
+   label inside shows the active vault name so the user can confirm what
+   the buttons act on. */
+.header-vault-actions {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.header-vault-actions.empty > .btn,
+.header-vault-actions.empty > .ttyd-warning,
+.header-vault-actions.empty > .vault-context { display: none; }
+.header-vault-actions .vault-context {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.header-vault-actions .vault-context:hover {
+  background: var(--bg-elevated);
+}
+.header-vault-actions .ttyd-warning {
+  font-size: 11px;
+  color: var(--warning, #c08a2c);
+}
+
 .header-status {
-  margin-left: auto; display: flex; align-items: center;
+  display: flex; align-items: center;
   gap: 10px; color: var(--text-secondary); font-size: 12px;
 }
 
@@ -351,35 +382,136 @@ button.ghost:hover { color: var(--text-primary); }
   color: var(--text-muted); font-size: 13px;
 }
 
-/* ---------- Tasks table ---------- */
-.task-table {
-  width: 100%; border-collapse: collapse;
+/* ---------- Tasks ---------- */
+/* Trigger panel — operations-first form at the top of the Tasks tab. */
+.task-trigger {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 14px 18px;
+  margin: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.trigger-grid {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 8px 14px;
+  align-items: center;
+}
+.trigger-grid > label {
+  color: var(--text-secondary);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+}
+.trigger-grid select,
+.trigger-grid input[type="text"],
+.trigger-grid input[type="url"],
+.trigger-grid input[type="datetime-local"],
+.trigger-grid textarea {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-base); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 5px 8px; font: inherit; font-size: 12px;
+}
+.trigger-grid textarea { min-height: 60px; resize: vertical; font-family: monospace; }
+.trigger-vault { display: flex; gap: 12px; align-items: center; }
+.trigger-vault select { flex: 1 1 auto; }
+.all-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.trigger-meta { display: flex; gap: 10px; align-items: center; }
+.trigger-meta select { width: 140px; }
+.trigger-meta input[type="datetime-local"] { width: 220px; }
+.trigger-meta .small { font-size: 11px; }
+.op-params { display: flex; flex-direction: column; gap: 6px; }
+.op-params .param-row { display: flex; flex-direction: column; gap: 3px; }
+.op-params .param-row > label { font-size: 11px; color: var(--text-secondary); }
+.op-params .op-note { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.op-params:empty::before {
+  content: "no parameters"; color: var(--text-muted); font-style: italic; font-size: 11px;
+}
+.trigger-actions {
+  display: flex; align-items: center; gap: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-light);
+}
+.trigger-error { color: var(--danger); font-size: 12px; }
+
+/* Queue — task cards. One card per task; expandable to reveal the live log. */
+.task-queue { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.task-list { overflow-y: auto; flex: 1; padding: 0 12px 12px; }
+.task-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-left-width: 3px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  display: flex; flex-direction: column;
+}
+.task-card.state-running     { border-left-color: var(--success); }
+.task-card.state-failed      { border-left-color: var(--danger); }
+.task-card.state-completed   { border-left-color: var(--success); }
+.task-card.state-pending     { border-left-color: var(--accent); }
+.task-card.state-scheduled   { border-left-color: var(--accent); }
+.task-card.state-deferred    { border-left-color: var(--border); }
+.task-card.state-cancelled,
+.task-card.state-archived,
+.task-card.state-interrupted { border-left-color: var(--text-muted); }
+
+.task-card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
   font-size: 12px;
 }
-.task-table th, .task-table td {
-  text-align: left; padding: 6px 12px;
-  border-bottom: 1px solid var(--border-light);
+.task-card-head:hover { background: var(--bg-hover); }
+.task-card-icon { font-size: 13px; width: 18px; text-align: center; flex: 0 0 auto; }
+.task-card-vault { font-weight: 600; color: var(--text-primary); }
+.task-card-op { color: var(--text-secondary); }
+.task-card-meta { color: var(--text-muted); font-size: 11px; }
+.task-card-spacer { flex: 1; }
+.task-card-actions { display: flex; gap: 6px; }
+.task-card-actions button { font-size: 11px; padding: 2px 8px; }
+.task-card.expanded .task-card-body { display: flex; }
+.task-card-body {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--border-light);
+  font-size: 12px;
 }
-.task-table th {
-  color: var(--text-secondary); font-weight: 600; font-size: 10px;
-  text-transform: uppercase; letter-spacing: .04em;
-  background: var(--bg-surface);
+.task-card-meta-row {
+  display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px;
+  color: var(--text-secondary); font-size: 11px;
 }
-.task-table tr:hover td { background: var(--bg-hover); }
+.task-card-meta-row .v { color: var(--text-primary); word-break: break-word; }
+.task-log-pane {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 320px; overflow: auto;
+}
+.task-log-empty { color: var(--text-muted); font-style: italic; }
+.task-overdue { color: var(--danger); font-weight: 600; }
 
 .state-pill {
   display: inline-block; padding: 1px 8px; border-radius: 10px;
   font-size: 10px; font-weight: 500;
   border: 1px solid transparent;
 }
-.state-pending     { color: var(--accent);  border-color: var(--accent); background: var(--accent-bg); }
-.state-running     { color: #000; background: var(--success); border-color: var(--success); }
-.state-completed   { color: var(--success); border-color: var(--success); }
-.state-failed      { color: #fff; background: var(--danger); border-color: var(--danger); }
-.state-deferred    { color: var(--text-secondary); border-color: var(--border); }
-.state-cancelled   { color: var(--text-muted); border-color: var(--border-light); }
-.state-archived    { color: var(--text-muted); border-color: var(--border-light); }
-.state-interrupted { color: var(--danger); border-color: var(--danger); }
+.state-pill.state-pending     { color: var(--accent);  border-color: var(--accent); background: var(--accent-bg); }
+.state-pill.state-running     { color: #000; background: var(--success); border-color: var(--success); }
+.state-pill.state-completed   { color: var(--success); border-color: var(--success); }
+.state-pill.state-failed      { color: #fff; background: var(--danger); border-color: var(--danger); }
+.state-pill.state-deferred    { color: var(--text-secondary); border-color: var(--border); }
+.state-pill.state-scheduled   { color: var(--accent); border-color: var(--accent); }
+.state-pill.state-cancelled   { color: var(--text-muted); border-color: var(--border-light); }
+.state-pill.state-archived    { color: var(--text-muted); border-color: var(--border-light); }
+.state-pill.state-interrupted { color: var(--danger); border-color: var(--danger); }
 
 /* ---------- Config editor ---------- */
 #config-editor {
@@ -468,6 +600,75 @@ button.ghost:hover { color: var(--text-primary); }
   font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
   font-size: 12px;
 }
+
+/* Wiki layout: sidebar tree + content area. Mirrors .help-layout. */
+.wiki-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 0;
+  min-height: 0;
+}
+.wiki-tree {
+  border-right: 1px solid var(--border);
+  background: var(--bg-surface);
+  overflow-y: auto;
+  font-size: 13px;
+  padding: 8px 0;
+}
+.wiki-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px 8px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.wiki-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.wiki-tree .wiki-dir > .wiki-tree-label {
+  color: var(--text-secondary);
+  font-weight: 600;
+  cursor: default;
+  user-select: none;
+}
+.wiki-tree .wiki-file > .wiki-tree-label {
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.wiki-tree .wiki-tree-label {
+  display: block;
+  padding: 3px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wiki-tree .wiki-file > .wiki-tree-label:hover {
+  background: var(--bg-elevated);
+}
+.wiki-tree .wiki-file.active > .wiki-tree-label {
+  background: var(--accent-bg, rgba(120,160,255,0.15));
+  color: var(--accent);
+  font-weight: 600;
+}
+.wiki-tree ul ul .wiki-tree-label { padding-left: 28px; }
+.wiki-tree ul ul ul .wiki-tree-label { padding-left: 44px; }
+
+/* Wikilinks rendered from [[Page]] / [[Page|alias]]. Dashed underline so they
+   are visually distinct from regular markdown links. Missing link target is
+   surfaced on click by the resulting 404 in the content pane. */
+.wiki-body a.wikilink {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--accent);
+}
+.wiki-body a.wikilink:hover { text-decoration: none; border-bottom-style: solid; }
 
 /* ---------- Help panel (tree + content) ---------- */
 .help-layout {

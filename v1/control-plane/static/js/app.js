@@ -18,6 +18,11 @@ const state = {
   // vaultName -> last sessionId the user had active for that vault. Selecting
   // a vault restores its most recently viewed terminal.
   lastSessionByVault: {},
+  // vaultName -> last panel the user had open for that vault ("wiki",
+  // "ops", "tasks", "config"). Restored on vault re-select so each
+  // project has its own UI state. Persisted to localStorage so it
+  // survives reload. Help is not remembered (vault-independent).
+  lastPanelByVault: loadLastPanelByVault(),
 };
 
 function loadTabLabels() {
@@ -28,6 +33,24 @@ function loadTabLabels() {
 function saveTabLabels() {
   try {
     localStorage.setItem("resman-tab-labels", JSON.stringify(state.tabLabels));
+  } catch (_) {}
+}
+function loadLastPanelByVault() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("resman-last-panel-by-vault") || "{}");
+    // Migrate legacy "terminal" entries to the new "ops" panel name —
+    // the panel was renamed when we promoted it to a first-class header
+    // tab. Without this, users who pinned the old terminal view on a
+    // vault would silently fall back to Wiki on next reload.
+    for (const k of Object.keys(raw)) {
+      if (raw[k] === "terminal") raw[k] = "ops";
+    }
+    return raw;
+  } catch (_) { return {}; }
+}
+function saveLastPanelByVault() {
+  try {
+    localStorage.setItem("resman-last-panel-by-vault", JSON.stringify(state.lastPanelByVault));
   } catch (_) {}
 }
 
@@ -125,7 +148,7 @@ function renderVaultList() {
           <div class="vault-meta">${meta.map(esc).join(" · ")}</div>
           ${tags ? `<div class="vault-tags">${tags}</div>` : ""}
         </div>
-        <button class="play" data-action="play" data-vault="${esc(v.name)}">▶</button>
+        <button class="play" data-action="play" data-vault="${esc(v.name)}" title="Ingest a URL into this vault's wiki">↘</button>
       </div>`;
   }).join("");
   root.querySelectorAll(".vault-row").forEach((row) => {
@@ -143,7 +166,7 @@ function renderVaultList() {
   root.querySelectorAll(".play").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      openSessionMenu(btn, btn.dataset.vault);
+      ingestUrlForVault(btn.dataset.vault);
     });
   });
   // Discovered
@@ -181,30 +204,62 @@ function selectVault(name) {
   }
   renderVaultList();
   renderVaultContext();
+  loadWikiTree();
   loadWiki(WIKI_HOME);
   renderTasks();
-  // Per UX spec: clicking a vault always returns to the Terminal view
-  // and clears the active tab in the header.
-  showPanel("terminal");
+  renderTriggerForm();
+  // Default-panel rule, in priority order:
+  //   1. Restore the vault's own last-seen panel (Wiki, Ops, Tasks,
+  //      Config) if we remember one — each project has its own UI state.
+  //   2. Otherwise, if the vault has a live session, land on Ops.
+  //   3. Otherwise, land on Wiki (best entry point for a fresh vault).
+  // Ops is only restored if the vault still has at least one live
+  // session — a remembered "ops" for a vault whose sessions were since
+  // killed would dump the user into an empty terminal panel.
+  const hasSession = state.sessions.some((s) => s.vault === name);
+  const rememberedPanel = state.lastPanelByVault[name];
+  let target;
+  if (rememberedPanel === "ops") {
+    target = hasSession ? "ops" : "wiki";
+  } else if (rememberedPanel) {
+    target = rememberedPanel;
+  } else {
+    target = hasSession ? "ops" : "wiki";
+  }
+  showPanel(target);
   renderSessions();
   renderActiveSession();
 }
 
 function renderVaultContext() {
   const el = $("#vault-context");
-  if (!el) return;
-  if (state.selectedVault) {
-    el.textContent = state.selectedVault;
-    el.classList.remove("empty");
-  } else {
-    el.textContent = "No vault selected";
-    el.classList.add("empty");
+  const actions = $("#header-vault-actions");
+  if (el) {
+    if (state.selectedVault) {
+      el.textContent = state.selectedVault;
+      el.classList.remove("empty");
+      el.title = "Open Ops (terminal sessions) for this vault";
+    } else {
+      el.textContent = "No vault selected";
+      el.classList.add("empty");
+      el.title = "";
+    }
   }
+  // Hide the whole action group (vault label + buttons + ttyd warning)
+  // until a vault is selected so the header doesn't show dangling buttons
+  // that act on nothing.
+  if (actions) actions.classList.toggle("empty", !state.selectedVault);
 }
 
-// Show one panel. tabName is "terminal" | "docs" | "tasks" | "config".
-// "terminal" is the default panel and never has a tab in the header — its
-// active state is "no header tab is active".
+// Show one panel. tabName is "wiki" | "ops" | "tasks" | "config" | "help".
+// "ops" is the terminal-sessions view (live ttyd iframes for the current
+// vault). It has its own header tab — clicking the vault-name label in
+// the header is an equivalent shortcut.
+//
+// The chosen panel is remembered per-vault in state.lastPanelByVault so
+// hopping between vaults restores each one's own last-seen panel. Help is
+// vault-independent so we don't persist it (avoid surprising the user with
+// a Help landing when they re-select a vault).
 function showPanel(tabName) {
   $$(".tab-panel").forEach((p) => p.classList.remove("active"));
   const panel = $("#tab-" + tabName);
@@ -215,17 +270,46 @@ function showPanel(tabName) {
   if (tabName === "config") loadConfig();
   if (tabName === "tasks") loadTasks();
   if (tabName === "help") loadHelp();
+  if (tabName === "wiki" && state.selectedVault) loadWikiTree();
+  if (state.selectedVault && tabName !== "help") {
+    state.lastPanelByVault[state.selectedVault] = tabName;
+    saveLastPanelByVault();
+  }
 }
 
-// ----- terminal sessions -----
-function openSessionMenu(anchor, vaultName) {
-  const choice = window.prompt("Open which session for vault '" + vaultName + "'?\nType 'claude' or 'shell':", "claude");
-  if (!choice) return;
-  if (choice !== "claude" && choice !== "shell") {
-    alert("type must be 'claude' or 'shell'");
+// Sidebar `↘` button — queues a wiki-ingest task for the given vault and
+// jumps to the Tasks tab so the user can watch the task progress. The vault
+// selection is updated so the Tasks view is already filtered to the right
+// context. URL validation here is intentionally light (presence + http
+// scheme) — the operation's own params validator on the backend has the
+// authoritative rules.
+async function ingestUrlForVault(vaultName) {
+  const url = window.prompt(`Ingest a URL into vault '${vaultName}':`, "https://");
+  if (url == null) return;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === "https://" || trimmed === "http://") return;
+  if (!/^https?:\/\//i.test(trimmed)) {
+    alert("URL must start with http:// or https://");
     return;
   }
-  spawnSession(vaultName, choice);
+  if (state.selectedVault !== vaultName) selectVault(vaultName);
+  try {
+    await api("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "task",
+        vault: vaultName,
+        operation: "wiki-ingest",
+        params: { url: trimmed },
+        priority: "high",
+      }),
+    });
+  } catch (err) {
+    alert("Create failed: " + (err.body?.error || err.message));
+    return;
+  }
+  await loadTasks();
+  showPanel("tasks");
 }
 
 async function spawnSession(vaultName, type) {
@@ -243,6 +327,10 @@ async function spawnSession(vaultName, type) {
     state.lastSessionByVault[vaultName] = s.id;
     renderSessions();
     renderActiveSession();
+    // Switch to the Ops panel so the user actually sees the iframe
+    // they just spawned. Without this, the +Shell/+Claude buttons appear
+    // to do nothing because the user stays on whichever tab they were on.
+    showPanel("ops");
   } catch (err) {
     alert("Spawn failed: " + err.message);
   }
@@ -394,6 +482,44 @@ function renderActiveSession() {
 }
 
 // ----- tasks -----
+// Operation registry. This is the single source of truth that the trigger
+// form reads to render per-op fields. Operations are hard-coded in
+// plugin_commands.py + task_manager.py; mirrored here so we don't pay a
+// round-trip just to learn what's next door.
+const OPERATIONS = {
+  "wiki-lint": {
+    label: "Lint wiki", group: "Wiki", params: [],
+  },
+  "wiki-update-hot-cache": {
+    label: "Update hot cache", group: "Wiki", params: [],
+  },
+  "wiki-bootstrap": {
+    label: "Re-run wiki bootstrap", group: "Wiki", params: [],
+    note: "Non-interactive re-run only; new vaults must use the wizard.",
+  },
+  "wiki-ingest": {
+    label: "Ingest a URL", group: "Research",
+    params: [{ key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" }],
+  },
+  "wiki-autoresearch": {
+    label: "Autoresearch a topic", group: "Research",
+    params: [{ key: "topic", type: "text", required: true, label: "Topic", maxLength: 200, placeholder: "topic to research" }],
+  },
+  "run-prompt": {
+    label: "Run a Claude prompt", group: "Custom",
+    params: [{ key: "prompt", type: "text", required: true, label: "Prompt", maxLength: 200, placeholder: "/your-command or free text" }],
+  },
+  "run-shell": {
+    label: "Run shell command", group: "Custom",
+    params: [{ key: "cmd_parts", type: "argv", required: true, label: "Command (one argument per line)", placeholder: "echo\nhello" }],
+    confirm: "run-shell executes an arbitrary command in the vault directory. Proceed?",
+  },
+};
+
+// Tracks the inline-log subscription state per task_id.
+// { open: bool, seeded: bool, autoscroll: bool }
+state.taskLogs = state.taskLogs || {};
+
 async function loadTasks() {
   const data = await api("/api/tasks");
   state.tasks = data.tasks || [];
@@ -401,44 +527,187 @@ async function loadTasks() {
   renderVaultList();
 }
 
+function operationIcon(op) {
+  if (op === "wiki-ingest")        return "↘";
+  if (op === "wiki-lint")          return "✓";
+  if (op === "wiki-update-hot-cache") return "⟳";
+  if (op === "wiki-bootstrap")     return "★";
+  if (op === "wiki-autoresearch")  return "🔎";
+  if (op === "run-prompt")         return "›";
+  if (op === "run-shell")          return "$";
+  return "•";
+}
+
+function taskStateIcon(s) {
+  if (s === "running")      return "▶";
+  if (s === "pending")      return "⌛";
+  if (s === "scheduled")    return "⏰";
+  if (s === "deferred")     return "⏸";
+  if (s === "completed")    return "✓";
+  if (s === "failed")       return "✗";
+  if (s === "cancelled")    return "⊘";
+  if (s === "interrupted")  return "⚠";
+  if (s === "archived")     return "·";
+  return "•";
+}
+
+function formatAge(iso) {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (!t) return "";
+  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (sec < 60) return sec + "s ago";
+  const min = Math.round(sec / 60);
+  if (min < 60) return min + "m ago";
+  const hr = Math.round(min / 60);
+  if (hr < 48) return hr + "h ago";
+  return Math.round(hr / 24) + "d ago";
+}
+
+function isOverdueScheduled(t) {
+  return t.state === "scheduled" && t.scheduled_for &&
+    new Date(t.scheduled_for).getTime() <= Date.now();
+}
+
+function taskActions(t) {
+  const acts = [];
+  if (t.state === "scheduled") acts.push("run-now", "cancel");
+  else if (t.state === "deferred") acts.push("promote", "cancel");
+  else if (t.state === "pending") acts.push("cancel");
+  else if (t.state === "running") acts.push("cancel");
+  else if (["completed", "failed", "cancelled", "interrupted"].includes(t.state)) acts.push("re-run");
+  return acts;
+}
+
 function renderTasks() {
-  const root = $("#task-rows");
-  const pf = $("#task-priority-filter").value;
+  const root = $("#task-list");
+  if (!root) return;
+  const pf = ($("#task-priority-filter") || {}).value || "";
+  const sf = ($("#task-state-filter") || {}).value || "active";
   let items = state.tasks.slice();
   if (pf) items = items.filter((t) => t.priority === pf);
   if (state.selectedVault) {
     items = items.filter((t) => t.vault === state.selectedVault || t.vault === "ALL");
   }
+  if (sf === "active") {
+    items = items.filter((t) => ["running", "pending", "deferred", "scheduled"].includes(t.state));
+  } else if (sf === "recent") {
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    items = items.filter((t) => {
+      const updated = new Date(t.updated_at).getTime();
+      return updated && updated >= cutoff;
+    });
+  }
   if (!items.length) {
-    root.innerHTML = `<tr><td colspan="7" class="muted">No tasks.</td></tr>`;
+    root.innerHTML = `<p class="muted" style="padding:18px">No tasks match. Use the trigger above to run one.</p>`;
     return;
   }
-  root.innerHTML = items.map((t) => {
-    const updated = t.updated_at ? t.updated_at.slice(11, 19) : "";
-    const actions = ["log"];
-    if (t.state === "deferred") actions.unshift("promote");
-    if (["pending", "deferred"].includes(t.state)) actions.unshift("cancel");
-    if (["completed", "failed"].includes(t.state)) actions.unshift("re-run");
-    return `<tr data-tid="${esc(t.id)}">
-      <td></td>
-      <td><span class="state-pill state-${esc(t.state)}">${esc(t.state)}</span></td>
-      <td>${esc(t.operation)}</td>
-      <td>${esc(t.vault)}${t.parent_id ? " ↳" : ""}</td>
-      <td>${esc(t.priority)}</td>
-      <td>${esc(updated)}</td>
-      <td>${actions.map((a) => `<button data-act="${a}" data-tid="${esc(t.id)}">${a}</button>`).join(" ")}</td>
-    </tr>`;
+  root.innerHTML = items.map((t) => taskCardHTML(t)).join("");
+  $$(".task-card").forEach(wireTaskCard);
+}
+
+function taskCardHTML(t) {
+  const tid = esc(t.id);
+  const opMeta = OPERATIONS[t.operation] || { label: t.operation };
+  const opLabel = esc(opMeta.label || t.operation);
+  const icon = taskStateIcon(t.state);
+  const vault = esc(t.vault) + (t.parent_id ? " ↳" : "");
+  const overdue = isOverdueScheduled(t);
+  let when = "";
+  if (t.state === "running" && t.started_at)         when = "started " + esc(formatAge(t.started_at));
+  else if (t.state === "scheduled" && t.scheduled_for) when = "fires " + esc(t.scheduled_for) + (overdue ? " · overdue" : "");
+  else if (t.finished_at)                              when = esc(formatAge(t.finished_at));
+  else if (t.updated_at)                               when = esc(formatAge(t.updated_at));
+
+  const actions = taskActions(t).map((a) => {
+    const cls = a === "cancel" ? "btn btn-xs btn-danger" : "btn btn-xs";
+    return `<button class="${cls}" data-act="${esc(a)}" data-tid="${tid}">${esc(a)}</button>`;
   }).join("");
-  $$('#task-rows button').forEach((btn) => {
-    btn.addEventListener("click", () => taskAction(btn.dataset.act, btn.dataset.tid));
+
+  const log = state.taskLogs[t.id] || {};
+  const expanded = log.open ? "expanded" : "";
+  const logBody = log.open
+    ? `<div class="task-card-meta-row">
+         <span>operation</span><span class="v">${esc(t.operation)}</span>
+         <span>params</span><span class="v"><code>${esc(JSON.stringify(t.params || {}))}</code></span>
+         <span>started</span><span class="v">${esc(t.started_at || "—")}</span>
+         <span>finished</span><span class="v">${esc(t.finished_at || "—")}</span>
+         ${t.scheduled_for ? `<span>scheduled for</span><span class="v ${overdue ? "task-overdue" : ""}">${esc(t.scheduled_for)}</span>` : ""}
+         ${t.error ? `<span>error</span><span class="v" style="color:var(--danger)">${esc(t.error)}</span>` : ""}
+       </div>
+       <pre class="task-log-pane" id="log-${tid}" data-tid="${tid}"><span class="task-log-empty">loading log…</span></pre>`
+    : "";
+
+  return `<div class="task-card state-${esc(t.state)} ${expanded}" data-tid="${tid}">
+    <div class="task-card-head" data-tid="${tid}">
+      <span class="task-card-icon">${esc(icon)}</span>
+      <span class="state-pill state-${esc(t.state)}">${esc(t.state)}</span>
+      <span class="task-card-vault">${vault}</span>
+      <span class="task-card-op">· ${opLabel}</span>
+      <span class="task-card-meta">${when ? "· " + when : ""}</span>
+      <span class="task-card-spacer"></span>
+      <div class="task-card-actions">
+        <button class="btn btn-xs" data-act="toggle-log" data-tid="${tid}">${log.open ? "hide log" : "log"}</button>
+        ${actions}
+      </div>
+    </div>
+    <div class="task-card-body">${logBody}</div>
+  </div>`;
+}
+
+function wireTaskCard(card) {
+  const tid = card.dataset.tid;
+  card.querySelectorAll("button[data-act]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      taskAction(btn.dataset.act, btn.dataset.tid);
+    });
   });
+  const head = card.querySelector(".task-card-head");
+  if (head) {
+    head.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      toggleTaskLog(tid);
+    });
+  }
+  // If a log was open before re-render, hydrate it from the cached buffer
+  // so we don't lose streamed chunks across renders.
+  if (state.taskLogs[tid]?.open) {
+    const pre = card.querySelector(".task-log-pane");
+    if (pre && state.taskLogs[tid].buffer != null) {
+      pre.textContent = state.taskLogs[tid].buffer || "";
+    } else if (pre) {
+      seedLogPane(tid);
+    }
+  }
+}
+
+async function seedLogPane(tid) {
+  const pre = document.querySelector(`#log-${CSS.escape(tid)}`);
+  if (!pre) return;
+  const log = state.taskLogs[tid] || (state.taskLogs[tid] = {});
+  log.seeded = true;
+  try {
+    const txt = await apiText("/api/tasks/" + encodeURIComponent(tid) + "/log");
+    log.buffer = txt || "";
+    pre.textContent = log.buffer || "(empty)";
+    pre.scrollTop = pre.scrollHeight;
+  } catch (err) {
+    pre.textContent = "log unavailable: " + err.message;
+  }
+}
+
+function toggleTaskLog(tid) {
+  const log = state.taskLogs[tid] || (state.taskLogs[tid] = {});
+  log.open = !log.open;
+  if (log.open) log.autoscroll = true;
+  renderTasks();
+  if (log.open && !log.seeded) seedLogPane(tid);
 }
 
 async function taskAction(act, tid) {
-  if (act === "log") {
-    const txt = await apiText("/api/tasks/" + encodeURIComponent(tid) + "/log");
-    showModal("Task log: " + tid,
-      `<pre class="log-pane">${esc(txt || '(empty)')}</pre>`);
+  if (act === "toggle-log") {
+    toggleTaskLog(tid);
     return;
   }
   if (act === "cancel") {
@@ -446,68 +715,283 @@ async function taskAction(act, tid) {
     await loadTasks();
     return;
   }
-  if (act === "promote") {
+  if (act === "promote" || act === "run-now") {
     await api("/api/tasks/" + encodeURIComponent(tid) + "/promote", { method: "POST" });
     await loadTasks();
     return;
   }
   if (act === "re-run") {
     const orig = state.tasks.find((t) => t.id === tid);
-    if (orig) showNewTaskModal(orig);
+    if (orig) prefillTrigger(orig);
     return;
   }
 }
 
-function showNewTaskModal(prefill) {
-  const vaults = state.vaults.map((v) => `<option>${esc(v.name)}</option>`).join("");
-  const ops = ["wiki-ingest", "wiki-lint", "wiki-autoresearch", "wiki-update-hot-cache",
-               "wiki-bootstrap", "run-prompt", "run-shell"];
-  const opts = ops.map((o) => `<option ${prefill && prefill.operation === o ? "selected" : ""}>${o}</option>`).join("");
-  const body = `
-    <label>name</label><input id="t-name" value="${esc(prefill?.name || 'task')}">
-    <label>vault</label>
-    <select id="t-vault">
-      <option ${prefill?.vault === 'ALL' ? 'selected' : ''}>ALL</option>${vaults}
-    </select>
-    <label>operation</label><select id="t-op">${opts}</select>
-    <label>priority</label>
-    <select id="t-pri">
-      <option value="high" ${prefill?.priority === "high" ? "selected" : ""}>high</option>
-      <option value="medium" ${(!prefill || prefill?.priority === "medium") ? "selected" : ""}>medium</option>
-      <option value="low" ${prefill?.priority === "low" ? "selected" : ""}>low</option>
-    </select>
-    <label>params (JSON)</label>
-    <textarea id="t-params" rows="3">${esc(JSON.stringify(prefill?.params || {}, null, 2))}</textarea>`;
-  showModal("New task", body, async () => {
-    let params;
-    try { params = JSON.parse($("#t-params").value || "{}"); }
-    catch (e) { alert("params: invalid JSON"); return false; }
-    if ($("#t-op").value === "run-shell" && !confirm(
-      "run-shell executes an arbitrary command in the vault directory. Proceed?"
-    )) return false;
-    try {
-      await api("/api/tasks", {
-        method: "POST",
-        body: JSON.stringify({
-          name: $("#t-name").value,
-          vault: $("#t-vault").value,
-          operation: $("#t-op").value,
-          params,
-          priority: $("#t-pri").value,
-        }),
-      });
-      await loadTasks();
-      return true;
-    } catch (err) {
-      alert("Create failed: " + err.message);
-      return false;
+// ----- task trigger panel -----
+function renderTriggerForm() {
+  const vSel = $("#t-vault");
+  const oSel = $("#t-op");
+  if (!vSel || !oSel) return;
+  const allEl = $("#t-all");
+  const allChecked = !!(allEl && allEl.checked);
+  const prevVault = vSel.value;
+  vSel.innerHTML = state.vaults.map(
+    (v) => `<option value="${esc(v.name)}">${esc(v.name)}</option>`
+  ).join("");
+  if (state.vaults.find((v) => v.name === prevVault)) vSel.value = prevVault;
+  else if (state.selectedVault) vSel.value = state.selectedVault;
+  vSel.disabled = allChecked;
+
+  if (!oSel.options.length) {
+    oSel.innerHTML = renderOpOptions();
+  }
+  renderOpFields();
+}
+
+function renderOpOptions(selected) {
+  const groups = {};
+  for (const [op, meta] of Object.entries(OPERATIONS)) {
+    (groups[meta.group] ||= []).push([op, meta.label]);
+  }
+  return Object.entries(groups).map(([group, ops]) => {
+    const opts = ops.map(([op, label]) =>
+      `<option value="${esc(op)}" ${op === selected ? "selected" : ""}>${esc(label)}</option>`
+    ).join("");
+    return `<optgroup label="${esc(group)}">${opts}</optgroup>`;
+  }).join("");
+}
+
+function renderOpFields(prefillParams) {
+  const root = $("#t-params-row");
+  if (!root) return;
+  const opKey = $("#t-op").value;
+  const meta = OPERATIONS[opKey];
+  if (!meta) { root.innerHTML = ""; return; }
+  const fields = (meta.params || []).map((p) => {
+    const id = "t-p-" + p.key;
+    const v = (prefillParams && prefillParams[p.key] != null) ? prefillParams[p.key] : "";
+    if (p.type === "argv") {
+      const val = Array.isArray(v) ? v.join("\n") : (v || "");
+      return `<div class="param-row">
+        <label for="${esc(id)}">${esc(p.label)}</label>
+        <textarea id="${esc(id)}" data-key="${esc(p.key)}" data-type="argv"
+                  placeholder="${esc(p.placeholder || "")}">${esc(val)}</textarea>
+      </div>`;
+    }
+    const type = p.type === "url" ? "url" : "text";
+    return `<div class="param-row">
+      <label for="${esc(id)}">${esc(p.label)}</label>
+      <input id="${esc(id)}" type="${esc(type)}" data-key="${esc(p.key)}" data-type="${esc(p.type)}"
+             ${p.maxLength ? `maxlength="${p.maxLength}"` : ""}
+             placeholder="${esc(p.placeholder || "")}"
+             value="${esc(String(v))}">
+    </div>`;
+  }).join("");
+  const note = meta.note ? `<div class="op-note">${esc(meta.note)}</div>` : "";
+  root.innerHTML = fields + note;
+}
+
+function collectTriggerParams() {
+  const params = {};
+  $$("#t-params-row [data-key]").forEach((el) => {
+    const key = el.dataset.key;
+    if (el.dataset.type === "argv") {
+      params[key] = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    } else {
+      params[key] = el.value;
     }
   });
+  return params;
+}
+
+function prefillTrigger(orig) {
+  // Re-run: populate the trigger form with the original task's settings,
+  // pick the right vault/ALL state, and scroll the form into view.
+  const allEl = $("#t-all");
+  const vSel = $("#t-vault");
+  const oSel = $("#t-op");
+  const priSel = $("#t-pri");
+  const whenInput = $("#t-when");
+  if (orig.vault === "ALL") {
+    if (allEl) allEl.checked = true;
+    if (vSel) vSel.disabled = true;
+  } else {
+    if (allEl) allEl.checked = false;
+    if (vSel) { vSel.disabled = false; vSel.value = orig.vault; }
+  }
+  if (oSel) oSel.value = orig.operation;
+  if (priSel) priSel.value = orig.priority;
+  if (whenInput) whenInput.value = "";  // re-run defaults to run-now
+  renderOpFields(orig.params || {});
+  const trigger = $("#task-trigger");
+  if (trigger) trigger.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function submitTriggerForm() {
+  const errEl = $("#t-error");
+  if (errEl) errEl.textContent = "";
+  const opKey = $("#t-op").value;
+  const meta = OPERATIONS[opKey];
+  if (!meta) return;
+
+  const allChecked = $("#t-all").checked;
+  const vault = allChecked ? "ALL" : $("#t-vault").value;
+  if (!vault) { errEl.textContent = "Pick a vault first."; return; }
+
+  const params = collectTriggerParams();
+  for (const p of (meta.params || [])) {
+    const v = params[p.key];
+    if (p.required && (v == null || (Array.isArray(v) ? !v.length : !String(v).trim()))) {
+      errEl.textContent = `Field '${p.label}' is required.`;
+      return;
+    }
+  }
+
+  let scheduled_for = null;
+  const whenRaw = $("#t-when").value;
+  if (whenRaw) {
+    const dt = new Date(whenRaw);
+    if (isNaN(dt.getTime())) {
+      errEl.textContent = "Invalid datetime."; return;
+    }
+    if (dt.getTime() <= Date.now()) {
+      errEl.textContent = "Scheduled time must be in the future."; return;
+    }
+    if (allChecked) {
+      errEl.textContent = "Scheduling all-vault tasks is not supported yet."; return;
+    }
+    scheduled_for = dt.toISOString();
+  }
+
+  if (meta.confirm && !confirm(meta.confirm)) return;
+
+  const body = {
+    name: "task",
+    vault,
+    operation: opKey,
+    params,
+    priority: $("#t-pri").value,
+  };
+  if (scheduled_for) body.scheduled_for = scheduled_for;
+
+  try {
+    await api("/api/tasks", { method: "POST", body: JSON.stringify(body) });
+    if ($("#t-when")) $("#t-when").value = "";
+    await loadTasks();
+  } catch (err) {
+    errEl.textContent = "Create failed: " + (err.body?.error || err.message);
+  }
 }
 
 // ----- wiki -----
 const WIKI_HOME = "wiki/overview.md";
 state.wikiFile = WIKI_HOME;
+state.wikiTree = null;
+state.wikiTreeMissing = false;
+
+// Rewrite Obsidian wikilinks ([[Page]] or [[Page|alias]]) to inline anchors
+// before marked.parse() runs. We emit a plain <a class="wikilink"> with the
+// target stored on a data attribute; a delegated click handler on
+// #wiki-content intercepts the navigation so it stays SPA-internal. The
+// target is a page name (no .md, no leading wiki/) — resolved on click by
+// loadWikiTarget(). Embeds (![[Foo]]) collapse to a link, which is good
+// enough for v1; nobody embeds in claude-obsidian output today.
+function rewriteWikilinks(md) {
+  return (md || "").replace(/!?\[\[([^\]\|\n]+?)(?:\|([^\]\n]+?))?\]\]/g, (_m, target, alias) => {
+    const t = (target || "").trim();
+    const a = (alias || target || "").trim();
+    return `<a href="#" class="wikilink" data-wiki-target="${esc(t)}">${esc(a)}</a>`;
+  });
+}
+
+// Resolve a wikilink target ("Foo Bar" or "subdir/Foo") to a vault-relative
+// file path. We try a few sensible candidates so authors don't need to be
+// pedantic about the `.md` suffix or the `wiki/` prefix. The first hit in
+// the cached tree wins; if nothing matches we still pass a best-effort path
+// to loadWiki(), which surfaces the 404 in the content pane.
+function resolveWikiTarget(target) {
+  const t = (target || "").trim();
+  if (!t) return null;
+  if (t.endsWith(".md") && t.startsWith("wiki/")) return t;
+  if (t.endsWith(".md")) return "wiki/" + t;
+  const wantBase = (t.startsWith("wiki/") ? t.slice(5) : t).toLowerCase();
+  const flat = flattenWikiTree(state.wikiTree || []);
+  const hit = flat.find((f) => {
+    const noExt = f.path.replace(/\.md$/i, "").toLowerCase();
+    return noExt === "wiki/" + wantBase || noExt.endsWith("/" + wantBase) || noExt === wantBase;
+  });
+  if (hit) return hit.path;
+  return "wiki/" + t + ".md";
+}
+
+function flattenWikiTree(nodes) {
+  const out = [];
+  const walk = (ns) => ns.forEach((n) => {
+    if (n.type === "file") out.push(n);
+    else if (n.children) walk(n.children);
+  });
+  walk(nodes);
+  return out;
+}
+
+function renderWikiTree() {
+  const root = $("#wiki-tree-list");
+  if (!root) return;
+  if (!state.selectedVault) {
+    root.innerHTML = `<p class="muted" style="padding:8px 12px">Select a vault.</p>`;
+    return;
+  }
+  if (state.wikiTreeMissing) {
+    root.innerHTML = `<p class="muted" style="padding:8px 12px">
+      No <code>wiki/</code> directory yet.</p>`;
+    return;
+  }
+  const tree = state.wikiTree;
+  if (!tree || !tree.length) {
+    root.innerHTML = `<p class="muted" style="padding:8px 12px">Empty.</p>`;
+    return;
+  }
+  const renderNodes = (nodes) => {
+    return `<ul>` + nodes.map((n) => {
+      if (n.type === "dir") {
+        return `<li class="wiki-dir">
+          <span class="wiki-tree-label">${esc(n.name)}/</span>
+          ${renderNodes(n.children || [])}
+        </li>`;
+      }
+      const label = n.name.replace(/\.md$/, "");
+      const isActive = n.path === state.wikiFile;
+      return `<li class="wiki-file ${isActive ? "active" : ""}">
+        <span class="wiki-tree-label" data-path="${esc(n.path)}" title="${esc(n.path)}">${esc(label)}</span>
+      </li>`;
+    }).join("") + `</ul>`;
+  };
+  root.innerHTML = renderNodes(tree);
+  root.querySelectorAll(".wiki-file > .wiki-tree-label").forEach((el) => {
+    el.addEventListener("click", () => loadWiki(el.dataset.path));
+  });
+}
+
+async function loadWikiTree() {
+  if (!state.selectedVault) {
+    state.wikiTree = null;
+    state.wikiTreeMissing = false;
+    renderWikiTree();
+    return;
+  }
+  try {
+    const data = await api("/api/vaults/" + encodeURIComponent(state.selectedVault) + "/wiki/tree");
+    state.wikiTree = data.tree || [];
+    state.wikiTreeMissing = !!data.missing;
+  } catch (err) {
+    state.wikiTree = [];
+    state.wikiTreeMissing = false;
+    const root = $("#wiki-tree-list");
+    if (root) root.innerHTML = `<p class="wiki-error" style="padding:8px 12px">${esc(err.message)}</p>`;
+    return;
+  }
+  renderWikiTree();
+}
 
 async function loadWiki(file) {
   const ctxEl = $("#wiki-context");
@@ -521,6 +1005,7 @@ async function loadWiki(file) {
     }
     if (fileEl) fileEl.textContent = "";
     root.innerHTML = `<p class="muted">Select a vault to view its wiki.</p>`;
+    renderWikiTree();
     return;
   }
   if (ctxEl) {
@@ -529,6 +1014,7 @@ async function loadWiki(file) {
   }
   if (fileEl) fileEl.textContent = state.wikiFile;
   root.innerHTML = `<p class="muted">Loading…</p>`;
+  renderWikiTree();
   const url = "/api/vaults/" + encodeURIComponent(state.selectedVault)
             + "/wiki?file=" + encodeURIComponent(state.wikiFile);
   let data;
@@ -553,7 +1039,7 @@ async function loadWiki(file) {
     root.innerHTML = `<pre>${esc(data.content || "")}</pre>`;
     return;
   }
-  const html = window.marked.parse(data.content || "", { breaks: true });
+  const html = window.marked.parse(rewriteWikilinks(data.content || ""), { breaks: true });
   root.innerHTML = html;
 }
 
@@ -841,6 +1327,7 @@ async function loadVaults() {
   state.vaults = all.filter((v) => v.registered !== false);
   state.discovered = all.filter((v) => v.registered === false);
   renderVaultList();
+  renderTriggerForm();
 }
 
 async function loadSessions() {
@@ -1179,6 +1666,13 @@ function setupToolbar() {
     if (state.selectedVault) spawnSession(state.selectedVault, "shell");
     else alert("Select a vault first.");
   });
+  // Clicking the vault-name label in the header jumps to the Ops panel
+  // (terminal sessions). Equivalent to clicking the Ops header tab — the
+  // label is the fast path when the user is reading wiki content.
+  const vctx = $("#vault-context");
+  if (vctx) vctx.addEventListener("click", () => {
+    if (state.selectedVault) showPanel("ops");
+  });
   const btnRename = $("#btn-rename-tab");
   if (btnRename) btnRename.addEventListener("click", renameActiveTab);
   const btnObs = $("#btn-obsidian");
@@ -1186,20 +1680,46 @@ function setupToolbar() {
   const btnCompact = $("#btn-task-compact");
   if (btnCompact) btnCompact.addEventListener("click", compactTasksLog);
   const btnWikiRefresh = $("#btn-wiki-refresh");
-  if (btnWikiRefresh) btnWikiRefresh.addEventListener("click", () => loadWiki());
+  if (btnWikiRefresh) btnWikiRefresh.addEventListener("click", () => {
+    loadWikiTree();
+    loadWiki();
+  });
+  const btnWikiTreeRefresh = $("#btn-wiki-tree-refresh");
+  if (btnWikiTreeRefresh) btnWikiTreeRefresh.addEventListener("click", loadWikiTree);
   // Hot / Index / Overview — declarative wiring via data-wiki-page so adding
   // another canonical page later is just an HTML edit.
   document.querySelectorAll("[data-wiki-page]").forEach((btn) => {
     btn.addEventListener("click", () => loadWiki(btn.dataset.wikiPage));
   });
+  // Delegated click handler for [[wikilink]] anchors rendered inside the
+  // wiki content pane. Keeps navigation SPA-internal — the markdown is
+  // re-rendered without a browser nav.
+  const wikiContent = $("#wiki-content");
+  if (wikiContent) {
+    wikiContent.addEventListener("click", (e) => {
+      const a = e.target.closest("a.wikilink");
+      if (!a) return;
+      e.preventDefault();
+      const target = a.dataset.wikiTarget;
+      const resolved = resolveWikiTarget(target);
+      if (resolved) loadWiki(resolved);
+    });
+  }
   const btnHelpRefresh = $("#btn-help-refresh");
   if (btnHelpRefresh) btnHelpRefresh.addEventListener("click", loadHelp);
   const cronDismiss = $("#cron-skip-dismiss");
   if (cronDismiss) cronDismiss.addEventListener("click", () => {
     $("#cron-skip-banner").hidden = true;
   });
-  $("#btn-new-task").addEventListener("click", () => showNewTaskModal());
   $("#task-priority-filter").addEventListener("change", renderTasks);
+  const stateFilter = $("#task-state-filter");
+  if (stateFilter) stateFilter.addEventListener("change", renderTasks);
+  const btnRun = $("#btn-task-run");
+  if (btnRun) btnRun.addEventListener("click", submitTriggerForm);
+  const allBox = $("#t-all");
+  if (allBox) allBox.addEventListener("change", renderTriggerForm);
+  const opSel = $("#t-op");
+  if (opSel) opSel.addEventListener("change", () => renderOpFields());
   $("#config-file").addEventListener("change", loadConfig);
   $("#btn-config-save").addEventListener("click", saveConfig);
   $("#btn-new-vault").addEventListener("click", showNewVaultWizard);
@@ -1253,6 +1773,20 @@ function setupSocket() {
     sock.on("connect", () => setConn("connected"));
     sock.on("disconnect", () => setConn("disconnected"));
     sock.on("task_updated", () => loadTasks());
+    sock.on("task_log_appended", (msg) => {
+      if (!msg || !msg.task_id) return;
+      const log = state.taskLogs[msg.task_id] || (state.taskLogs[msg.task_id] = {});
+      log.buffer = (log.buffer || "") + (msg.chunk || "");
+      if (!log.open) return;
+      const pre = document.querySelector(`#log-${CSS.escape(msg.task_id)}`);
+      if (!pre) return;
+      // Clear placeholder on first chunk
+      if (pre.firstElementChild && pre.firstElementChild.classList.contains("task-log-empty")) {
+        pre.textContent = "";
+      }
+      pre.textContent += msg.chunk || "";
+      if (log.autoscroll !== false) pre.scrollTop = pre.scrollHeight;
+    });
     sock.on("window_state_changed", () => loadWindow());
     sock.on("session_crashed", (p) => {
       alert("Terminal session crashed: " + (p?.message || ""));

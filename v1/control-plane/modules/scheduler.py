@@ -15,11 +15,12 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from .config_manager import ConfigManager
 from .event_bus import EventBus, get_bus
 from .obsidian_push import ObsidianPush
-from .task_manager import TaskManager
+from .task_manager import TaskManager, _parse_iso
 
 log = logging.getLogger(__name__)
 
@@ -64,14 +65,18 @@ class Scheduler:
         self._kind = None
         self._cron_state: Dict[str, dict] = {}
         self._registered_jobs: List[str] = []
+        self._one_shot_jobs: Dict[str, str] = {}  # task_id -> APScheduler job id
         self._started = False
         self.bus.subscribe("config_reloaded", self._on_config_reloaded)
+        self.bus.subscribe("task_scheduled", self._on_task_scheduled)
+        self.bus.subscribe("task_updated", self._on_task_updated)
 
     def start(self) -> None:
         if self._started:
             return
         self._scheduler, self._kind = _make_scheduler()
         self._register_cron_tasks()
+        self._register_existing_scheduled_tasks()
         self._scheduler.add_job(
             self._push_tick, "interval", seconds=self.push_interval_seconds,
             id="obsidian-push", replace_existing=True,
@@ -151,6 +156,71 @@ class Scheduler:
             state["skip_count"] = 0
         except Exception:
             log.exception("cron task %s dispatch failed", name)
+
+    # ----- One-shot scheduled tasks -----
+    def _on_task_scheduled(self, payload: dict) -> None:
+        """Register a one-shot DateTrigger for a scheduled task."""
+        task_id = payload.get("task_id")
+        scheduled_for = payload.get("scheduled_for")
+        if not task_id or not scheduled_for or not self._started:
+            # If the scheduler hasn't started yet, _register_existing_scheduled_tasks
+            # will pick up these tasks on start() instead.
+            return
+        self._register_one_shot(task_id, scheduled_for)
+
+    def _on_task_updated(self, payload: dict) -> None:
+        """When a scheduled task transitions out of `scheduled`, drop its
+        pending one-shot job so it can't fire a second time after the user
+        cancels or manually promotes it."""
+        task_id = payload.get("task_id")
+        new_state = payload.get("state")
+        if not task_id or new_state == "scheduled":
+            return
+        jid = self._one_shot_jobs.pop(task_id, None)
+        if jid and self._scheduler is not None:
+            try:
+                self._scheduler.remove_job(jid)
+            except Exception:
+                pass
+
+    def _register_existing_scheduled_tasks(self) -> None:
+        """At startup, re-arm one-shot triggers for tasks already in `scheduled`
+        state from the replay. Tasks whose scheduled_for is already past are
+        skipped — the replay path records them as overdue warnings; the user
+        promotes them manually from the UI."""
+        for task in self.task_manager._tasks.values():
+            if task.state != "scheduled" or not task.scheduled_for:
+                continue
+            sched_dt = _parse_iso(task.scheduled_for)
+            if sched_dt is None or sched_dt <= datetime.now(timezone.utc):
+                continue
+            self._register_one_shot(task.id, task.scheduled_for)
+
+    def _register_one_shot(self, task_id: str, scheduled_for: str) -> None:
+        if self._scheduler is None:
+            return
+        run_date = _parse_iso(scheduled_for)
+        if run_date is None:
+            log.warning("scheduled_for %r unparseable for task %s", scheduled_for, task_id)
+            return
+        jid = f"task::{task_id}"
+        try:
+            self._scheduler.add_job(
+                self._fire_scheduled_task, DateTrigger(run_date=run_date),
+                id=jid, replace_existing=True, kwargs={"task_id": task_id},
+            )
+            self._one_shot_jobs[task_id] = jid
+        except Exception:
+            log.exception("failed to register one-shot trigger for task %s", task_id)
+
+    def _fire_scheduled_task(self, task_id: str) -> None:
+        """Triggered at the scheduled moment — promote the task and dispatch."""
+        try:
+            self.task_manager.promote(task_id)
+        except Exception:
+            log.exception("scheduled task %s promotion failed", task_id)
+        finally:
+            self._one_shot_jobs.pop(task_id, None)
 
     def cron_status(self) -> List[dict]:
         out: List[dict] = []
