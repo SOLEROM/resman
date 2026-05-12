@@ -302,6 +302,7 @@ async function ingestUrlForVault(vaultName) {
         operation: "wiki-ingest",
         params: { url: trimmed },
         priority: "high",
+        force: true,
       }),
     });
   } catch (err) {

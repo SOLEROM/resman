@@ -526,6 +526,7 @@ def create_task():
             schedule=body.get("schedule", "background"),
             run_now=True,
             scheduled_for=scheduled_for,
+            force=bool(body.get("force")),
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

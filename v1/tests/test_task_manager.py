@@ -66,6 +66,22 @@ def test_window_inactive_defers(tmp_path):
     assert "deferred" in events
 
 
+def test_force_bypasses_window_gate(tmp_path):
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append(cmd)
+        return 0
+    tm, _, _ = make_tm(tmp_path, active=False, runner=runner)
+    t = tm.create_task(
+        "ingest", "alpha", "wiki-ingest",
+        {"url": "https://example.com"}, "high", force=True,
+    )
+    assert t.state == "completed"
+    events = [json.loads(l)["event"] for l in (tmp_path / "tasks.jsonl").read_text().strip().splitlines()]
+    assert "deferred" not in events
+    assert "started" in events
+
+
 def test_window_activate_promotes_high_medium_only(tmp_path):
     runner_calls = []
     def runner(cmd, cwd, log_file):

@@ -389,6 +389,7 @@ class TaskManager:
         parent_id: Optional[str] = None,
         run_now: bool = True,
         scheduled_for: Optional[str] = None,
+        force: bool = False,
     ) -> Task:
         if not NAME_RE.match(name or ""):
             raise ValueError("task name must match [a-zA-Z0-9_-]")
@@ -427,7 +428,7 @@ class TaskManager:
                 return self._create_parent_all(name, operation, validated_params, priority, schedule, run_now)
             return self._create_single(
                 name, vault, operation, validated_params, priority, schedule,
-                parent_id, run_now, normalized_scheduled,
+                parent_id, run_now, normalized_scheduled, force,
             )
 
     def _create_single(
@@ -441,6 +442,7 @@ class TaskManager:
         parent_id: Optional[str],
         run_now: bool,
         scheduled_for: Optional[str] = None,
+        force: bool = False,
     ) -> Task:
         tid = f"t-{uuid.uuid4().hex[:12]}"
         ts = _utcnow_iso()
@@ -468,7 +470,7 @@ class TaskManager:
                 "scheduled_for": scheduled_for,
             })
             initial_state = "scheduled"
-        elif not self.is_window_active():
+        elif not force and not self.is_window_active():
             self._append({"ts": ts, "event": "deferred", "task_id": tid})
             initial_state = "deferred"
         else:
