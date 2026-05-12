@@ -105,6 +105,82 @@ def test_invalid_url_rejected(tmp_path):
         tm.create_task("x", "alpha", "wiki-ingest", {"url": "ftp://x"}, "high")
 
 
+def test_wiki_ingest_passes_can_flag_when_update_canvas_true(tmp_path):
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd))
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task(
+        "ingest", "alpha", "wiki-ingest",
+        {"url": "https://example.com", "update_canvas": True}, "high",
+    )
+    assert len(seen) == 1
+    cmd = seen[0]
+    assert cmd[0].endswith("tools/ingest.sh")
+    assert cmd[2] == "https://example.com"
+    assert "--can" in cmd
+
+
+def test_wiki_ingest_omits_can_flag_by_default(tmp_path):
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd))
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task(
+        "ingest", "alpha", "wiki-ingest",
+        {"url": "https://example.com"}, "high",
+    )
+    assert len(seen) == 1
+    assert "--can" not in seen[0]
+
+
+def test_wiki_ingest_prefix_passes_can_flag(tmp_path):
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd))
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task(
+        "ingest", "alpha", "wiki-ingest-prefix",
+        {"url": "https://example.com", "update_canvas": True}, "high",
+    )
+    assert len(seen) == 1
+    cmd = seen[0]
+    assert "--prefix" in cmd
+    assert any(s.endswith("prompts/urlInjestPrefix.md") for s in cmd)
+    assert "--can" in cmd
+
+
+def test_wiki_ingest_prefix_validates_url(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    with pytest.raises(ValueError):
+        tm.create_task("x", "alpha", "wiki-ingest-prefix", {"url": ""}, "high")
+    with pytest.raises(ValueError):
+        tm.create_task("x", "alpha", "wiki-ingest-prefix", {"url": "ftp://x"}, "high")
+
+
+def test_wiki_ingest_prefix_invokes_ingest_with_prefix_path(tmp_path):
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd))
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task(
+        "ingest", "alpha", "wiki-ingest-prefix",
+        {"url": "https://example.com"}, "high",
+    )
+    # Command shape: [ingest.sh, vault_path, url, --prefix, prefix_file]
+    assert len(seen) == 1
+    cmd = seen[0]
+    assert cmd[0].endswith("tools/ingest.sh")
+    assert cmd[2] == "https://example.com"
+    assert "--prefix" in cmd
+    prefix_idx = cmd.index("--prefix")
+    assert cmd[prefix_idx + 1].endswith("prompts/urlInjestPrefix.md")
+
+
 def test_invalid_topic_rejected(tmp_path):
     tm, _, _ = make_tm(tmp_path)
     with pytest.raises(ValueError):
@@ -255,6 +331,57 @@ def test_wiki_bootstrap_defers_when_window_inactive(tmp_path):
     tm, win, _ = make_tm(tmp_path, active=False)
     t = tm.create_task("bootstrap", "alpha", "wiki-bootstrap", {}, "high")
     assert t.state == "deferred"
+
+
+def test_wiki_canvas_validates_description(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    # description is optional — empty / missing is allowed
+    tm.create_task("c1", "alpha", "wiki-canvas", {"description": ""}, "high")
+    tm.create_task("c2", "alpha", "wiki-canvas", {}, "high")
+    # but if supplied, it must be a string and ≤200 chars printable ASCII
+    with pytest.raises(ValueError):
+        tm.create_task("c3", "alpha", "wiki-canvas", {"description": "x" * 201}, "high")
+
+
+def test_wiki_canvas_runs_claude_with_correct_command(tmp_path):
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append({"cmd": list(cmd), "cwd": cwd})
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    t = tm.create_task(
+        "canvas", "alpha", "wiki-canvas",
+        {"description": "map all ideas and their market connections"}, "high",
+    )
+    assert t.state == "completed"
+    assert len(runner_calls) == 1
+    cmd = runner_calls[0]["cmd"]
+    assert cmd[0] == "claude"
+    assert "-p" in cmd
+    assert any(
+        s.startswith("/claude-obsidian:canvas ") and "map all ideas" in s
+        for s in cmd
+    )
+    assert "--dangerously-skip-permissions" in cmd
+    assert runner_calls[0]["cwd"].endswith("alpha")
+
+
+def test_wiki_canvas_without_description_omits_args(tmp_path):
+    """Blank description → call /claude-obsidian:canvas with no trailing args,
+    letting the plugin use its own defaults."""
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append(list(cmd))
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task("canvas-default", "alpha", "wiki-canvas", {}, "high")
+    assert len(runner_calls) == 1
+    cmd = runner_calls[0]
+    assert "/claude-obsidian:canvas" in cmd
+    # No description appended → exact match, not a prefix-with-trailing-text
+    assert not any(
+        s.startswith("/claude-obsidian:canvas ") for s in cmd
+    )
 
 
 # ============================================================================

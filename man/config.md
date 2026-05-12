@@ -4,14 +4,18 @@ resman reads two YAML files at startup:
 
 | File | Purpose |
 |------|---------|
-| `config/system.yaml` | App settings, vaults, scan paths, window budget |
+| `config/resman.yaml` or `~/.resman.yaml` | App settings, vaults, scan paths, window budget |
 | `config/schedule.yaml` | Cron tasks |
 
 Both are editable live via the **Config** tab. Saves are atomic
 (`tempfile.NamedTemporaryFile` + `os.replace`) so a crash mid-write never
 corrupts the file.
 
-## `system.yaml` — top-level keys
+If `~/.resman.yaml` exists, resman uses it in preference to `config/resman.yaml`,
+and all config saves write back to the user file. This allows per-user configuration
+without modifying the repository checkout.
+
+## `resman.yaml` — top-level keys
 
 ```yaml
 app:

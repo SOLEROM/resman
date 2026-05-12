@@ -18,7 +18,7 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 - [Wiki](wiki.md) — the per-vault Wiki tab, sidebar page tree, clickable `[[wikilinks]]`
 - [Window state](window-state.md) — when work is allowed to run
 - [Scheduler](scheduler.md) — cron tasks and skip-when-inactive
-- [Configuration](config.md) — `system.yaml` and `schedule.yaml`
+- [Configuration](config.md) — `resman.yaml` and `schedule.yaml`
 - [LAN / `--public`](lan-access.md) — exposing the panel on the local network
 - [Troubleshooting](troubleshooting.md) — common issues
 - [Reference / API](reference/api.md) — REST and Socket.IO surface

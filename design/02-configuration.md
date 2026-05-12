@@ -2,14 +2,19 @@
 
 ## Overview
 
-resman uses three config files: `system.yaml` (app settings and vault registry),
+resman uses three config files: `resman.yaml` (app settings and vault registry),
 `schedule.yaml` (cron task definitions), and `budget.json` (runtime window state).
-`system.yaml` is the single source of truth for vault paths — there is no implicit
+`resman.yaml` is the single source of truth for vault paths — there is no implicit
 discovery. All config saves are atomic and validated before the file is written.
 On successful save, `config_manager.py` emits `config_reloaded` on the EventBus so
 subscribers re-derive their state without a server restart.
 
-## system.yaml Schema
+The `ConfigManager` checks for `~/.resman.yaml` (per-user override) first; if present,
+it becomes the authoritative config file and all UI saves write back to it. Otherwise,
+it falls back to `<config_dir>/resman.yaml` (repo default). Legacy `system.yaml` is
+still accepted with a deprecation warning for backward compatibility.
+
+## resman.yaml Schema
 
 ```yaml
 app:
@@ -39,13 +44,13 @@ scan_paths:                    # optional; remove to disable vault discovery
 > The legacy `readme:` per-vault override was removed when the Docs tab was
 > renamed to **Wiki**. Wiki content is now read from `<vault>/wiki/overview.md`
 > by convention (with `hot.md` and `index.md` reachable from the toolbar);
-> nothing in `system.yaml` overrides it.
+> nothing in `resman.yaml` overrides it.
 
 The `app:` block also accepts an optional `man_path:` — an absolute path to a
 directory of `.md` files served by the **Help** tab. Defaults to `<repo>/man`
 (the sibling of the `v1/` source root).
 
-`system.yaml.example` ships with all fields present and inline comments. Users copy it; they never write YAML from scratch.
+`resman.yaml.example` ships with all fields present and inline comments. Users copy it; they never write YAML from scratch.
 
 ## schedule.yaml Schema
 
@@ -81,7 +86,8 @@ Written exclusively by the server in response to UI actions. Never edited manual
 - **EventBus on save** — `config_manager.py` emits `config_reloaded` after successful write; subscribers (`VaultRegistry`, `Scheduler`) re-derive state via the `get_vault(name)` accessor — they do not cache the raw config dict
 - **budget.json write order** — always write file first, then update in-memory state; never the reverse
 - **budget.json startup resilience** — missing → create with `window_state: between`; invalid JSON → reset to `between`; never crash
-- **`system.yaml.example`** — ships with repo; users copy it; annotated inline
+- **`resman.yaml.example`** — ships with repo; users copy it; annotated inline
+- **Per-user override (`~/.resman.yaml`)** — if present, takes priority over repo default and becomes the write target for all config saves
 
 ## Constraints
 

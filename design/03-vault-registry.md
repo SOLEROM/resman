@@ -3,7 +3,7 @@
 ## Overview
 
 `vault_registry.py` owns the authoritative in-memory list of vaults. On startup it
-loads vaults from `system.yaml`, validates each path, and optionally scans `scan_paths`
+loads vaults from `resman.yaml`, validates each path, and optionally scans `scan_paths`
 directories for unregistered vaults. It re-derives its state from `config_manager`
 on every `config_reloaded` EventBus event, so vault changes made via the YAML editor
 take effect without a server restart. The registry is the single point of truth for
@@ -13,7 +13,7 @@ vault status data consumed by the sidebar, status dots, and ObsidianPush.
 
 On startup (and on `config_reloaded`):
 
-1. Load all entries from `system.yaml` → these are **registered vaults**
+1. Load all entries from `resman.yaml` → these are **registered vaults**
 2. For each registered vault, validate:
    - Path exists on disk → if not: show "path not found" warning (gray dot + distinct icon)
    - Path contains `.obsidian/` → if not: show "not an Obsidian vault" warning (gray dot + different icon)
@@ -23,7 +23,7 @@ On startup (and on `config_reloaded`):
 ## Vault Discovery (scan_paths)
 
 - Unregistered vaults appear in the sidebar below a divider
-- Each has a `[+ Register]` button that opens a form (name, tags, confirm path) and appends to `system.yaml`
+- Each has a `[+ Register]` button that opens a form (name, tags, confirm path) and appends to `resman.yaml`
 - If `scan_paths` is empty or absent, the divider does not appear
 - Scan depth is capped at 2 levels; paths resolving to filesystem roots are rejected
 
@@ -35,7 +35,7 @@ visible. The SPA wizard performs them in order; any step can be skipped:
 | Step | Endpoint | Effect |
 |------|----------|--------|
 | 1. Scaffold | `POST /api/vaults/scaffold` | Runs `tools/new-vault.sh`; creates the directory, `.obsidian/`, `inbox/`, `_resman/`, README, and `_resman/` line in `.gitignore`. Skipped when registering a pre-existing vault |
-| 2. Register | `POST /api/vaults` | Atomic-write append to `system.yaml`. Independent of step 1; succeeds even if the path already existed |
+| 2. Register | `POST /api/vaults` | Atomic-write append to `resman.yaml`. Independent of step 1; succeeds even if the path already existed |
 | 3. Bootstrap | `POST /api/sessions` (claude, with `initial_command: "/claude-obsidian:wiki"`) | Opens an interactive Claude REPL in the new vault and types the slash command after a short delay. The bootstrap may prompt — the user answers in the Terminal tab |
 
 The wizard reports per-step status (info / ok / error) inside the same modal,
@@ -72,7 +72,7 @@ See `10-frontend.md` for the full dot priority table.
 
 ## Key Decisions
 
-- **system.yaml is authoritative** — vault list comes only from `system.yaml`; `scan_paths` is a convenience layer that surfaces discovered vaults but never auto-registers them
+- **resman.yaml is authoritative** — vault list comes only from `resman.yaml`; `scan_paths` is a convenience layer that surfaces discovered vaults but never auto-registers them
 - **Distinct validation warnings** — path-not-found and not-an-obsidian-vault use different icons so the user knows which problem to fix
 - **Re-derives on config_reloaded** — vault registry does not cache the config dict; it calls `config_manager.get_vault(name)` so edits via the YAML editor take effect immediately
 - **No common root required** — vaults may be at any path on the filesystem (e.g., `/data/`, `/home/`, `/mnt/` simultaneously)
@@ -83,7 +83,7 @@ See `10-frontend.md` for the full dot priority table.
 - `scan_paths` depth: maximum 2 levels
 - `scan_paths` entries that resolve to filesystem roots must be rejected
 - Vault names must match `[a-zA-Z0-9_-]`
-- Registration always appends to `system.yaml` via the atomic write path in `config_manager`
+- Registration always appends to `resman.yaml` via the atomic write path in `config_manager`
 
 ## Open Questions
 

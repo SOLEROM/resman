@@ -207,7 +207,7 @@ function selectVault(name) {
   loadWikiTree();
   loadWiki(WIKI_HOME);
   renderTasks();
-  renderTriggerForm();
+  renderTriggerForm(name);
   // Default-panel rule, in priority order:
   //   1. Restore the vault's own last-seen panel (Wiki, Ops, Tasks,
   //      Config) if we remember one — each project has its own UI state.
@@ -277,14 +277,20 @@ function showPanel(tabName) {
   }
 }
 
-// Sidebar `↘` button — queues a wiki-ingest task for the given vault and
-// jumps to the Tasks tab so the user can watch the task progress. The vault
+// Sidebar `↘` / `⇲` buttons — queue a wiki-ingest task for the given vault and
+// jump to the Tasks tab so the user can watch the task progress. The vault
 // selection is updated so the Tasks view is already filtered to the right
 // context. URL validation here is intentionally light (presence + http
 // scheme) — the operation's own params validator on the backend has the
-// authoritative rules.
-async function ingestUrlForVault(vaultName) {
-  const url = window.prompt(`Ingest a URL into vault '${vaultName}':`, "https://");
+// authoritative rules. `withPrefix: true` switches the operation to
+// `wiki-ingest-prefix`, which runs under the constructive-extraction prefix
+// at prompts/urlInjestPrefix.md.
+async function ingestUrlForVault(vaultName, opts) {
+  const withPrefix = !!(opts && opts.withPrefix);
+  const promptLabel = withPrefix
+    ? `Ingest a URL into vault '${vaultName}' (with constructive-extraction prefix):`
+    : `Ingest a URL into vault '${vaultName}':`;
+  const url = window.prompt(promptLabel, "https://");
   if (url == null) return;
   const trimmed = url.trim();
   if (!trimmed || trimmed === "https://" || trimmed === "http://") return;
@@ -299,7 +305,7 @@ async function ingestUrlForVault(vaultName) {
       body: JSON.stringify({
         name: "task",
         vault: vaultName,
-        operation: "wiki-ingest",
+        operation: withPrefix ? "wiki-ingest-prefix" : "wiki-ingest",
         params: { url: trimmed },
         priority: "high",
         force: true,
@@ -500,11 +506,27 @@ const OPERATIONS = {
   },
   "wiki-ingest": {
     label: "Ingest a URL", group: "Research",
-    params: [{ key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" }],
+    params: [
+      { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
+      { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
+    ],
+  },
+  "wiki-ingest-prefix": {
+    label: "Ingest URL + prefix", group: "Research",
+    params: [
+      { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
+      { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
+    ],
+    note: "Runs the URL ingest under prompts/urlInjestPrefix.md — extracts technological substance from sources that discuss harmful applications and re-frames it for constructive use.",
   },
   "wiki-autoresearch": {
     label: "Autoresearch a topic", group: "Research",
     params: [{ key: "topic", type: "text", required: true, label: "Topic", maxLength: 200, placeholder: "topic to research" }],
+  },
+  "wiki-canvas": {
+    label: "Update canvas (visual map)", group: "Wiki",
+    params: [{ key: "description", type: "text", required: false, label: "Description (optional)", maxLength: 200, placeholder: "leave blank to use plugin defaults" }],
+    note: "Runs /claude-obsidian:canvas. Description is optional — leave it blank and the plugin uses its own defaults.",
   },
   "run-prompt": {
     label: "Run a Claude prompt", group: "Custom",
@@ -530,10 +552,12 @@ async function loadTasks() {
 
 function operationIcon(op) {
   if (op === "wiki-ingest")        return "↘";
+  if (op === "wiki-ingest-prefix") return "⇲";
   if (op === "wiki-lint")          return "✓";
   if (op === "wiki-update-hot-cache") return "⟳";
   if (op === "wiki-bootstrap")     return "★";
   if (op === "wiki-autoresearch")  return "🔎";
+  if (op === "wiki-canvas")        return "▦";
   if (op === "run-prompt")         return "›";
   if (op === "run-shell")          return "$";
   return "•";
@@ -729,7 +753,9 @@ async function taskAction(act, tid) {
 }
 
 // ----- task trigger panel -----
-function renderTriggerForm() {
+// `forceVault`: when provided (e.g., from selectVault), override any
+// preserved dropdown value so clicking a sidebar vault activates it here too.
+function renderTriggerForm(forceVault) {
   const vSel = $("#t-vault");
   const oSel = $("#t-op");
   if (!vSel || !oSel) return;
@@ -739,8 +765,13 @@ function renderTriggerForm() {
   vSel.innerHTML = state.vaults.map(
     (v) => `<option value="${esc(v.name)}">${esc(v.name)}</option>`
   ).join("");
-  if (state.vaults.find((v) => v.name === prevVault)) vSel.value = prevVault;
-  else if (state.selectedVault) vSel.value = state.selectedVault;
+  if (forceVault && state.vaults.find((v) => v.name === forceVault)) {
+    vSel.value = forceVault;
+  } else if (state.vaults.find((v) => v.name === prevVault)) {
+    vSel.value = prevVault;
+  } else if (state.selectedVault) {
+    vSel.value = state.selectedVault;
+  }
   vSel.disabled = allChecked;
 
   if (!oSel.options.length) {
@@ -779,6 +810,15 @@ function renderOpFields(prefillParams) {
                   placeholder="${esc(p.placeholder || "")}">${esc(val)}</textarea>
       </div>`;
     }
+    if (p.type === "checkbox") {
+      const checked = v === true || v === "true" || v === 1 || v === "1";
+      return `<div class="param-row param-row-checkbox">
+        <label for="${esc(id)}">
+          <input id="${esc(id)}" type="checkbox" data-key="${esc(p.key)}" data-type="checkbox" ${checked ? "checked" : ""}>
+          ${esc(p.label)}
+        </label>
+      </div>`;
+    }
     const type = p.type === "url" ? "url" : "text";
     return `<div class="param-row">
       <label for="${esc(id)}">${esc(p.label)}</label>
@@ -798,6 +838,8 @@ function collectTriggerParams() {
     const key = el.dataset.key;
     if (el.dataset.type === "argv") {
       params[key] = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    } else if (el.dataset.type === "checkbox") {
+      params[key] = !!el.checked;
     } else {
       params[key] = el.value;
     }
@@ -1093,7 +1135,7 @@ async function loadHelp() {
           <p>The <code>man/</code> directory was not found at
           <code>${esc(data.root || "")}</code>.</p>
           <p class="muted">Set <code>app.man_path</code> in
-          <code>system.yaml</code> to point at your help tree, or create the
+          <code>resman.yaml</code> to point at your help tree, or create the
           directory and drop in some <code>.md</code> files.</p>
         </div>`;
       renderHelpTree();
@@ -1190,7 +1232,7 @@ async function openVaultInObsidian() {
     });
   } catch (err) {
     alert("Could not launch Obsidian: " + err.message +
-      "\n\nCheck that obsidian_cmd is set correctly in config/system.yaml.");
+      "\n\nCheck that obsidian_cmd is set correctly in config/resman.yaml.");
   }
 }
 
@@ -1222,10 +1264,22 @@ function showCronSkipBanner(payload) {
 
 // ----- config -----
 async function loadConfig() {
-  const file = $("#config-file").value;
+  const sel = $("#config-file");
+  const file = sel.value;
   const data = await api("/api/config/yaml?file=" + encodeURIComponent(file));
   $("#config-editor").value = data.content || "";
   $("#config-status").textContent = "";
+  // For the resman.yaml entry: relabel the dropdown option to reflect
+  // whichever file is actually live (e.g. `~/.resman.yaml` when the
+  // per-user override is in use), and surface it as a tooltip too.
+  const resmanOpt = Array.from(sel.options).find((o) => o.value === "resman.yaml");
+  if (resmanOpt && data.resman_display_path) {
+    const label = data.using_user_override
+      ? `${data.resman_display_path} (user override)`
+      : data.resman_display_path;
+    resmanOpt.textContent = label;
+    resmanOpt.title = data.resman_path || "";
+  }
 }
 
 async function saveConfig() {
@@ -1490,7 +1544,7 @@ function pickFolder(initialPath) {
 // Two-step vault creation wizard:
 //   1. POST /api/vaults/scaffold  — runs tools/new-vault.sh to create the
 //      directory tree and `.obsidian/` placeholder.
-//   2. POST /api/vaults           — appends the entry to system.yaml.
+//   2. POST /api/vaults           — appends the entry to resman.yaml.
 // "Register existing" mode skips step 1 for a vault that already exists.
 function showNewVaultWizard() {
   const body = `
@@ -1555,7 +1609,7 @@ function showNewVaultWizard() {
       }
     }
 
-    setWizardStatus("Registering in system.yaml…", "info");
+    setWizardStatus("Registering in resman.yaml…", "info");
     try {
       await api("/api/vaults", {
         method: "POST",

@@ -134,7 +134,7 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 - Edit mode is not yet built (read-only).
 
 **Tasks tab:**
-- Operations-first layout. The top of the tab is a **trigger panel** with: vault selector + `all vaults` toggle, operation dropdown grouped by Wiki / Research / Custom, per-operation parameter fields (URL, topic, prompt, argv — no JSON textarea), priority, and a `When` `datetime-local` input (empty = run now). One **Run task** button submits.
+- Operations-first layout. The top of the tab is a **trigger panel** with: vault selector + `all vaults` toggle, operation dropdown grouped by Wiki / Research / Custom, per-operation parameter fields (URL, topic, prompt, argv, checkbox — no JSON textarea), priority, and a `When` `datetime-local` input (empty = run now). One **Run task** button submits.
 - Operation registry lives client-side in `OPERATIONS` (`app.js`). It mirrors the operation list in `plugin_commands.py` + `task_manager.py`; no `/api/operations` endpoint.
 - The queue below the trigger renders **task cards** (one card per task; left border tinted by state). Clicking the card head or the `log` button expands the card to reveal params, error, scheduled time, and a **live-tailing log pane** that subscribes to `task_log_appended` Socket.IO chunks. The pane is seeded from `GET /api/tasks/{id}/log` on first open.
 - Queue filters: priority + state (`active` default | `recent (24h)` | `all`). When a vault is selected, the queue is filtered to its tasks plus all `ALL`-vault tasks.
@@ -148,14 +148,14 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 - See `06-task-management.md` for the live-log streaming, log size cap, and cancel-running semantics.
 
 **Config tab:**
-- Live YAML editors for `system.yaml` and `schedule.yaml` (Option J pattern)
+- Live YAML editors for `resman.yaml` and `schedule.yaml` (Option J pattern)
 
 **Help tab:**
 - Two-pane layout: a file-tree sidebar on the left (the `man/` directory at the repo root), markdown content on the right.
 - The tree is walked server-side via `GET /api/help/tree`; only directories and `.md` files are exposed (other extensions are rejected to keep the surface tight).
 - Pages render through the same `marked.js` pipeline as the Wiki tab via `GET /api/help/page?file=…`.
 - In-page links to relative `.md` paths are intercepted client-side and re-routed through the help tree (no full navigation away from the SPA).
-- Override the source path with `app.man_path` in `system.yaml` if the docs ship somewhere else.
+- Override the source path with `app.man_path` in `resman.yaml` if the docs ship somewhere else.
 
 ## New-Vault Wizard
 

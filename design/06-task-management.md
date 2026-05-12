@@ -15,7 +15,7 @@ races. ALL-vault tasks spawn per-vault child tasks and aggregate their state via
 |-------|--------|
 | `id` | `t-<uuid4>` |
 | `vault` | vault name or `ALL` |
-| `operation` | `wiki-ingest`, `wiki-lint`, `wiki-autoresearch`, `wiki-update-hot-cache`, `wiki-bootstrap`, `run-prompt`, `run-shell` |
+| `operation` | `wiki-ingest`, `wiki-ingest-prefix`, `wiki-lint`, `wiki-autoresearch`, `wiki-canvas`, `wiki-update-hot-cache`, `wiki-bootstrap`, `run-prompt`, `run-shell` |
 | `priority` | `high` / `medium` / `low` |
 | `schedule` | `immediate`, `background`, `deferred` |
 | `parent_id` | UUID of parent task or `null` |
@@ -175,9 +175,11 @@ Plugin command strings come exclusively from `plugin_commands.py`.
 
 | Operation | Execution |
 |-----------|-----------|
-| `wiki-ingest` | `[RESMAN_ROOT/tools/ingest.sh, vault_path, params.url]` |
+| `wiki-ingest` | `[RESMAN_ROOT/tools/ingest.sh, vault_path, params.url]` with optional `--can` if `params.update_canvas` |
+| `wiki-ingest-prefix` | `[RESMAN_ROOT/tools/ingest.sh, vault_path, params.url, "--prefix", PREFIX_FILE]` with optional `--can` if `params.update_canvas` |
 | `wiki-lint` | `["claude", "-p", LINT, "--dangerously-skip-permissions"]` in vault dir |
 | `wiki-autoresearch` | `["claude", "-p", autoresearch(topic), "--dangerously-skip-permissions"]` in vault dir |
+| `wiki-canvas` | `["claude", "-p", canvas_prompt(description), "--dangerously-skip-permissions"]` in vault dir |
 | `wiki-update-hot-cache` | `["claude", "-p", UPDATE_HOT_CACHE, "--dangerously-skip-permissions"]` in vault dir |
 | `wiki-bootstrap` | `["claude", "-p", WIKI_BOOTSTRAP, "--dangerously-skip-permissions"]` in vault dir — non-interactive re-run only |
 | `run-prompt` | `["claude", "-p", params.prompt, "--dangerously-skip-permissions"]` in vault dir |

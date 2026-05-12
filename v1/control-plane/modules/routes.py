@@ -111,7 +111,7 @@ def list_vaults():
 @bp.post("/api/vaults")
 @_csrf_required
 def register_vault():
-    """Register an EXISTING vault directory in system.yaml.
+    """Register an EXISTING vault directory in resman.yaml.
 
     Does not create the directory. Use POST /api/vaults/scaffold first if
     the directory does not exist yet.
@@ -135,7 +135,7 @@ def register_vault():
 def scaffold_vault():
     """Create a new vault directory by invoking tools/new-vault.sh.
 
-    Does NOT register the vault in system.yaml — the wizard calls
+    Does NOT register the vault in resman.yaml — the wizard calls
     POST /api/vaults afterwards. Splitting these means a partial failure
     leaves a clean, fixable state: directory created but not registered,
     or registered but not on disk.
@@ -315,7 +315,7 @@ def _man_root() -> Path:
 
     Defaults to the repo root sibling of v1/ (i.e. ``RESMAN_ROOT.parent/man``)
     so the docs travel with the source. Overridable via ``app.man_path`` in
-    system.yaml for installs that ship man pages elsewhere.
+    resman.yaml for installs that ship man pages elsewhere.
     """
     cm = _ctx()["config"]
     override = (cm.app.get("man_path") or "").strip()
@@ -402,7 +402,7 @@ def help_page():
 @bp.post("/api/vaults/<name>/open")
 @_csrf_required
 def open_vault_in_obsidian(name):
-    """Launch Obsidian for this vault using `obsidian_cmd` from system.yaml.
+    """Launch Obsidian for this vault using `obsidian_cmd` from resman.yaml.
 
     The configured command is treated as a single launch string and split
     with shlex; the vault path is appended as a final argument. Subprocess
@@ -418,7 +418,7 @@ def open_vault_in_obsidian(name):
     cm = _ctx()["config"]
     cmd_str = (cm.app.get("obsidian_cmd") or "").strip()
     if not cmd_str:
-        return jsonify({"error": "obsidian_cmd not configured in system.yaml"}), 400
+        return jsonify({"error": "obsidian_cmd not configured in resman.yaml"}), 400
     parts = shlex.split(cmd_str) + [v.path]
     try:
         subprocess.Popen(
@@ -615,16 +615,45 @@ def list_cron():
 
 
 # ----- Config (live YAML editor) -----
+# `resman.yaml` is the canonical name; `system.yaml` is accepted as a legacy
+# alias so old clients/scripts keep working until they've been updated.
+_RESMAN_ALIASES = ("resman.yaml", "system.yaml")
+_YAML_FILES = (*_RESMAN_ALIASES, "schedule.yaml")
+
+
+def _resolve_yaml_path(cm, fname: str) -> Path:
+    if fname in _RESMAN_ALIASES:
+        return cm.resman_path
+    return cm.config_dir / fname
+
+
+def _resman_meta(cm) -> dict:
+    """Surface where the live resman.yaml actually lives so the UI can label
+    the editor (e.g. show `~/.resman.yaml` when the user override is in use)."""
+    path = cm.resman_path
+    home = str(Path.home())
+    spath = str(path)
+    display = "~" + spath[len(home):] if spath.startswith(home + "/") else spath
+    return {
+        "resman_path": spath,
+        "resman_display_path": display,
+        "using_user_override": bool(cm.using_user_override),
+    }
+
+
 @bp.get("/api/config/yaml")
 def get_yaml():
     cm = _ctx()["config"]
-    fname = request.args.get("file", "system.yaml")
-    if fname not in ("system.yaml", "schedule.yaml"):
+    fname = request.args.get("file", "resman.yaml")
+    if fname not in _YAML_FILES:
         return jsonify({"error": "unknown file"}), 400
-    p = cm.config_dir / fname
-    if not p.exists():
-        return jsonify({"file": fname, "content": ""})
-    return jsonify({"file": fname, "content": p.read_text(encoding="utf-8")})
+    p = _resolve_yaml_path(cm, fname)
+    body = {"file": fname, "content": ""}
+    if fname in _RESMAN_ALIASES:
+        body.update(_resman_meta(cm))
+    if p.exists():
+        body["content"] = p.read_text(encoding="utf-8")
+    return jsonify(body)
 
 
 @bp.post("/api/config/yaml")
@@ -633,14 +662,14 @@ def save_yaml():
     body = request.get_json(force=True, silent=True) or {}
     fname = body.get("file")
     content = body.get("content")
-    if fname not in ("system.yaml", "schedule.yaml"):
+    if fname not in _YAML_FILES:
         return jsonify({"error": "unknown file"}), 400
     if not isinstance(content, str):
         return jsonify({"error": "content must be a string"}), 400
     cm = _ctx()["config"]
     try:
-        if fname == "system.yaml":
-            cm.save_system_yaml(content)
+        if fname in _RESMAN_ALIASES:
+            cm.save_resman_yaml(content)
         else:
             cm.save_schedule_yaml(content)
     except ConfigError as exc:

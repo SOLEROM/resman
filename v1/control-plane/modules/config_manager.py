@@ -1,14 +1,21 @@
 """Atomic YAML config loader/saver.
 
-Owns system.yaml and schedule.yaml. Reads via yaml.safe_load only. Saves are
+Owns resman.yaml and schedule.yaml. Reads via yaml.safe_load only. Saves are
 atomic (.tmp + os.replace) and validated before write. On successful save,
 emits `config_reloaded` on the EventBus so subscribers (VaultRegistry,
 Scheduler) re-derive their state without a server restart.
 
+Priority load for resman.yaml:
+  1. ~/.resman.yaml (per-user override) — if present, this file is the source
+     of truth and all UI saves write back to it.
+  2. <config_dir>/resman.yaml (repo-shipped default).
+The chosen path is captured at `load()` time and reused for every save so the
+UI and the loader never disagree on which file is live.
+
 Validation rules:
 - File must be ≤ 1 MB
 - yaml.safe_load() result must be a dict
-- system.yaml: each vault entry must contain `name` and `path`; vault names
+- resman.yaml: each vault entry must contain `name` and `path`; vault names
   match [a-zA-Z0-9_-]
 - schedule.yaml: each cron entry must contain `name`, `cron`, `vault`,
   `operation`, `priority`; cron string must parse via CronTrigger.from_crontab
@@ -46,40 +53,45 @@ def _validate_cron_string(expr: str) -> None:
         raise ConfigError(f"invalid cron expression {expr!r}: {exc}") from exc
 
 
-def validate_system_yaml(data: Any) -> dict:
+def validate_resman_yaml(data: Any) -> dict:
     if not isinstance(data, dict):
-        raise ConfigError("system.yaml: top-level value must be a mapping")
+        raise ConfigError("resman.yaml: top-level value must be a mapping")
     vaults = data.get("vaults") or []
     if not isinstance(vaults, list):
-        raise ConfigError("system.yaml: 'vaults' must be a list")
+        raise ConfigError("resman.yaml: 'vaults' must be a list")
     seen: set[str] = set()
     for entry in vaults:
         if not isinstance(entry, dict):
-            raise ConfigError("system.yaml: each vault entry must be a mapping")
+            raise ConfigError("resman.yaml: each vault entry must be a mapping")
         name = entry.get("name")
         path = entry.get("path")
         if not name or not isinstance(name, str):
-            raise ConfigError("system.yaml: vault entry missing 'name'")
+            raise ConfigError("resman.yaml: vault entry missing 'name'")
         if not VAULT_NAME_RE.match(name):
             raise ConfigError(
-                f"system.yaml: vault name {name!r} must match [a-zA-Z0-9_-]"
+                f"resman.yaml: vault name {name!r} must match [a-zA-Z0-9_-]"
             )
         if name in seen:
-            raise ConfigError(f"system.yaml: duplicate vault name {name!r}")
+            raise ConfigError(f"resman.yaml: duplicate vault name {name!r}")
         seen.add(name)
         if not path or not isinstance(path, str):
-            raise ConfigError(f"system.yaml: vault {name!r} missing 'path'")
+            raise ConfigError(f"resman.yaml: vault {name!r} missing 'path'")
     scan_paths = data.get("scan_paths") or []
     if not isinstance(scan_paths, list):
-        raise ConfigError("system.yaml: 'scan_paths' must be a list")
+        raise ConfigError("resman.yaml: 'scan_paths' must be a list")
     for sp in scan_paths:
         if not isinstance(sp, str) or not sp:
-            raise ConfigError("system.yaml: scan_paths entries must be non-empty strings")
+            raise ConfigError("resman.yaml: scan_paths entries must be non-empty strings")
         # Reject filesystem-root scans
         normalized = os.path.normpath(sp)
         if normalized in ("/", "/home", "/Users", "/mnt", "/data") or normalized == "":
-            raise ConfigError(f"system.yaml: scan_paths cannot be a root path ({sp})")
+            raise ConfigError(f"resman.yaml: scan_paths cannot be a root path ({sp})")
     return data
+
+
+# Backward-compat alias — kept so callers/tests that imported the old name
+# don't break during the rename. Prefer validate_resman_yaml in new code.
+validate_system_yaml = validate_resman_yaml
 
 
 def validate_schedule_yaml(data: Any) -> dict:
@@ -103,22 +115,72 @@ def validate_schedule_yaml(data: Any) -> dict:
     return data
 
 
+def _default_user_override_path() -> Path:
+    return Path.home() / ".resman.yaml"
+
+
 class ConfigManager:
-    def __init__(self, config_dir: Path, bus: Optional[EventBus] = None) -> None:
+    def __init__(
+        self,
+        config_dir: Path,
+        bus: Optional[EventBus] = None,
+        user_override_path: Optional[Path] = None,
+    ) -> None:
         self.config_dir = Path(config_dir)
-        self.system_path = self.config_dir / "system.yaml"
+        # Resolved at load() time so we know which file is actually live.
+        self.resman_path = self.config_dir / "resman.yaml"
         self.schedule_path = self.config_dir / "schedule.yaml"
         self.bus = bus or get_bus()
         self._system: dict = {}
         self._schedule: dict = {"cron_tasks": []}
+        # True once load() picked the user override.
+        self._using_user_override: bool = False
+        # Test seam: tests pass a non-existent path so the real user file
+        # at ~/.resman.yaml cannot leak into the test environment.
+        self._user_override_path: Path = (
+            Path(user_override_path) if user_override_path is not None
+            else _default_user_override_path()
+        )
+
+    # Backward-compat: existing callers still read `system_path`. Keep it as
+    # an alias for the live resman.yaml path.
+    @property
+    def system_path(self) -> Path:
+        return self.resman_path
+
+    @property
+    def using_user_override(self) -> bool:
+        return self._using_user_override
 
     def load(self) -> None:
-        if not self.system_path.exists():
-            raise ConfigError(
-                f"system.yaml not found at {self.system_path}. "
-                f"Copy system.yaml.example to system.yaml and edit it."
+        # Priority: ~/.resman.yaml first; fall back to <config_dir>/resman.yaml.
+        # Legacy: if neither exists but <config_dir>/system.yaml does, use it
+        # so existing checkouts keep working until the user renames the file.
+        repo_default = self.config_dir / "resman.yaml"
+        legacy = self.config_dir / "system.yaml"
+        if self._user_override_path.exists():
+            self.resman_path = self._user_override_path
+            self._using_user_override = True
+            log.info("config: using user override at %s", self._user_override_path)
+        elif repo_default.exists():
+            self.resman_path = repo_default
+            self._using_user_override = False
+        elif legacy.exists():
+            self.resman_path = legacy
+            self._using_user_override = False
+            log.warning(
+                "config: loading legacy system.yaml at %s — rename it to resman.yaml",
+                legacy,
             )
-        self._system = self._load_yaml(self.system_path, validate_system_yaml)
+        else:
+            raise ConfigError(
+                f"resman.yaml not found. Looked in:\n"
+                f"  {self._user_override_path}\n"
+                f"  {repo_default}\n"
+                f"Copy resman.yaml.example to resman.yaml and edit it, "
+                f"or place a ~/.resman.yaml."
+            )
+        self._system = self._load_yaml(self.resman_path, validate_resman_yaml)
         if self.schedule_path.exists():
             self._schedule = self._load_yaml(self.schedule_path, validate_schedule_yaml)
         else:
@@ -168,11 +230,19 @@ class ConfigManager:
                 return entry
         return None
 
+    def save_resman_yaml(self, content: str) -> dict:
+        # Write back to whichever file load() selected so the user override
+        # at ~/.resman.yaml stays authoritative across edits.
+        return self._save_to(self.resman_path, "resman.yaml", content, validate_resman_yaml)
+
+    # Back-compat alias. Existing routes still call save_system_yaml.
     def save_system_yaml(self, content: str) -> dict:
-        return self._save("system.yaml", content, validate_system_yaml)
+        return self.save_resman_yaml(content)
 
     def save_schedule_yaml(self, content: str) -> dict:
-        return self._save("schedule.yaml", content, validate_schedule_yaml)
+        return self._save_to(
+            self.schedule_path, "schedule.yaml", content, validate_schedule_yaml,
+        )
 
     def add_vault(self, name: str, path: str, tags: list[str] | None = None) -> None:
         if not VAULT_NAME_RE.match(name or ""):
@@ -185,25 +255,24 @@ class ConfigManager:
         vaults.append(new)
         data["vaults"] = vaults
         text = yaml.safe_dump(data, sort_keys=False)
-        self.save_system_yaml(text)
+        self.save_resman_yaml(text)
 
-    def _save(self, name: str, content: str, validator) -> dict:
+    def _save_to(self, path: Path, logical_name: str, content: str, validator) -> dict:
         if len(content.encode("utf-8")) > MAX_CONFIG_BYTES:
-            raise ConfigError(f"{name}: content exceeds 1 MB")
+            raise ConfigError(f"{logical_name}: content exceeds 1 MB")
         try:
             data = yaml.safe_load(content)
         except yaml.YAMLError as exc:
-            raise ConfigError(f"{name}: invalid YAML — {exc}") from exc
+            raise ConfigError(f"{logical_name}: invalid YAML — {exc}") from exc
         if data is None:
             data = {}
         validated = validator(data)
-        path = self.config_dir / name
         self._atomic_write(path, content)
-        if name == "system.yaml":
+        if logical_name == "resman.yaml":
             self._system = validated
         else:
             self._schedule = validated
-        self.bus.emit("config_reloaded", {"file": name})
+        self.bus.emit("config_reloaded", {"file": logical_name})
         return validated
 
     @staticmethod

@@ -19,15 +19,16 @@ the Flask + Socket.IO server on `http://127.0.0.1:5090`.
 allow-list. Resman has no authentication — only run `--public` on a trusted
 network.
 
-`config/system.yaml` is the source of truth — copy from
-`config/system.yaml.example` and edit before first run.
+`config/resman.yaml` is the source of truth — copy from
+`config/resman.yaml.example` and edit before first run. A per-user override
+at `~/.resman.yaml` (if present) takes priority over the repo file.
 
 ## Layout
 
 ```
 v1/
 ├── config/
-│   ├── system.yaml.example   # copy to system.yaml and edit
+│   ├── resman.yaml.example   # copy to resman.yaml and edit (or use ~/.resman.yaml)
 │   ├── schedule.yaml.example # cron tasks
 │   └── task-logs/            # per-task execution output
 ├── control-plane/

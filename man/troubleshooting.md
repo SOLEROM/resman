@@ -47,7 +47,7 @@ where you started `run.sh` — APScheduler logs every fire.
 
 ## "Obsidian" button does nothing
 
-The header **Obsidian** button uses `app.obsidian_cmd` from `system.yaml`.
+The header **Obsidian** button uses `app.obsidian_cmd` from `resman.yaml`.
 If that command doesn't exist on `$PATH` you'll get a 400 with
 `obsidian binary not found`.
 Common values:
@@ -77,7 +77,7 @@ retry. The port range is configured by `app.ttyd_port_base` /
 ## Help tab says "man/ directory not found"
 
 resman expects `<repo-root>/man/` — the sibling of `v1/`. If your install
-puts it elsewhere, set `app.man_path` in `system.yaml`:
+puts it elsewhere, set `app.man_path` in `resman.yaml`:
 
 ```yaml
 app:

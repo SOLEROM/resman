@@ -14,12 +14,12 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 |--------|------|-------------|
 | GET | `/api/health` | Server health: config, tmux, ttyd, scheduler, task replay status |
 | GET | `/api/vaults` | List all registered vaults with status (registered + discovered) |
-| POST | `/api/vaults` | Register a vault in `system.yaml` (name, path, tags). Does not create the directory |
+| POST | `/api/vaults` | Register a vault in `resman.yaml` (name, path, tags). Does not create the directory |
 | POST | `/api/vaults/scaffold` | Run `tools/new-vault.sh` to create the directory tree (path, `.obsidian/`, `inbox/`, `_resman/`, README, gitignore). Body: `{name, path}` |
 | GET | `/api/vaults/{name}/health` | Vault health check: path, .obsidian/, wiki home (`wiki/overview.md`), last session, last completed task, tags |
 | GET | `/api/vaults/{name}/wiki` | Read raw markdown of a wiki page produced by the Claude wiki plugin. Defaults to `wiki/overview.md`; the three canonical pages exposed in the toolbar are `wiki/hot.md`, `wiki/index.md`, `wiki/overview.md`. Other pages reachable via `?file=wiki/<page>.md`. Path-traversal blocked. Used by the **Wiki** tab |
 | GET | `/api/vaults/{name}/wiki/tree` | Walk `<vault>/wiki/` recursively, returning sorted dirs + `.md` files for the Wiki tab's sidebar tree. Paths are vault-relative (e.g. `wiki/sources/foo.md`). Hidden entries and symlinks are skipped. Returns `{missing: true, tree: []}` when the vault has no `wiki/` directory yet (fresh / pre-bootstrap) |
-| POST | `/api/vaults/{name}/open` | Launch Obsidian for this vault using `obsidian_cmd` from system.yaml; subprocess detached, vault path appended as a final arg |
+| POST | `/api/vaults/{name}/open` | Launch Obsidian for this vault using `obsidian_cmd` from resman.yaml; subprocess detached, vault path appended as a final arg |
 | GET | `/api/fs/list?path=…` | Read-only directory listing for the server-side folder picker. Returns `{path, parent, home, entries: [{name, path, is_obsidian}]}`. Hides dotfile directories. No CSRF (read-only GET) |
 | GET | `/api/sessions` | List live terminal sessions and `available` flag (ttyd installed) |
 | POST | `/api/sessions` | Spawn terminal session (vault, type: `claude`\|`shell`, optional `initial_command`); 503 if ttyd missing |
@@ -35,8 +35,8 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | GET | `/api/window` | Get current window state |
 | POST | `/api/window` | Set window state (body: `action`, `duration_hours`) |
 | GET | `/api/cron` | List cron tasks with `last_fired_at`, `skip_count` |
-| GET | `/api/config/yaml?file=…` | Read raw YAML for `system.yaml` or `schedule.yaml` |
-| POST | `/api/config/yaml` | Save system.yaml or schedule.yaml (body: `{file, content}`) |
+| GET | `/api/config/yaml?file=…` | Read raw YAML for `resman.yaml` or `schedule.yaml`; returns extra fields for resman.yaml: `resman_path`, `resman_display_path` (tildified, e.g. `~/.resman.yaml`), `using_user_override` (bool). Accepts legacy `file=system.yaml` alias |
+| POST | `/api/config/yaml` | Save resman.yaml or schedule.yaml (body: `{file, content}`); accepts legacy `file=system.yaml` alias |
 | GET | `/api/help/tree` | Walk the `man/` directory tree (root: `<repo>/man` or `app.man_path`) and return nested `.md` files. Used by the **Help** tab. Returns `{root, missing, tree:[…]}` |
 | GET | `/api/help/page?file=…` | Read one help page; default `index.md`. Only `.md` files served. Path-traversal blocked |
 
@@ -61,7 +61,7 @@ via `tmux send-keys`. Used by the new-vault wizard for interactive bootstrap
 
 The browser SPA calls these in order:
 1. `POST /api/vaults/scaffold` (only when "Scaffold the directory" is checked) → runs `tools/new-vault.sh` to materialize the tree
-2. `POST /api/vaults` → appends the vault entry to `system.yaml`
+2. `POST /api/vaults` → appends the vault entry to `resman.yaml` (or the active `~/.resman.yaml` override)
 3. `POST /api/sessions` with `initial_command: "/claude-obsidian:wiki"` (only when "Bootstrap wiki" is checked)
 
 Each step is independently failable; the wizard reports per-step status.

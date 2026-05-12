@@ -5,7 +5,7 @@ Obsidian research vaults from a single browser dashboard.
 
 ## What resman does
 
-- Loads your vaults from `config/system.yaml` — each vault is an
+- Loads your vaults from `config/resman.yaml` — each vault is an
   independent Obsidian directory, anywhere on the filesystem.
 - Spawns Claude Code and bash sessions inside any vault as `tmux` sessions
   visible in the browser via `ttyd` iframes.
@@ -23,8 +23,8 @@ Obsidian research vaults from a single browser dashboard.
 cd v1
 python3 -m venv .venv
 .venv/bin/pip install -r control-plane/requirements.txt
-cp config/system.yaml.example config/system.yaml
-# edit config/system.yaml — replace the placeholder vault entries
+cp config/resman.yaml.example config/resman.yaml
+# edit config/resman.yaml — replace the placeholder vault entries
 .venv/bin/python control-plane/server.py
 ```
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-resman distinguishes between required components (tmux, system.yaml) that cause a
+resman distinguishes between required components (tmux, resman.yaml) that cause a
 hard startup failure and optional components (ttyd) that degrade gracefully. Every
 system boundary has a defined error behavior — nothing fails silently. Startup
 produces a structured report to stdout listing the status of each component. The
@@ -29,8 +29,8 @@ On failure: `ttyd: MISSING (terminal sessions disabled — install ttyd to enabl
 
 | Scenario | Behavior |
 |----------|----------|
-| `system.yaml` missing | Fail loudly: print error to stdout + show browser banner; do not start |
-| `system.yaml` invalid YAML | Same |
+| `resman.yaml` missing | Fail loudly: print error to stdout + show browser banner; do not start |
+| `resman.yaml` invalid YAML | Same |
 | `tasks.jsonl` corrupt line | Skip line; log byte offset and error; continue replay; report skipped count in startup output |
 | `tasks.jsonl` partial final line | Truncate; emit warning; continue |
 | Task in `started` state with no terminal event | Replay checks `os.kill(pid, 0)`: process still alive → stay `running`; process gone → mark `interrupted` and surface to user |
@@ -62,7 +62,7 @@ On failure: `ttyd: MISSING (terminal sessions disabled — install ttyd to enabl
 
 **Hard failure (server refuses to start):**
 - tmux not installed
-- `system.yaml` missing or invalid YAML
+- `resman.yaml` missing or invalid YAML
 
 **Graceful degradation (server starts, feature disabled or warning shown):**
 - ttyd not installed → terminal endpoints return 503; everything else works
@@ -95,7 +95,7 @@ blank-line tolerance).
 
 ## Constraints
 
-- The server must never silently start with broken required state (tmux, system.yaml)
+- The server must never silently start with broken required state (tmux, resman.yaml)
 - `budget.json` corruption must never raise an unhandled exception
 - Every error scenario in the table above must produce a log entry
 - ObsidianPush must never propagate an OSError outside the write call

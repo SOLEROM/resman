@@ -20,7 +20,7 @@ Show in the bottom status bar:
 
 ## Configuring the window budget
 
-`system.yaml` has a `window_budget` section:
+`resman.yaml` has a `window_budget` section:
 
 ```yaml
 window_budget:

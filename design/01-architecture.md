@@ -15,8 +15,8 @@ resman/
 ├── deps.sh                  # host-dep installer (tmux, ttyd, python venv)
 ├── run.sh                   # entry point; activates venv and starts server.py
 ├── config/
-│   ├── system.yaml          # app settings + vault registry (source of truth)
-│   ├── system.yaml.example  # annotated starter config shipped with repo
+│   ├── resman.yaml          # app settings + vault registry (source of truth)
+│   ├── resman.yaml.example  # annotated starter config shipped with repo
 │   ├── schedule.yaml        # cron task definitions
 │   ├── budget.json          # window state (written by UI only)
 │   ├── tasks.jsonl          # append-only task event log
@@ -25,7 +25,7 @@ resman/
 │   ├── server.py
 │   ├── requirements.txt
 │   └── modules/
-│       ├── config_manager.py     # load/save/reload system.yaml; emits config_reloaded
+│       ├── config_manager.py     # load/save/reload resman.yaml; emits config_reloaded
 │       ├── vault_registry.py     # vault list, .obsidian/ validation, discovery
 │       ├── session_manager.py    # spawn/kill ttyd processes; port registry; SessionMonitor
 │       ├── task_manager.py       # task queue, state machine, parent/child, JSONL log
@@ -65,7 +65,7 @@ Browser
 
 Flask + eventlet (port 5090)
   ├── EventBus          — internal pub/sub; decouples WindowState ↔ TaskManager
-  ├── VaultRegistry     — vault list from system.yaml + .obsidian/ validation
+  ├── VaultRegistry     — vault list from resman.yaml + .obsidian/ validation
   ├── SessionManager    — spawn/kill ttyd processes; port registry; SessionMonitor
   ├── TaskManager       — priority queue, dispatch mutex, parent/child, JSONL log,
   │                        PTY-based streaming runner (live log chunks on bus),

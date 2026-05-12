@@ -64,8 +64,10 @@ if ! venv_works; then
   "$VENV/bin/python3" -m pip install --quiet -r control-plane/requirements.txt
 fi
 
-if [[ ! -f config/system.yaml ]]; then
-  echo "config/system.yaml is missing. Copy from system.yaml.example and edit."
+if [[ ! -f "$HOME/.resman.yaml" && ! -f config/resman.yaml ]]; then
+  echo "No resman.yaml found."
+  echo "  Place one at ~/.resman.yaml (per-user override), OR"
+  echo "  Copy config/resman.yaml.example to config/resman.yaml and edit."
   exit 1
 fi
 

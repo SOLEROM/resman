@@ -17,8 +17,8 @@ The top of the Tasks tab is a form, not a modal. To run something:
    The form below adjusts to show only the fields that operation needs —
    URL for ingest, topic for autoresearch, prompt for `run-prompt`, argv
    lines for `run-shell`.
-3. **Pick a priority.** `medium` by default; raise to `high` to jump the
-   queue, lower to `low` if the task is best-effort.
+3. **Pick a priority.** `high` by default; lower to `medium` or `low` if the
+   task is best-effort.
 4. **Pick when to run.** Leave **When** empty to run immediately. Set a
    future date/time to park the task in `scheduled` state — resman fires it
    automatically at that moment, even if you close the tab. Scheduling and
@@ -84,9 +84,11 @@ doesn't exit within 5 seconds it is `SIGKILL`'d. The task transitions to
 | Group | Operation | What it does |
 |---|---|---|
 | Wiki | **Lint wiki** | Runs `/claude-obsidian:wiki-lint` against the vault |
+| Wiki | **Update canvas (visual map)** | Runs `/claude-obsidian:canvas [description]` to create or update the wiki's visual canvas. Description is optional. |
 | Wiki | **Update hot cache** | Runs `/claude-obsidian:update-hot-cache` |
 | Wiki | **Re-run wiki bootstrap** | Runs `/claude-obsidian:wiki` non-interactively. Only safe for re-runs — first-time bootstrap must use the wizard. |
-| Research | **Ingest a URL** | Runs `tools/ingest.sh <vault> <url>` |
+| Research | **Ingest a URL** | Runs `tools/ingest.sh <vault> <url>` with optional canvas update. Check **"Update canvas after ingest"** to refresh `wiki/canvases/main.canvas` after ingesting. |
+| Research | **Ingest URL + prefix** | Runs `tools/ingest.sh <vault> <url> --prefix <prompts/urlInjestPrefix.md>` to apply constructive-extraction guidance before ingesting. Optional canvas update available. |
 | Research | **Autoresearch a topic** | Runs `/claude-obsidian:autoresearch <topic>` |
 | Custom | **Run a Claude prompt** | Runs `claude -p '<prompt>'` |
 | Custom | **Run shell command** | Runs an explicit argv list (one argument per line) in the vault directory. **Argument list only, not a shell string.** Confirms before submitting. |

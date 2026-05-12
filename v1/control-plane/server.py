@@ -204,7 +204,7 @@ def main() -> int:
     parser.add_argument("--config-dir", type=str, default=str(CONFIG_DIR))
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--host", type=str, default=None,
-                        help="Interface to bind (overrides system.yaml). Use 0.0.0.0 for LAN.")
+                        help="Interface to bind (overrides resman.yaml). Use 0.0.0.0 for LAN.")
     parser.add_argument("--public", action="store_true",
                         help="Bind to 0.0.0.0 and expose on the local network. "
                              "Disables CORS origin restriction; ttyd terminals are reachable from LAN.")

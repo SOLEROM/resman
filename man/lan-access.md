@@ -49,7 +49,7 @@ When you run `--public`:
 - Anyone on your LAN can spawn Claude / shell sessions in any registered
   vault.
 - They can read any file under any vault path (via the wiki/health endpoints).
-- They can edit `system.yaml` and `schedule.yaml` via the Config tab.
+- They can edit `resman.yaml` and `schedule.yaml` via the Config tab.
 
 Use it on a trusted home network, not a coffee-shop wifi. If you need a more
 robust setup, put resman behind a reverse proxy with HTTP basic auth.

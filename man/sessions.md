@@ -57,7 +57,7 @@ This is intentional — long-running Claude sessions survive a panel restart.
 
 The **Obsidian** button (in the header, renamed from "Open Obsidian")
 launches `app.obsidian_cmd` (e.g. `flatpak run md.obsidian.Obsidian`) with
-the vault path appended. Configure it in `system.yaml`. Resman launches a
+the vault path appended. Configure it in `resman.yaml`. Resman launches a
 detached subprocess and returns immediately.
 
 ## ttyd not installed?

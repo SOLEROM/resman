@@ -1,4 +1,5 @@
-# resman system.yaml — copy to system.yaml and edit.
+# resman.yaml — copy to config/resman.yaml (repo default) or to
+# ~/.resman.yaml (per-user override; takes priority), then edit.
 # All paths are absolute; vaults may live anywhere on the filesystem.
 
 app:

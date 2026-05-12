@@ -47,13 +47,17 @@ STATES = (
 )
 OPERATIONS = (
     "wiki-ingest",
+    "wiki-ingest-prefix",
     "wiki-lint",
     "wiki-autoresearch",
+    "wiki-canvas",
     "wiki-update-hot-cache",
     "wiki-bootstrap",
     "run-prompt",
     "run-shell",
 )
+
+URL_INGEST_PREFIX_FILE = "prompts/urlInjestPrefix.md"
 
 PRINTABLE_ASCII = set(string.printable) - set("\x0b\x0c")
 PRINTABLE_RE = re.compile(r"^[\x20-\x7E\t\n\r]*$")
@@ -107,12 +111,30 @@ def _validate_params(operation: str, params: dict) -> dict:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
             raise ValueError("wiki-ingest: 'url' must be http or https")
+        params["update_canvas"] = bool(params.get("update_canvas"))
+    elif operation == "wiki-ingest-prefix":
+        url = params.get("url")
+        if not isinstance(url, str) or not url:
+            raise ValueError("wiki-ingest-prefix: 'url' required")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("wiki-ingest-prefix: 'url' must be http or https")
+        params["update_canvas"] = bool(params.get("update_canvas"))
     elif operation == "wiki-autoresearch":
         topic = params.get("topic", "")
         if not isinstance(topic, str) or not topic:
             raise ValueError("wiki-autoresearch: 'topic' required")
         if len(topic) > 200 or not PRINTABLE_RE.match(topic):
             raise ValueError("wiki-autoresearch: topic must be ≤200 chars printable ASCII")
+    elif operation == "wiki-canvas":
+        description = params.get("description", "")
+        if description is None:
+            description = ""
+        if not isinstance(description, str):
+            raise ValueError("wiki-canvas: 'description' must be a string")
+        if len(description) > 200 or not PRINTABLE_RE.match(description):
+            raise ValueError("wiki-canvas: description must be ≤200 chars printable ASCII")
+        params["description"] = description
     elif operation == "run-prompt":
         prompt = params.get("prompt", "")
         if not isinstance(prompt, str) or not prompt:
@@ -849,12 +871,27 @@ class TaskManager:
         params = task.params
         if op == "wiki-ingest":
             ingest = str(self.resman_root / "tools" / "ingest.sh")
-            return [ingest, vault_path, params["url"]], vault_path
+            cmd = [ingest, vault_path, params["url"]]
+            if params.get("update_canvas"):
+                cmd.append("--can")
+            return cmd, vault_path
+        if op == "wiki-ingest-prefix":
+            ingest = str(self.resman_root / "tools" / "ingest.sh")
+            prefix_file = str(self.resman_root.parent / URL_INGEST_PREFIX_FILE)
+            cmd = [ingest, vault_path, params["url"], "--prefix", prefix_file]
+            if params.get("update_canvas"):
+                cmd.append("--can")
+            return cmd, vault_path
         if op == "wiki-lint":
             return ["claude", "-p", plugin_commands.WIKI_LINT, "--dangerously-skip-permissions"], vault_path
         if op == "wiki-autoresearch":
             return [
                 "claude", "-p", plugin_commands.autoresearch_prompt(params["topic"]),
+                "--dangerously-skip-permissions",
+            ], vault_path
+        if op == "wiki-canvas":
+            return [
+                "claude", "-p", plugin_commands.canvas_prompt(params.get("description", "")),
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-update-hot-cache":

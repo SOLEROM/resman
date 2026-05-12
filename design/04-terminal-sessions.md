@@ -103,7 +103,7 @@ SessionMonitor greenlet detects the terminated proc on next poll and exits clean
 
 - **ttyd eliminates custom PTY code** — no TmuxOutputStreamer, no PtyBridge, no xterm.js WebSocket bridge
 - **Monotonic counter** for session names — `rsm-ai-agents-claude-1`, `-2`, etc.; multiple sessions of same type per vault are supported
-- **Port range 7680–7999** — 320 ports; far more than any realistic number of concurrent sessions; configurable in system.yaml
+- **Port range 7680–7999** — 320 ports; far more than any realistic number of concurrent sessions; configurable in resman.yaml
 - **tmux session survives tab close** — only ttyd is killed; user can reopen and reattach
 - **Orphaned sessions never auto-killed** — user may have live work in them
 - **10s startup grace** — before accepting spawn requests; avoids TIME_WAIT port conflicts

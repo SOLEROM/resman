@@ -9,8 +9,10 @@
 **/task-logs/
 
 # User-specific config (vault paths, ttyd ports, etc.) — *.example is the template.
-**/config/system.yaml
+**/config/resman.yaml
 **/config/schedule.yaml
+# Legacy name — kept ignored so old checkouts don't accidentally commit it.
+**/config/system.yaml
 
 # Catch any stray *.log file that ends up in a config/ dir
 **/config/**/*.log

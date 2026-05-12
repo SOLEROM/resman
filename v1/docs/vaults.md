@@ -1,7 +1,7 @@
 # Vault conventions
 
 A resman vault is any directory containing a `.obsidian/` subdirectory.
-Vaults live at any path on the filesystem; resman's `system.yaml` is the
+Vaults live at any path on the filesystem; resman's `resman.yaml` is the
 authoritative list.
 
 ## Required structure
@@ -30,7 +30,7 @@ Hover the dot for a tooltip listing every condition that is currently true.
 
 ## Discovery (optional)
 
-`scan_paths` in `system.yaml` lists directories to scan (max depth 2) for
+`scan_paths` in `resman.yaml` lists directories to scan (max depth 2) for
 unregistered vaults. Found vaults appear in the sidebar below a divider
 labelled "Unregistered" with a `[+ Register]` button. The scan is a
-convenience layer; `system.yaml` always remains authoritative.
+convenience layer; `resman.yaml` always remains authoritative.

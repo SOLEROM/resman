@@ -1,12 +1,12 @@
 # Vaults
 
 A vault is any directory that contains a `.obsidian/` folder. resman tracks
-**registered** vaults (listed in `system.yaml`) and **discovered** vaults
+**registered** vaults (listed in `resman.yaml`) and **discovered** vaults
 (found by scanning paths under `scan_paths`).
 
 ## Registering a vault
 
-Edit `config/system.yaml`:
+Edit `config/resman.yaml`:
 
 ```yaml
 vaults:
@@ -23,7 +23,7 @@ and (optionally) bootstrapping a Claude session that runs the wiki plugin.
 
 ## Discovering vaults
 
-If you set `scan_paths` in `system.yaml`:
+If you set `scan_paths` in `resman.yaml`:
 
 ```yaml
 scan_paths:
@@ -69,5 +69,5 @@ away.
 
 ## Removing a vault
 
-Delete it from `system.yaml` and reload. resman never deletes vault
+Delete it from `resman.yaml` and reload. resman never deletes vault
 directories or files — removal is purely a config change.

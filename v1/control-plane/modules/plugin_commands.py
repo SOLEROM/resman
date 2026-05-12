@@ -16,3 +16,10 @@ WIKI_BOOTSTRAP = "/claude-obsidian:wiki"
 
 def autoresearch_prompt(topic: str) -> str:
     return f"/claude-obsidian:autoresearch {topic}"
+
+
+def canvas_prompt(description: str = "") -> str:
+    description = (description or "").strip()
+    if not description:
+        return "/claude-obsidian:canvas"
+    return f"/claude-obsidian:canvas {description}"

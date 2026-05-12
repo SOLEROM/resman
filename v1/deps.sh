@@ -349,8 +349,9 @@ RUN_FLAG=""
 if [[ "$USER_PROVIDED_VENV" -eq 1 ]]; then
   RUN_FLAG=" --vname \"$VNAME\""
 fi
-if [[ ! -f "$ROOT/config/system.yaml" ]]; then
-  echo "  1. cp config/system.yaml.example config/system.yaml  # then edit it"
+if [[ ! -f "$HOME/.resman.yaml" && ! -f "$ROOT/config/resman.yaml" ]]; then
+  echo "  1. cp config/resman.yaml.example config/resman.yaml  # then edit it"
+  echo "     (or place a per-user override at ~/.resman.yaml)"
   echo "  2. ./run.sh${RUN_FLAG}"
 else
   echo "  ./run.sh${RUN_FLAG}"

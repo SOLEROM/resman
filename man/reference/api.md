@@ -47,10 +47,12 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/config/system.yaml` | Return file contents |
-| PUT | `/api/config/system.yaml` | Replace + validate |
-| GET | `/api/config/schedule.yaml` | Return file contents |
-| PUT | `/api/config/schedule.yaml` | Replace + validate |
+| GET | `/api/config/yaml?file=resman.yaml` | Return file contents; also includes `resman_path`, `resman_display_path`, `using_user_override` |
+| POST | `/api/config/yaml` | Replace + validate (body: `{file, content}`) |
+| GET | `/api/config/yaml?file=schedule.yaml` | Return file contents |
+| POST | `/api/config/yaml` | Replace + validate (body: `{file, content}`) |
+
+Legacy: `file=system.yaml` still accepted as an alias for `resman.yaml`.
 
 ## Filesystem
 
@@ -76,7 +78,7 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 | `session_crashed` | `{session_id, vault, message}` | A ttyd process died unexpectedly |
 | `session_error` | `{vault, reason}` | `TmuxManager.create_session()` failed |
 | `child_state_changed` | `{parent_id, child_id, state}` | ALL-vault child completed/failed; parent re-aggregates |
-| `config_reloaded` | `{}` | system.yaml or schedule.yaml saved successfully |
+| `config_reloaded` | `{}` | resman.yaml or schedule.yaml saved successfully |
 | `cron_skip_warning` | `{cron_name, skip_count, last_fired_at}` | Cron task skipped > 2 times in a row |
 
 ## Errors

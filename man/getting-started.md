@@ -19,10 +19,14 @@ Run `./deps.sh --check` from `v1/` to verify what's installed.
 
 ```bash
 cd v1
-cp config/system.yaml.example config/system.yaml
-# edit system.yaml — at minimum, list one vault
+cp config/resman.yaml.example config/resman.yaml
+# edit resman.yaml — at minimum, list one vault
 ./run.sh
 ```
+
+Alternatively, create `~/.resman.yaml` and resman will use that instead of the
+repo default. This is useful for per-user configuration without modifying the
+checked-in config file.
 
 Open `http://127.0.0.1:5090`. The startup banner prints which subsystems are
 healthy.
