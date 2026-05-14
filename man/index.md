@@ -1,3 +1,9 @@
+---
+noteId: "897576204f5f11f18eaba108b9c533e7"
+tags: []
+
+---
+
 # resman — operator manual
 
 resman is a local-only web panel for running multiple Obsidian research vaults
@@ -21,6 +27,7 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 - [Configuration](config.md) — `resman.yaml` and `schedule.yaml`
 - [LAN / `--public`](lan-access.md) — exposing the panel on the local network
 - [Troubleshooting](troubleshooting.md) — common issues
+- [Remote agent (CLI)](remote-agent.md) — drive resman from a script, cron, or openClaw over SSH
 - [Reference / API](reference/api.md) — REST and Socket.IO surface
 - [Reference / Keyboard](reference/keyboard.md) — keystrokes inside terminals
 

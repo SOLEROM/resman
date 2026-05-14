@@ -594,13 +594,31 @@ function isOverdueScheduled(t) {
     new Date(t.scheduled_for).getTime() <= Date.now();
 }
 
+// Operations whose execution is "claude -p <prompt>" — those can be reopened
+// in a live Claude REPL via POST /api/tasks/<id>/attend so the user can
+// answer prompts the original non-interactive run couldn't. Shell-based ops
+// (wiki-ingest, wiki-ingest-prefix, run-shell) aren't attendable.
+const ATTENDABLE_OPERATIONS = new Set([
+  "wiki-lint",
+  "wiki-autoresearch",
+  "wiki-canvas",
+  "wiki-update-hot-cache",
+  "wiki-bootstrap",
+  "run-prompt",
+]);
+
 function taskActions(t) {
   const acts = [];
   if (t.state === "scheduled") acts.push("run-now", "cancel");
   else if (t.state === "deferred") acts.push("promote", "cancel");
   else if (t.state === "pending") acts.push("cancel");
   else if (t.state === "running") acts.push("cancel");
-  else if (["completed", "failed", "cancelled", "interrupted"].includes(t.state)) acts.push("re-run");
+  else if (["completed", "failed", "cancelled", "interrupted"].includes(t.state)) {
+    acts.push("re-run");
+    if (ATTENDABLE_OPERATIONS.has(t.operation) && t.vault !== "ALL") {
+      acts.push("attend");
+    }
+  }
   return acts;
 }
 
@@ -748,6 +766,23 @@ async function taskAction(act, tid) {
   if (act === "re-run") {
     const orig = state.tasks.find((t) => t.id === tid);
     if (orig) prefillTrigger(orig);
+    return;
+  }
+  if (act === "attend") {
+    try {
+      const sess = await api("/api/tasks/" + encodeURIComponent(tid) + "/attend", {
+        method: "POST",
+      });
+      state.sessions.push(sess);
+      state.activeSessionId = sess.id;
+      state.lastSessionByVault[sess.vault] = sess.id;
+      if (state.selectedVault !== sess.vault) selectVault(sess.vault);
+      renderSessions();
+      renderActiveSession();
+      showPanel("ops");
+    } catch (err) {
+      alert("Attend failed: " + (err.body?.error || err.message));
+    }
     return;
   }
 }
@@ -1381,6 +1416,9 @@ async function loadVaults() {
   const all = data.vaults || [];
   state.vaults = all.filter((v) => v.registered !== false);
   state.discovered = all.filter((v) => v.registered === false);
+  // Optional app.vault_default_root_path — the new-vault wizard uses it as
+  // the starting point for the path input and the Browse picker.
+  state.vaultDefaultRoot = data.vault_default_root || null;
   renderVaultList();
   renderTriggerForm();
 }
@@ -1547,12 +1585,22 @@ function pickFolder(initialPath) {
 //   2. POST /api/vaults           — appends the entry to resman.yaml.
 // "Register existing" mode skips step 1 for a vault that already exists.
 function showNewVaultWizard() {
+  // Pre-fill the path input with the configured default root when present,
+  // so the user only needs to append the vault folder name. Falls back to
+  // an empty input when app.vault_default_root_path is not configured.
+  const defaultRoot = state.vaultDefaultRoot || "";
+  const pathSeed = defaultRoot
+    ? (defaultRoot.endsWith("/") ? defaultRoot : defaultRoot + "/")
+    : "";
+  const pathHint = defaultRoot
+    ? `— absolute, defaults to <code>${esc(defaultRoot)}</code>`
+    : "— absolute, e.g. /data/research/foo";
   const body = `
     <label>Vault name <span class="muted">— letters, numbers, _ -</span></label>
     <input id="nv-name" autocomplete="off" />
-    <label>Vault path <span class="muted">— absolute, e.g. /data/research/foo</span></label>
+    <label>Vault path <span class="muted">${pathHint}</span></label>
     <div class="path-input-row">
-      <input id="nv-path" placeholder="/path/to/vault" autocomplete="off" />
+      <input id="nv-path" placeholder="/path/to/vault" autocomplete="off" value="${esc(pathSeed)}" />
       <button type="button" class="btn btn-sm" id="nv-browse">Browse…</button>
     </div>
     <label>Tags <span class="muted">— comma-separated, optional</span></label>
@@ -1628,21 +1676,26 @@ function showNewVaultWizard() {
           "error",
         );
       } else {
-        setWizardStatus("Opening Claude session and sending /claude-obsidian:wiki…", "info");
+        setWizardStatus(
+          "Opening Claude session — bootstrap wraps plugin check, " +
+          "/claude-obsidian:wiki, and visual-workspace copy…",
+          "info",
+        );
         try {
           const sess = await api("/api/sessions", {
             method: "POST",
             body: JSON.stringify({
               vault: name,
               type: "claude",
-              initial_command: "/claude-obsidian:wiki",
+              bootstrap_new_vault: true,
             }),
           });
           state.sessions.push(sess);
           state.activeSessionId = sess.id;
           setWizardStatus(
             "Vault ready. Claude session open in the Terminal tab — " +
-            "the slash command is sent automatically; answer any prompts there.",
+            "instructions from tools/newValPrefix.md and tools/newValSuffix.md " +
+            "are pasted automatically; answer any prompts there.",
             "ok",
           );
         } catch (err) {
@@ -1670,7 +1723,11 @@ function showNewVaultWizard() {
   const browseBtn = $("#nv-browse");
   if (browseBtn) {
     browseBtn.addEventListener("click", async () => {
-      const start = $("#nv-path").value.trim() || null;
+      // Seed the picker with whatever the user has typed; if still blank,
+      // fall back to the configured default root so they don't have to
+      // navigate from `/` every time.
+      const typed = $("#nv-path").value.trim();
+      const start = typed || state.vaultDefaultRoot || null;
       const picked = await pickFolder(start);
       if (picked) $("#nv-path").value = picked;
     });
@@ -1798,6 +1855,8 @@ function setupStatusBar() {
   $("#btn-theme").addEventListener("click", toggleTheme);
   const overBtn = $("#btn-window-overrun");
   if (overBtn) overBtn.addEventListener("click", () => windowAction("end"));
+  const connPill = $("#conn-pill");
+  if (connPill) connPill.addEventListener("click", openSessionsOverview);
 }
 
 function toggleTheme() {
@@ -1820,6 +1879,138 @@ function setConn(state) {
   } else {
     lbl.textContent = "connecting...";
   }
+}
+
+function formatRss(kb) {
+  if (!kb || kb <= 0) return "—";
+  if (kb < 1024) return kb + " KB";
+  const mb = kb / 1024;
+  if (mb < 1024) return mb.toFixed(1) + " MB";
+  return (mb / 1024).toFixed(2) + " GB";
+}
+
+function formatAgeSeconds(sec) {
+  if (sec == null) return "—";
+  if (sec < 60) return sec + "s";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + "m";
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return hr + "h " + (min % 60) + "m";
+  return Math.floor(hr / 24) + "d";
+}
+
+function renderSessionsOverview(stats) {
+  if (!stats.available) {
+    return `<p class="muted">ttyd is not installed, so resman isn't tracking any
+              terminal sessions. Install ttyd to enable browser terminals.</p>`;
+  }
+  const summary = `
+    <div class="sessions-overview-summary">
+      <span><strong>${stats.session_count}</strong> tracked session${stats.session_count === 1 ? "" : "s"}</span>
+      <span>Total RSS · <strong>${esc(formatRss(stats.total_rss_kb))}</strong></span>
+      <span>tmux socket · <code>${esc(stats.tmux_socket || "")}</code></span>
+    </div>`;
+  let list;
+  if (!stats.sessions.length) {
+    list = `<p class="muted">No live ttyd sessions. Spawn one from a vault's <em>+ Claude</em> or <em>+ Shell</em> button.</p>`;
+  } else {
+    list = `<div class="sessions-overview-list">` +
+      stats.sessions.map(renderSessionRow).join("") +
+      `</div>`;
+  }
+  let orphans = "";
+  if (stats.orphaned_tmux_sessions && stats.orphaned_tmux_sessions.length) {
+    const count = stats.orphaned_tmux_sessions.length;
+    orphans = `<div class="session-orphans">
+      <div class="session-orphans-head">
+        <strong>Orphaned tmux sessions (${count})</strong>
+        <button id="btn-kill-orphans" class="btn btn-sm btn-danger"
+                title="Run tmux kill-session on every orphan listed below">Kill all</button>
+      </div>
+      <p>Matching our prefix but not tracked by the running control plane —
+      typically left over from a previous run. Reattach by spawning a new
+      terminal in the matching vault, or use the <em>Kill all</em> button to
+      reclaim resources.</p>
+      <ul>${stats.orphaned_tmux_sessions.map((n) => `<li><code>${esc(n)}</code></li>`).join("")}</ul>
+    </div>`;
+  }
+  return `<div class="sessions-overview">${summary}${list}${orphans}</div>`;
+}
+
+async function killOrphanSessions() {
+  const btn = $("#btn-kill-orphans");
+  if (btn) { btn.disabled = true; btn.textContent = "Killing…"; }
+  try {
+    const result = await api("/api/sessions/orphans/kill", { method: "POST" });
+    const killed = (result.killed || []).length;
+    const failed = (result.failed || []).length;
+    let msg = `Killed ${killed} orphan${killed === 1 ? "" : "s"}`;
+    if (failed) msg += `, ${failed} failed`;
+    // Refresh the modal so the orphan list reflects the new state.
+    await openSessionsOverview();
+    const status = document.createElement("p");
+    status.className = "muted";
+    status.style.marginTop = "8px";
+    status.textContent = msg;
+    $("#modal-body").appendChild(status);
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = "Kill all"; }
+    alert("Kill orphans failed: " + (err && err.message ? err.message : err));
+  }
+}
+
+function renderSessionRow(s) {
+  const head = `
+    <div class="session-row-head">
+      <span class="sess-name">${esc(s.vault)}</span>
+      <span class="state-pill state-${esc(s.alive ? "running" : "ended")}">${esc(s.alive ? "alive" : "dead")}</span>
+      <span class="sess-meta">${esc(s.session_type)} · port ${esc(String(s.port))} · age ${esc(formatAgeSeconds(s.age_seconds))}</span>
+      <span class="sess-meta"><code>${esc(s.tmux_session)}</code></span>
+      <span class="sess-rss">${esc(formatRss(s.total_rss_kb))}</span>
+    </div>`;
+  const ttyd = s.ttyd || {};
+  const rows = [
+    procRow("ttyd", ttyd.pid, ttyd.comm || "ttyd", ttyd.rss_kb, false),
+  ];
+  for (const pane of s.panes || []) {
+    rows.push(procRow("pane", pane.pane_pid, "(tmux pane)", pane.rss_kb, false));
+    for (const proc of pane.processes || []) {
+      const label = proc.pid === pane.pane_pid ? proc.comm : proc.comm;
+      const indent = proc.pid !== pane.pane_pid;
+      rows.push(procRow("", proc.pid, label, proc.rss_kb, indent));
+    }
+  }
+  const table = `<div class="session-procs">
+    <span class="hdr">role</span>
+    <span class="hdr">pid</span>
+    <span class="hdr">command</span>
+    <span class="hdr">rss</span>
+    ${rows.join("")}
+  </div>`;
+  return `<div class="session-row ${s.alive ? "" : "dead"}">${head}${table}</div>`;
+}
+
+function procRow(role, pid, comm, rss, indent) {
+  return `<span>${esc(role || "")}</span>
+          <span>${esc(pid == null ? "—" : String(pid))}</span>
+          <span class="${indent ? "indent" : ""}">${esc(comm || "")}</span>
+          <span>${esc(formatRss(rss))}</span>`;
+}
+
+async function openSessionsOverview() {
+  showModal("Live ttyd + tmux sessions",
+            `<p class="muted">Loading…</p>`);
+  let stats;
+  try {
+    stats = await api("/api/sessions/stats");
+  } catch (err) {
+    $("#modal-body").innerHTML =
+      `<p style="color:var(--danger)">Failed to load: ${esc(err.message)}</p>`;
+    return;
+  }
+  $("#modal-body").innerHTML = renderSessionsOverview(stats);
+  const killBtn = $("#btn-kill-orphans");
+  if (killBtn) killBtn.addEventListener("click", killOrphanSessions);
 }
 
 function setupSocket() {

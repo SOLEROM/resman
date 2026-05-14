@@ -1,3 +1,9 @@
+---
+noteId: "4fdca8904f5d11f18eaba108b9c533e7"
+tags: []
+
+---
+
 # API reference
 
 resman speaks JSON over HTTP plus a Socket.IO channel for live events. All
@@ -8,7 +14,7 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/vaults` | List registered + discovered vaults |
+| GET | `/api/vaults` | List registered + discovered vaults; also returns `vault_default_root` (the optional `app.vault_default_root_path`, or `null`) for the New Vault wizard |
 | POST | `/api/vaults` | Register a vault |
 | POST | `/api/vaults/scaffold` | Create `.obsidian/` for a path that lacks it |
 | GET | `/api/vaults/<name>/health` | Health summary (path, .obsidian, wiki home, …) |
@@ -20,15 +26,17 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/sessions` | List live sessions + orphaned tmux sessions |
+| GET | `/api/sessions/stats` | Sessions-overview payload: ttyd PID + RSS, every tmux pane and its descendant process tree (each with `pid`, `comm`, `ppid`, `rss_kb`), per-session and global `total_rss_kb`, plus `orphaned_tmux_sessions` and `tmux_socket`. Powers the connection-pill modal — read-only, no CSRF |
 | POST | `/api/sessions` | Spawn a session. Body: `{vault, type, initial_command?}` |
-| DELETE | `/api/sessions/<id>` | Kill the ttyd process; tmux session lives on |
+| POST | `/api/sessions/orphans/kill` | Kill every tmux session matching the resman prefix that is not in the live registry. Returns `{killed:[...], failed:[{name,error}...]}` — best-effort |
+| DELETE | `/api/sessions/<id>` | Kill the ttyd process **and** its underlying tmux session. Closing the `×` on a tab is treated as a full "done" so no orphan tmux accumulates |
 
 ## Tasks
 
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/tasks` | List tasks (filters: `vault`, `priority`, `state`, `limit`, `offset`) |
-| POST | `/api/tasks` | Create a task. Optional `scheduled_for: <ISO8601>` parks the task in `scheduled` state for a single future fire. Past timestamps and combinations with `vault: ALL` return 400. |
+| POST | `/api/tasks` | Create a task. Optional `scheduled_for: <ISO8601>` parks the task in `scheduled` state for a single future fire. Past timestamps and combinations with `vault: ALL` return 400. Optional `force: true` bypasses window-gating (used by the sidebar `↘` ingest shortcut and `tools/remoteAgent.sh`); ignored when `scheduled_for` is also set. |
 | POST | `/api/tasks/<id>/promote` | Transition a `deferred` or `scheduled` task to `pending` and dispatch immediately |
 | DELETE | `/api/tasks/<id>` | Cancel a `pending` / `deferred` / `scheduled` / **`running`** task. Running tasks receive `SIGTERM`, then `SIGKILL` after a 5 s grace. Writes a `cancelled` event |
 | POST | `/api/tasks/<id>/archive` | Soft-delete a terminal-state task (excluded from default view, preserved in log) |

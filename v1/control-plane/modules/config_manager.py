@@ -76,6 +76,20 @@ def validate_resman_yaml(data: Any) -> dict:
         seen.add(name)
         if not path or not isinstance(path, str):
             raise ConfigError(f"resman.yaml: vault {name!r} missing 'path'")
+    app = data.get("app") or {}
+    if not isinstance(app, dict):
+        raise ConfigError("resman.yaml: 'app' must be a mapping")
+    default_root = app.get("vault_default_root_path")
+    if default_root is not None:
+        if not isinstance(default_root, str) or not default_root:
+            raise ConfigError(
+                "resman.yaml: app.vault_default_root_path must be a non-empty string"
+            )
+        if not default_root.startswith("/"):
+            raise ConfigError(
+                f"resman.yaml: app.vault_default_root_path must be an absolute path "
+                f"(got {default_root!r})"
+            )
     scan_paths = data.get("scan_paths") or []
     if not isinstance(scan_paths, list):
         raise ConfigError("resman.yaml: 'scan_paths' must be a list")

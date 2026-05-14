@@ -138,6 +138,68 @@ def test_scan_paths_root_rejected(cfg_dir):
         cm.load()
 
 
+def test_vault_default_root_path_accepts_absolute(cfg_dir):
+    """The wizard speed-up: an absolute root path under `app:` is accepted
+    and surfaces via cm.app so the route handler can echo it back."""
+    write(cfg_dir / "resman.yaml", """
+        app:
+          vault_default_root_path: /home/user/vaults
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.app["vault_default_root_path"] == "/home/user/vaults"
+
+
+def test_vault_default_root_path_optional(cfg_dir):
+    """Field is optional — config without it must still load cleanly."""
+    write(cfg_dir / "resman.yaml", """
+        app: {}
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert "vault_default_root_path" not in cm.app
+
+
+def test_vault_default_root_path_rejects_relative(cfg_dir):
+    """Relative paths would break the picker and the path-prefill: the
+    picker needs an absolute starting point on the host. Reject early so
+    the operator sees the problem at load time, not on next wizard click."""
+    write(cfg_dir / "resman.yaml", """
+        app:
+          vault_default_root_path: relative/path
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="absolute path"):
+        cm.load()
+
+
+def test_vault_default_root_path_rejects_non_string(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        app:
+          vault_default_root_path: 42
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="non-empty string"):
+        cm.load()
+
+
+def test_vault_default_root_path_rejects_empty_string(cfg_dir):
+    """An empty string is almost certainly a typo — refuse rather than
+    silently treating it as 'unset', which would mask the operator's intent."""
+    write(cfg_dir / "resman.yaml", """
+        app:
+          vault_default_root_path: ""
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="non-empty string"):
+        cm.load()
+
+
 def test_user_override_takes_priority_over_repo(tmp_path):
     """If ~/.resman.yaml exists, it wins over <config_dir>/resman.yaml."""
     cfg_dir = tmp_path / "config"

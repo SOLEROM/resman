@@ -1,3 +1,9 @@
+---
+noteId: "6c771bc04f7111f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Configuration
 
 ## Overview
@@ -27,6 +33,7 @@ app:
   obsidian_cmd: "flatpak run md.obsidian.Obsidian"
   ttyd_port_base: 7680         # port range for ttyd processes
   ttyd_port_max: 7999
+  vault_default_root_path: /home/user/vaults   # optional; see below
 
 window_budget:
   weekly_start: "Monday 09:00"
@@ -49,6 +56,15 @@ scan_paths:                    # optional; remove to disable vault discovery
 The `app:` block also accepts an optional `man_path:` — an absolute path to a
 directory of `.md` files served by the **Help** tab. Defaults to `<repo>/man`
 (the sibling of the `v1/` source root).
+
+`app.vault_default_root_path` (optional, absolute) is the starting point the
+**New Vault** wizard uses to pre-fill its path input and seed the Browse
+folder picker. Set it when every vault on this host lives under a common
+parent (e.g. `/home/user/vaults`) so the wizard only requires the new
+vault's folder name. The validator rejects relative paths and empty
+strings at load time. Surfaced to the frontend via the extra
+`vault_default_root` field on `GET /api/vaults` so the wizard doesn't need
+a second round-trip.
 
 `resman.yaml.example` ships with all fields present and inline comments. Users copy it; they never write YAML from scratch.
 

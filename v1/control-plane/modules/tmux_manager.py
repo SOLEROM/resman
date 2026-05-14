@@ -140,6 +140,64 @@ class TmuxManager:
         except FileNotFoundError as exc:
             raise TmuxNotInstalledError("tmux not installed") from exc
 
+    def send_text(self, name: str, text: str) -> None:
+        """Deliver multi-line `text` to the pane as a single bracketed paste.
+
+        Unlike send_keys (which submits on every newline), this route loads
+        the block into a named buffer and pastes it with `-p` (bracketed
+        paste mode), so an interactive REPL such as Claude treats the whole
+        chunk as one message. A trailing send-keys Enter then submits.
+        """
+        if not text:
+            return
+        buffer = f"resman-init-{name}"
+        base = self._base_cmd()
+        try:
+            subprocess.run(
+                base + ["load-buffer", "-b", buffer, "-"],
+                input=text.encode("utf-8"), capture_output=True, timeout=5,
+            )
+            subprocess.run(
+                base + ["paste-buffer", "-p", "-d", "-t", name, "-b", buffer],
+                capture_output=True, timeout=5,
+            )
+            subprocess.run(
+                base + ["send-keys", "-t", name, "Enter"],
+                capture_output=True, timeout=5,
+            )
+        except FileNotFoundError as exc:
+            raise TmuxNotInstalledError("tmux not installed") from exc
+
+    def list_panes(self, name: str) -> List[int]:
+        """Return the foreground PIDs of every pane in a tmux session.
+
+        Used by the sessions-overview modal to walk what's actually running
+        inside each tmux session (typically a shell whose child is Claude).
+        Returns an empty list if the session is gone, tmux isn't installed,
+        or the command otherwise fails.
+        """
+        try:
+            res = subprocess.run(
+                self._base_cmd() + [
+                    "list-panes", "-t", name, "-F", "#{pane_pid}",
+                ],
+                capture_output=True, text=True, timeout=5,
+            )
+        except FileNotFoundError:
+            return []
+        if res.returncode != 0:
+            return []
+        pids: List[int] = []
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                pids.append(int(line))
+            except ValueError:
+                continue
+        return pids
+
     def kill_session(self, name: str) -> None:
         cmd = self._base_cmd() + ["kill-session", "-t", name]
         try:

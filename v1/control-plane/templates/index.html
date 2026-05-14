@@ -50,8 +50,11 @@
     </span>
   </div>
   <div class="header-status">
-    <span class="status-dot" id="conn-dot"></span>
-    <span id="conn-label">connecting...</span>
+    <span class="conn-pill" id="conn-pill"
+          title="Click to see every running tmux + ttyd session and its memory footprint">
+      <span class="status-dot" id="conn-dot"></span>
+      <span id="conn-label">connecting...</span>
+    </span>
     <button id="btn-theme" class="theme-toggle"
             title="Toggle dark / light theme" aria-label="Toggle theme">
       <span class="icon-moon">☾</span><span class="icon-sun">☀</span>

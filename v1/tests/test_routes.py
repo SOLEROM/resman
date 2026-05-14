@@ -81,6 +81,44 @@ def make_test_app(tmp_path: Path):
     return app, app.config["RESMAN"], runner_calls
 
 
+def test_list_vaults_surfaces_default_root_when_configured(tmp_path):
+    """GET /api/vaults must echo app.vault_default_root_path so the
+    new-vault wizard can pre-fill its path input without a second fetch."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    vault = tmp_path / "alpha"; vault.mkdir(); (vault / ".obsidian").mkdir()
+    (cfg_dir / "resman.yaml").write_text(
+        "app:\n"
+        "  host: 127.0.0.1\n  port: 5090\n"
+        "  vault_default_root_path: /home/user/vaults\n"
+        f"vaults:\n  - name: alpha\n    path: {vault}\n"
+    )
+    bus = get_bus(); bus.clear()
+    cm = ConfigManager(cfg_dir, bus); cm.load()
+    reg = VaultRegistry(cm, bus); reg.reload()
+    from flask import Flask
+    app = Flask("resman-test-default-root")
+    app.config["RESMAN"] = {"config": cm, "vault_registry": reg}
+    from modules.routes import bp
+    app.register_blueprint(bp)
+    rv = app.test_client().get("/api/vaults")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["vault_default_root"] == "/home/user/vaults"
+    assert any(v["name"] == "alpha" for v in body["vaults"])
+
+
+def test_list_vaults_default_root_null_when_unset(tmp_path):
+    """Backward compat: the field is optional; an unset config must
+    surface `null` rather than missing — frontend treats null as "no
+    default" without needing presence checks."""
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().get("/api/vaults")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["vault_default_root"] is None
+
+
 def test_health(tmp_path):
     app, ctx, _ = make_test_app(tmp_path)
     rv = app.test_client().get("/api/health")
@@ -258,6 +296,32 @@ def test_sessions_initial_command_validation(tmp_path):
         headers={"X-Requested-With": "resman"},
     )
     assert rv.status_code == 400
+
+
+def test_sessions_bootstrap_new_vault_validation(tmp_path):
+    """bootstrap_new_vault requires type='claude' and is mutually exclusive
+    with initial_command."""
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["session_manager"]._available = True
+    client = app.test_client()
+    rv = client.post(
+        "/api/sessions",
+        json={"vault": "alpha", "type": "shell", "bootstrap_new_vault": True},
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 400
+    assert "type='claude'" in rv.get_json()["error"]
+    rv = client.post(
+        "/api/sessions",
+        json={
+            "vault": "alpha", "type": "claude",
+            "bootstrap_new_vault": True,
+            "initial_command": "/claude-obsidian:wiki",
+        },
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 400
+    assert "mutually exclusive" in rv.get_json()["error"]
 
 
 def test_get_sessions_empty(tmp_path):
@@ -756,3 +820,210 @@ def test_task_log_endpoint(tmp_path):
     rv = app.test_client().get("/api/tasks/" + tid + "/log")
     assert rv.status_code == 200
     assert rv.mimetype == "text/plain"
+
+
+# ----- /api/tasks/<id>/attend -----
+class _FakeSession:
+    """Stand-in for SessionManager.spawn() in attend tests — no ttyd needed."""
+
+    def __init__(self, vault: str, kwargs: dict):
+        self.id = "s-test"
+        self.vault = vault
+        self.session_type = "claude"
+        self.tmux_session = f"rsm-{vault}-claude-1"
+        self.port = 7681
+        self.kwargs = kwargs
+
+    def to_dict(self):
+        return {
+            "id": self.id, "vault": self.vault, "session_type": self.session_type,
+            "tmux_session": self.tmux_session, "port": self.port,
+        }
+
+
+def _install_fake_spawn(ctx, capture: list):
+    """Patch session_manager so .spawn() records the kwargs instead of running ttyd."""
+    sm = ctx["session_manager"]
+    sm._available = True
+
+    def fake_spawn(**kwargs):
+        capture.append(kwargs)
+        return _FakeSession(kwargs.get("vault", ""), kwargs)
+
+    sm.spawn = fake_spawn  # type: ignore[assignment]
+
+
+def _make_task(app, vault: str, operation: str, params: dict, ctx) -> str:
+    ctx["window"].start_window(2)
+    rv = app.test_client().post(
+        "/api/tasks",
+        json={
+            "name": "x", "vault": vault, "operation": operation,
+            "params": params, "priority": "high",
+        },
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 201, rv.get_data(as_text=True)
+    return rv.get_json()["id"]
+
+
+def test_attend_unknown_task_returns_404(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().post(
+        "/api/tasks/t-nope/attend",
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 404
+
+
+def test_attend_shell_operation_rejected(tmp_path):
+    """run-shell has no Claude prompt to re-run — attend returns 400."""
+    app, ctx, _ = make_test_app(tmp_path)
+    tid = _make_task(app, "alpha", "run-shell", {"cmd_parts": ["true"]}, ctx)
+    capture: list = []
+    _install_fake_spawn(ctx, capture)
+    rv = app.test_client().post(
+        f"/api/tasks/{tid}/attend",
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 400
+    assert "not attendable" in rv.get_json()["error"]
+    assert capture == []  # spawn never invoked
+
+
+def test_attend_wiki_lint_spawns_claude_session_with_prompt(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    tid = _make_task(app, "alpha", "wiki-lint", {}, ctx)
+    capture: list = []
+    _install_fake_spawn(ctx, capture)
+    rv = app.test_client().post(
+        f"/api/tasks/{tid}/attend",
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 201, rv.get_data(as_text=True)
+    assert len(capture) == 1
+    kwargs = capture[0]
+    assert kwargs["vault"] == "alpha"
+    assert kwargs["session_type"] == "claude"
+    assert kwargs["initial_text"] == "/claude-obsidian:wiki-lint"
+    # initial_command must not be set — we use bracketed paste instead.
+    assert kwargs.get("initial_command") is None
+
+
+def test_attend_wiki_autoresearch_passes_topic(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    tid = _make_task(app, "alpha", "wiki-autoresearch", {"topic": "graphs"}, ctx)
+    capture: list = []
+    _install_fake_spawn(ctx, capture)
+    rv = app.test_client().post(
+        f"/api/tasks/{tid}/attend",
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 201
+    assert capture[0]["initial_text"] == "/claude-obsidian:autoresearch graphs"
+
+
+def test_attend_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().post("/api/tasks/t-x/attend")
+    assert rv.status_code == 403
+
+
+def test_sessions_stats_returns_payload_shape(tmp_path):
+    """The overview modal needs a stable payload shape even when no sessions
+    are live. We stub SessionManager.stats() so the route is exercised in
+    isolation from the /proc walker."""
+    app, ctx, _ = make_test_app(tmp_path)
+    fake = {
+        "available": True,
+        "session_count": 1,
+        "total_rss_kb": 12345,
+        "tmux_socket": "resman",
+        "sessions": [{
+            "id": "s-1", "vault": "alpha", "session_type": "claude",
+            "tmux_session": "rsm-alpha-claude-1", "port": 7681,
+            "created_at": "2026-05-14T08:00:00Z", "age_seconds": 60,
+            "alive": True,
+            "ttyd": {"pid": 100, "rss_kb": 5000, "comm": "ttyd"},
+            "panes": [{
+                "pane_pid": 200, "rss_kb": 7345,
+                "processes": [
+                    {"pid": 200, "comm": "bash", "ppid": 100, "rss_kb": 1500},
+                    {"pid": 300, "comm": "claude", "ppid": 200, "rss_kb": 5845},
+                ],
+            }],
+            "total_rss_kb": 12345,
+        }],
+        "orphaned_tmux_sessions": ["rsm-stale-claude-2"],
+    }
+    ctx["session_manager"].stats = lambda: fake  # type: ignore[assignment]
+    rv = app.test_client().get("/api/sessions/stats")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body == fake
+
+
+def test_kill_orphan_sessions_returns_report(tmp_path):
+    """POST /api/sessions/orphans/kill must invoke the SessionManager method
+    and pass its report straight through, so the UI can show killed/failed
+    counts after the modal refresh."""
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["session_manager"]._available = True  # type: ignore[attr-defined]
+    report = {"killed": ["rsm-stale-a", "rsm-stale-b"], "failed": []}
+    ctx["session_manager"].kill_orphaned_tmux_sessions = lambda: report  # type: ignore[assignment]
+    rv = app.test_client().post(
+        "/api/sessions/orphans/kill",
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 200
+    assert rv.get_json() == report
+
+
+def test_kill_orphan_sessions_requires_csrf(tmp_path):
+    """Without the CSRF header the endpoint must refuse — orphan-kill is a
+    destructive action and we don't want cross-origin form submits to fire it."""
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["session_manager"]._available = True  # type: ignore[attr-defined]
+    ctx["session_manager"].kill_orphaned_tmux_sessions = lambda: {  # type: ignore[assignment]
+        "killed": [], "failed": [],
+    }
+    rv = app.test_client().post("/api/sessions/orphans/kill")
+    assert rv.status_code == 403
+
+
+def test_kill_orphan_sessions_ttyd_unavailable(tmp_path):
+    """When ttyd isn't installed we don't even probe — return an empty
+    report with a note so the UI can still render without error."""
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["session_manager"]._available = False  # type: ignore[attr-defined]
+    rv = app.test_client().post(
+        "/api/sessions/orphans/kill",
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["killed"] == []
+    assert body["failed"] == []
+
+
+def test_sessions_stats_no_csrf_required(tmp_path):
+    """The overview is a read-only GET, so no header is required."""
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["session_manager"].stats = lambda: {  # type: ignore[assignment]
+        "available": False, "session_count": 0, "total_rss_kb": 0,
+        "tmux_socket": "resman", "sessions": [], "orphaned_tmux_sessions": [],
+    }
+    rv = app.test_client().get("/api/sessions/stats")
+    assert rv.status_code == 200
+
+
+def test_attend_returns_503_when_ttyd_missing(tmp_path):
+    """Attend can't open an interactive session without ttyd."""
+    app, ctx, _ = make_test_app(tmp_path)
+    tid = _make_task(app, "alpha", "wiki-lint", {}, ctx)
+    # Leave sm._available False (default in the fixture).
+    rv = app.test_client().post(
+        f"/api/tasks/{tid}/attend",
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 503

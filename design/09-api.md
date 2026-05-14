@@ -1,3 +1,9 @@
+---
+noteId: "e9f24b504f5911f18eaba108b9c533e7"
+tags: []
+
+---
+
 # API Surface
 
 ## Overview
@@ -13,7 +19,7 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Server health: config, tmux, ttyd, scheduler, task replay status |
-| GET | `/api/vaults` | List all registered vaults with status (registered + discovered) |
+| GET | `/api/vaults` | List all registered vaults with status (registered + discovered). Also returns `vault_default_root` — the optional `app.vault_default_root_path` from resman.yaml, or `null` — so the New Vault wizard can pre-fill its path input and seed the Browse picker without a second round-trip |
 | POST | `/api/vaults` | Register a vault in `resman.yaml` (name, path, tags). Does not create the directory |
 | POST | `/api/vaults/scaffold` | Run `tools/new-vault.sh` to create the directory tree (path, `.obsidian/`, `inbox/`, `_resman/`, README, gitignore). Body: `{name, path}` |
 | GET | `/api/vaults/{name}/health` | Vault health check: path, .obsidian/, wiki home (`wiki/overview.md`), last session, last completed task, tags |
@@ -22,15 +28,18 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | POST | `/api/vaults/{name}/open` | Launch Obsidian for this vault using `obsidian_cmd` from resman.yaml; subprocess detached, vault path appended as a final arg |
 | GET | `/api/fs/list?path=…` | Read-only directory listing for the server-side folder picker. Returns `{path, parent, home, entries: [{name, path, is_obsidian}]}`. Hides dotfile directories. No CSRF (read-only GET) |
 | GET | `/api/sessions` | List live terminal sessions and `available` flag (ttyd installed) |
-| POST | `/api/sessions` | Spawn terminal session (vault, type: `claude`\|`shell`, optional `initial_command`); 503 if ttyd missing |
-| DELETE | `/api/sessions/{id}` | Kill a terminal session (terminate ttyd; tmux session survives) |
+| GET | `/api/sessions/stats` | Enriched per-session info for the sessions-overview modal: ttyd PID + RSS, every tmux pane PID and its full descendant tree (each with `pid`, `comm`, `ppid`, `rss_kb`), a roll-up `total_rss_kb` per session and globally, plus `orphaned_tmux_sessions` and `tmux_socket`. Backed by `/proc` reads — read-only, no CSRF requirement |
+| POST | `/api/sessions/orphans/kill` | Kill every tmux session matching the resman prefix that is not in the live registry. CSRF-required. Returns `{killed: [name...], failed: [{name, error}...]}` — best-effort, partial success is OK |
+| POST | `/api/sessions` | Spawn terminal session (vault, type: `claude`\|`shell`, optional `initial_command`, optional `bootstrap_new_vault: true`); 503 if ttyd missing |
+| DELETE | `/api/sessions/{id}` | Kill a terminal session (terminate ttyd AND its underlying tmux session — closing the `×` on the tab is treated as a full "done with this terminal" so no orphan tmux accumulates) |
 | GET | `/api/tasks` | List tasks (filters: vault, priority, status, limit, offset) |
-| POST | `/api/tasks` | Create a task. Optional `scheduled_for: ISO8601` parks the task in `scheduled` state for one-shot future firing; rejected if combined with `vault: ALL` or with a past timestamp |
+| POST | `/api/tasks` | Create a task. Optional `scheduled_for: ISO8601` parks the task in `scheduled` state for one-shot future firing; rejected if combined with `vault: ALL` or with a past timestamp. Optional `force: true` bypasses window-gating for this task (used by the sidebar `↘` shortcut and `tools/remoteAgent.sh`); ignored when `scheduled_for` is also set |
 | GET | `/api/tasks/{id}` | Get single task state |
 | GET | `/api/tasks/{id}/log` | Get task execution log (full backlog; live tail is via the `task_log_appended` Socket.IO event) |
 | DELETE | `/api/tasks/{id}` | Cancel a pending / deferred / scheduled / **running** task. Running tasks receive `SIGTERM` then `SIGKILL` after a 5 s grace. Writes `cancelled` event |
 | POST | `/api/tasks/{id}/promote` | Promote a deferred **or** scheduled task to pending and dispatch immediately |
 | POST | `/api/tasks/{id}/archive` | Archive a terminal-state task |
+| POST | `/api/tasks/{id}/attend` | Open the task's Claude prompt in an interactive REPL the user can attach to. Rebuilds the same prompt the task ran with, spawns a `claude` session in the task's vault, and bracketed-pastes the prompt as a single message so the user lands inside a live run and can answer anything the original `claude -p` invocation couldn't. Returns the new `Session` (same shape as `POST /api/sessions`). 400 if the operation has no Claude prompt (`wiki-ingest`, `wiki-ingest-prefix`, `run-shell`) or the task is a parent `ALL`-vault task; 503 if ttyd is missing |
 | POST | `/api/tasks/compact` | Trigger manual JSONL compaction |
 | GET | `/api/window` | Get current window state |
 | POST | `/api/window` | Set window state (body: `action`, `duration_hours`) |
@@ -54,15 +63,24 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 
 `initial_command` is optional, ≤200 chars, claude-type only. The server fires
 the slash command into the freshly-launched Claude REPL after a short delay
-via `tmux send-keys`. Used by the new-vault wizard for interactive bootstrap
-(the bootstrap may ask questions; the user answers them in the Terminal tab).
+via `tmux send-keys`. Used to send short slash commands into an interactive
+Claude session.
+
+`bootstrap_new_vault: true` — mutually exclusive with `initial_command`,
+claude-type only. The server reads `tools/newValPrefix.md` and
+`tools/newValSuffix.md`, sandwiches `/claude-obsidian:wiki` between them,
+and delivers the whole block to the REPL via `tmux load-buffer` +
+`paste-buffer -p` (bracketed paste, so Claude treats it as one message)
+followed by `Enter`. Used by the new-vault wizard so the plugin-presence
+check runs before bootstrap and the visual `workspace.json` is copied
+after. Missing prefix/suffix files are skipped silently.
 
 ### Two-step vault creation
 
 The browser SPA calls these in order:
 1. `POST /api/vaults/scaffold` (only when "Scaffold the directory" is checked) → runs `tools/new-vault.sh` to materialize the tree
 2. `POST /api/vaults` → appends the vault entry to `resman.yaml` (or the active `~/.resman.yaml` override)
-3. `POST /api/sessions` with `initial_command: "/claude-obsidian:wiki"` (only when "Bootstrap wiki" is checked)
+3. `POST /api/sessions` with `bootstrap_new_vault: true` (only when "Bootstrap wiki" is checked) — paste-bootstraps with prefix/suffix wrappers
 
 Each step is independently failable; the wizard reports per-step status.
 

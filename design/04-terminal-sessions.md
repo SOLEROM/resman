@@ -1,3 +1,9 @@
+---
+noteId: "ea0975704f5c11f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Terminal Sessions
 
 ## Overview
@@ -35,7 +41,7 @@ Registry: dict keyed by `session_id`, owned by `SessionManager`.
 6. Spawn ttyd: `ttyd --port <port> --writable --check-origin=false tmux -L <socket> attach-session -t <tmux_session>`
 7. Block in `_wait_for_listen(port, timeout=5s)` until the ttyd process is accepting TCP connections — without this, the browser iframe races ttyd's startup and renders connection-refused
 8. Register the `Session` object in the registry
-9. If `initial_command` was passed (claude type only): schedule a deferred `tmux send-keys` after a short delay so the slash command lands inside the Claude REPL rather than the bash session that briefly precedes it
+9. If `initial_command` was passed (claude type only): schedule a deferred `tmux send-keys` after a short delay so the slash command lands inside the Claude REPL rather than the bash session that briefly precedes it. If `initial_text` was passed instead (mutually exclusive, claude type only): schedule a deferred `tmux load-buffer` + `paste-buffer -p` + `Enter` so a multi-line block arrives as a single bracketed-paste message
 10. Start a `SessionMonitor` greenlet for this session
 
 ## tmux Per-Session Options (`_apply_session_options`)
@@ -53,17 +59,27 @@ Right after `new-session` we set, on the just-created session:
 
 These settings are **per-session**, not in a `~/.tmux.conf` we ship — keeps user tmux configs untouched. Set via `tmux -L <socket> set-option -t <name> ...` after the session is created.
 
-## Wiki-bootstrap via initial_command
+## Wiki-bootstrap via initial_command / initial_text
 
-`SessionManager.spawn()` accepts an optional `initial_command: str` (≤200 chars,
-claude type only). When set, the slash command is typed into the Claude prompt
-**after** a short delay (default 5s) using `threading.Timer` (eventlet patches
-`Timer` to a cooperative greenlet, so the spawn API call returns immediately).
+`SessionManager.spawn()` accepts two mutually-exclusive optional fields (both
+claude-type only):
 
-This is how the new-vault wizard runs `/claude-obsidian:wiki` — it must be
-interactive (the bootstrap asks questions), so we cannot use `claude -p`.
-The user answers prompts in the Terminal tab. See `09-api.md` for the API
-field and `docs/plugin-commands.md` for the wizard-vs-task-queue trade-off.
+- `initial_command: str` (≤200 chars) — typed via `tmux send-keys` after a
+  short delay (default 5s). Used for short slash commands.
+- `initial_text: str` (multi-line) — delivered via `tmux load-buffer` +
+  `paste-buffer -p` (bracketed paste) + `Enter`, so the entire block lands
+  as one Claude message instead of being submitted line-by-line. Used by
+  the new-vault wizard's `bootstrap_new_vault` flag, which wraps
+  `/claude-obsidian:wiki` with `tools/newValPrefix.md` (plugin check) and
+  `tools/newValSuffix.md` (visual workspace copy).
+
+Both paths schedule with `threading.Timer` (eventlet patches `Timer` to a
+cooperative greenlet, so the spawn API call returns immediately).
+
+The bootstrap session must be interactive (the bootstrap may ask questions),
+so we cannot use `claude -p`. The user answers prompts in the Terminal tab.
+See `09-api.md` for the API field and `docs/plugin-commands.md` for the
+wizard-vs-task-queue trade-off.
 
 ## Port Management
 
@@ -88,8 +104,12 @@ update the sidebar dot.
 ## Client Disconnect / Tab Close
 
 `DELETE /api/sessions/{id}` → `proc.terminate()` → wait 3s → `proc.kill()` → remove
-from registry. The **tmux session is not killed** — the user may want to reattach.
-SessionMonitor greenlet detects the terminated proc on next poll and exits cleanly.
+from registry → `tmux kill-session` on the underlying tmux session. Closing the
+`×` on a browser tab is treated as the user's explicit "done with this
+terminal" signal, so we tear tmux down at the same time to avoid orphan
+accumulation. tmux-kill failures are logged but do not fail the request —
+the ttyd kill + registry pop have already succeeded. SessionMonitor greenlet
+detects the terminated proc on next poll and exits cleanly.
 
 ## Server Restart Reconciliation
 
@@ -104,8 +124,8 @@ SessionMonitor greenlet detects the terminated proc on next poll and exits clean
 - **ttyd eliminates custom PTY code** — no TmuxOutputStreamer, no PtyBridge, no xterm.js WebSocket bridge
 - **Monotonic counter** for session names — `rsm-ai-agents-claude-1`, `-2`, etc.; multiple sessions of same type per vault are supported
 - **Port range 7680–7999** — 320 ports; far more than any realistic number of concurrent sessions; configurable in resman.yaml
-- **tmux session survives tab close** — only ttyd is killed; user can reopen and reattach
-- **Orphaned sessions never auto-killed** — user may have live work in them
+- **Tab close kills tmux too** — closing the `×` on a tab is the user's explicit "done with this terminal" signal; both ttyd and the underlying tmux session are torn down so no orphans accumulate. To preserve a long-running tmux session, attach to it directly from a shell instead of closing the tab
+- **Orphans are reclaimable from the UI** — orphan tmux sessions (left over from a crash or a previous run) are listed in the sessions-overview modal with a "Kill all" button; nothing is killed automatically by the server
 - **10s startup grace** — before accepting spawn requests; avoids TIME_WAIT port conflicts
 - **Block on `_wait_for_listen`** — the spawn API only succeeds once the iframe URL will actually load; eventlet's socket monkey-patch makes the wait cooperative
 - **Polish options at the session, not the user's `~/.tmux.conf`** — never touch the user's personal tmux config

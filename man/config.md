@@ -1,3 +1,9 @@
+---
+noteId: "7fa49fb04f7111f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Configuration
 
 resman reads two YAML files at startup:
@@ -29,6 +35,7 @@ app:
   ttyd_port_base: 7680            # range for ttyd to bind into
   ttyd_port_max: 7999
   man_path: ""                    # optional override for the Help tree
+  vault_default_root_path: ""     # optional; pre-fills the New Vault wizard
 
 window_budget:
   weekly_start: "Monday 09:00"
@@ -48,6 +55,12 @@ scan_paths:
 - `host`/`port` are read at startup. CLI flags `--public` / `--host` /
   `--port` override the file.
 - `man_path` defaults to `<repo-root>/man` (the sibling of the `v1/` dir).
+- `vault_default_root_path` (optional, absolute) speeds up adding new
+  vaults when they all live under a common root (e.g. `/home/user/vaults`).
+  When set, the **New Vault** wizard pre-fills the path input with this
+  root and seeds the Browse picker there — you only need to type the new
+  vault's folder name. Leave unset (or omit the key) to start blank.
+  The validator rejects relative paths.
 - `tmux_socket` lets resman use its own tmux server. Don't set it to your
   default socket — if you do, killing resman would kill your interactive
   sessions.

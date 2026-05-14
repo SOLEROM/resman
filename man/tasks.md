@@ -1,3 +1,9 @@
+---
+noteId: "f51761f04f5911f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Tasks
 
 The Tasks tab is where you trigger work against your vaults and watch it
@@ -79,6 +85,28 @@ Click `cancel` on any card whose state is `pending`, `deferred`,
 doesn't exit within 5 seconds it is `SIGKILL`'d. The task transitions to
 `cancelled` and the audit trail records it.
 
+## Attend — re-run interactively
+
+Tasks run via `claude -p` (non-interactive), so if the prompt asks the
+user a question mid-run the answer never arrives and the task fails or
+hangs. Click **`attend`** on any completed / failed / cancelled /
+interrupted task to:
+
+1. Rebuild the exact prompt that task ran with
+2. Open a fresh Claude session in the task's vault under the **Ops** tab
+3. Bracketed-paste the prompt into the REPL as a single message + Enter
+
+You land inside a live interactive run and can answer whatever the
+original task couldn't. The button appears only on operations that drive
+Claude with a prompt (Lint wiki, Update canvas, Update hot cache, Re-run
+wiki bootstrap, Autoresearch, Run a Claude prompt). Shell-based
+operations (Ingest a URL, Ingest URL + prefix, Run shell command) don't
+have an attendable prompt, so the button is hidden.
+
+This is a re-run, not a true attach — the original `claude -p` process
+is gone; resman opens a *new* Claude session and gives it the same
+instructions interactively.
+
 ## Operations
 
 | Group | Operation | What it does |
@@ -86,7 +114,7 @@ doesn't exit within 5 seconds it is `SIGKILL`'d. The task transitions to
 | Wiki | **Lint wiki** | Runs `/claude-obsidian:wiki-lint` against the vault |
 | Wiki | **Update canvas (visual map)** | Runs `/claude-obsidian:canvas [description]` to create or update the wiki's visual canvas. Description is optional. |
 | Wiki | **Update hot cache** | Runs `/claude-obsidian:update-hot-cache` |
-| Wiki | **Re-run wiki bootstrap** | Runs `/claude-obsidian:wiki` non-interactively. Only safe for re-runs — first-time bootstrap must use the wizard. |
+| Wiki | **Re-run wiki bootstrap** | Runs `/claude-obsidian:wiki` non-interactively, wrapped with `tools/newValPrefix.md` (plugin check) and `tools/newValSuffix.md` (copy visual `workspace.json`) when those files exist. Only safe for re-runs — first-time bootstrap must use the wizard. |
 | Research | **Ingest a URL** | Runs `tools/ingest.sh <vault> <url>` with optional canvas update. Check **"Update canvas after ingest"** to refresh `wiki/canvases/main.canvas` after ingesting. |
 | Research | **Ingest URL + prefix** | Runs `tools/ingest.sh <vault> <url> --prefix <prompts/urlInjestPrefix.md>` to apply constructive-extraction guidance before ingesting. Optional canvas update available. |
 | Research | **Autoresearch a topic** | Runs `/claude-obsidian:autoresearch <topic>` |

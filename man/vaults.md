@@ -1,3 +1,9 @@
+---
+noteId: "c2298a004f5611f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Vaults
 
 A vault is any directory that contains a `.obsidian/` folder. resman tracks
@@ -19,7 +25,14 @@ vaults:
 
 You can also register a vault via the **+ New Vault** button in the sidebar —
 it walks you through picking a directory, optionally scaffolding `.obsidian/`,
-and (optionally) bootstrapping a Claude session that runs the wiki plugin.
+and (optionally) bootstrapping a Claude session. If `app.vault_default_root_path`
+is set in `resman.yaml`, the wizard pre-fills the path input with that root
+and starts the Browse picker there, so adding a vault that lives under the
+common root only takes typing its folder name. The bootstrap session is
+pasted with the contents of `tools/newValPrefix.md` (a plugin-presence check),
+then `/claude-obsidian:wiki`, then `tools/newValSuffix.md` (copy of the
+visual `workspace-visual.json` into the new vault's `.obsidian/`). Edit
+those two files if you want different pre- or post-bootstrap behavior.
 
 ## Discovering vaults
 

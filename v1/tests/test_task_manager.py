@@ -306,9 +306,9 @@ def test_unknown_vault_rejected(tmp_path):
 
 
 def test_wiki_bootstrap_runs_claude_with_correct_command(tmp_path):
-    """wiki-bootstrap must invoke `claude -p /claude-obsidian:wiki ...` in
-    the vault directory. This is what the new-vault wizard queues after
-    scaffolding."""
+    """wiki-bootstrap must invoke `claude -p <prompt> ...` in the vault dir.
+    The prompt embeds /claude-obsidian:wiki and (when the prefix/suffix
+    instruction files exist alongside the repo) wraps it with them."""
     runner_calls = []
     def runner(cmd, cwd, log_file):
         runner_calls.append({"cmd": list(cmd), "cwd": cwd})
@@ -320,9 +320,48 @@ def test_wiki_bootstrap_runs_claude_with_correct_command(tmp_path):
     call = runner_calls[0]
     assert call["cmd"][0] == "claude"
     assert "-p" in call["cmd"]
-    assert "/claude-obsidian:wiki" in call["cmd"]
+    p_idx = call["cmd"].index("-p")
+    prompt = call["cmd"][p_idx + 1]
+    assert "/claude-obsidian:wiki" in prompt
     assert "--dangerously-skip-permissions" in call["cmd"]
     assert call["cwd"].endswith("alpha")
+
+
+def test_wiki_bootstrap_wraps_prefix_and_suffix_when_files_present(tmp_path):
+    """When tools/newValPrefix.md and tools/newValSuffix.md exist next to the
+    repo, the wiki-bootstrap prompt is sandwiched between their contents so
+    Claude checks the plugin before bootstrap and copies the visual
+    workspace file after."""
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "newValPrefix.md").write_text("PREFIX-CHECK-PLUGIN\n")
+    (tools / "newValSuffix.md").write_text("SUFFIX-COPY-WORKSPACE\n")
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append(list(cmd))
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task("bootstrap", "alpha", "wiki-bootstrap", {}, "high")
+    cmd = runner_calls[0]
+    prompt = cmd[cmd.index("-p") + 1]
+    pre = prompt.index("PREFIX-CHECK-PLUGIN")
+    boot = prompt.index("/claude-obsidian:wiki")
+    suf = prompt.index("SUFFIX-COPY-WORKSPACE")
+    assert pre < boot < suf
+
+
+def test_wiki_bootstrap_falls_back_when_prefix_suffix_missing(tmp_path):
+    """No tools/newVal*.md files → prompt still contains the bootstrap
+    slash command and does not crash."""
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append(list(cmd))
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task("bootstrap", "alpha", "wiki-bootstrap", {}, "high")
+    cmd = runner_calls[0]
+    prompt = cmd[cmd.index("-p") + 1]
+    assert "/claude-obsidian:wiki" in prompt
 
 
 def test_wiki_bootstrap_defers_when_window_inactive(tmp_path):
@@ -834,3 +873,68 @@ def test_replay_with_dead_pid_marks_interrupted(tmp_path):
     t = tm.get("t-dead")
     assert t is not None
     assert t.state == "interrupted"
+
+
+# ----- build_attend_prompt -----
+def test_build_attend_prompt_wiki_lint(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("lint", "alpha", "wiki-lint", {}, "high")
+    assert tm.build_attend_prompt(t) == "/claude-obsidian:wiki-lint"
+
+
+def test_build_attend_prompt_wiki_autoresearch_includes_topic(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("r", "alpha", "wiki-autoresearch", {"topic": "elixir"}, "high")
+    prompt = tm.build_attend_prompt(t)
+    assert prompt == "/claude-obsidian:autoresearch elixir"
+
+
+def test_build_attend_prompt_wiki_canvas_with_description(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("c", "alpha", "wiki-canvas", {"description": "hubs"}, "high")
+    assert tm.build_attend_prompt(t) == "/claude-obsidian:canvas hubs"
+
+
+def test_build_attend_prompt_wiki_canvas_empty_description(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("c", "alpha", "wiki-canvas", {}, "high")
+    assert tm.build_attend_prompt(t) == "/claude-obsidian:canvas"
+
+
+def test_build_attend_prompt_wiki_update_hot_cache(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("h", "alpha", "wiki-update-hot-cache", {}, "high")
+    assert tm.build_attend_prompt(t) == "/claude-obsidian:update-hot-cache"
+
+
+def test_build_attend_prompt_wiki_bootstrap_wraps_prefix_suffix(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "newValPrefix.md").write_text("ATTEND-PREFIX\n")
+    (tools / "newValSuffix.md").write_text("ATTEND-SUFFIX\n")
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("b", "alpha", "wiki-bootstrap", {}, "high")
+    prompt = tm.build_attend_prompt(t)
+    pre = prompt.index("ATTEND-PREFIX")
+    boot = prompt.index("/claude-obsidian:wiki")
+    suf = prompt.index("ATTEND-SUFFIX")
+    assert pre < boot < suf
+
+
+def test_build_attend_prompt_run_prompt_returns_user_prompt(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("p", "alpha", "run-prompt", {"prompt": "summarize wiki"}, "high")
+    assert tm.build_attend_prompt(t) == "summarize wiki"
+
+
+def test_build_attend_prompt_shell_ops_return_none(tmp_path):
+    """Shell-based operations don't drive Claude with a prompt, so there's
+    nothing meaningful to attend — the API returns None and the route
+    rejects the attend request with 400."""
+    tm, _, _ = make_tm(tmp_path)
+    t1 = tm.create_task("i", "alpha", "wiki-ingest", {"url": "https://example.com"}, "high")
+    t2 = tm.create_task("ip", "alpha", "wiki-ingest-prefix", {"url": "https://example.com"}, "high")
+    t3 = tm.create_task("s", "alpha", "run-shell", {"cmd_parts": ["ls"]}, "high")
+    assert tm.build_attend_prompt(t1) is None
+    assert tm.build_attend_prompt(t2) is None
+    assert tm.build_attend_prompt(t3) is None

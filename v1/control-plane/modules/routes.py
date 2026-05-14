@@ -13,6 +13,7 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
+from . import plugin_commands
 from .config_manager import ConfigError, VAULT_NAME_RE
 
 log = logging.getLogger(__name__)
@@ -105,7 +106,16 @@ def get_health():
 # ----- Vaults -----
 @bp.get("/api/vaults")
 def list_vaults():
-    return jsonify({"vaults": _ctx()["vault_registry"].to_list()})
+    cm = _ctx()["config"]
+    # Surface the optional vault_default_root_path so the new-vault wizard can
+    # pre-fill its path field and seed the Browse picker. The frontend caches
+    # this on `loadVaults()`, which is the same call it already makes to
+    # render the sidebar — no extra round-trip.
+    default_root = (cm.app.get("vault_default_root_path") or "").strip()
+    return jsonify({
+        "vaults": _ctx()["vault_registry"].to_list(),
+        "vault_default_root": default_root or None,
+    })
 
 
 @bp.post("/api/vaults")
@@ -443,6 +453,36 @@ def list_sessions():
     })
 
 
+@bp.get("/api/sessions/stats")
+def sessions_stats():
+    """Enriched view of every tracked session for the overview modal.
+
+    Read-only — no CSRF requirement. Returns ttyd PID + RSS, tmux pane PIDs
+    and their full descendant trees with per-process RSS, and a roll-up
+    total per session. Used by the clickable connection pill so the user
+    can audit what's running and spot heavy or stale terminals.
+    """
+    sm = _ctx()["session_manager"]
+    return jsonify(sm.stats())
+
+
+@bp.post("/api/sessions/orphans/kill")
+@_csrf_required
+def kill_orphan_sessions():
+    """Kill every orphaned tmux session matching the resman prefix.
+
+    "Orphan" = a tmux session on our isolated socket whose name starts with
+    our prefix but is not in the live registry — typically left over from
+    a previous control-plane run. Used by the "Kill all" action in the
+    sessions-overview modal. Best-effort per name; partial success is OK.
+    """
+    sm = _ctx()["session_manager"]
+    if not sm.available:
+        return jsonify({"killed": [], "failed": [],
+                        "note": "ttyd unavailable; no sessions tracked"}), 200
+    return jsonify(sm.kill_orphaned_tmux_sessions())
+
+
 @bp.post("/api/sessions")
 @_csrf_required
 def spawn_session():
@@ -470,11 +510,30 @@ def spawn_session():
             return jsonify({"error": "initial_command must be a string ≤200 chars"}), 400
         if session_type != "claude":
             return jsonify({"error": "initial_command requires type='claude'"}), 400
+    # Optional: wrap /claude-obsidian:wiki with the prefix/suffix instruction
+    # files (tools/newValPrefix.md, tools/newValSuffix.md) and paste the whole
+    # block into the Claude prompt as a single message. Used by the new-vault
+    # wizard so plugin-presence is checked before bootstrap and the visual
+    # workspace.json is copied after.
+    initial_text = None
+    if body.get("bootstrap_new_vault"):
+        if session_type != "claude":
+            return jsonify({"error": "bootstrap_new_vault requires type='claude'"}), 400
+        if initial_command:
+            return jsonify({
+                "error": "bootstrap_new_vault and initial_command are mutually exclusive"
+            }), 400
+        repo_root = _ctx()["resman_root"].parent
+        initial_text = plugin_commands.new_vault_bootstrap_prompt(
+            repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
+            repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
+        )
     try:
         s = sm.spawn(
             vault=v.name, vault_path=v.path, session_type=session_type,
             claude_cmd=_ctx()["config"].app.get("claude_cmd", "claude"),
             initial_command=initial_command,
+            initial_text=initial_text,
         )
     except Exception as exc:
         log.exception("spawn session failed")
@@ -572,6 +631,53 @@ def archive_task(tid):
     tm = _ctx()["task_manager"]
     ok = tm.archive(tid)
     return jsonify({"ok": ok})
+
+
+@bp.post("/api/tasks/<tid>/attend")
+@_csrf_required
+def attend_task(tid):
+    """Re-run a task's Claude prompt in an interactive REPL the user can attach to.
+
+    The original task ran via `claude -p` and so couldn't accept input. We
+    rebuild the same prompt, spawn a Claude session in the task's vault,
+    and bracketed-paste the prompt into the REPL so the user lands inside a
+    live run and can answer whatever the task asks.
+
+    Only operations that drive Claude with a prompt are attendable
+    (wiki-lint, wiki-autoresearch, wiki-canvas, wiki-update-hot-cache,
+    wiki-bootstrap, run-prompt). Shell-based operations (wiki-ingest,
+    wiki-ingest-prefix, run-shell) return 400.
+    """
+    ctx = _ctx()
+    tm = ctx["task_manager"]
+    t = tm.get(tid)
+    if not t:
+        return jsonify({"error": "task not found"}), 404
+    if t.vault == "ALL":
+        return jsonify({"error": "cannot attend a parent ALL-vault task"}), 400
+    prompt = tm.build_attend_prompt(t)
+    if not prompt:
+        return jsonify({
+            "error": f"operation {t.operation!r} is not attendable "
+                     "(no Claude prompt to re-run)",
+        }), 400
+    reg = ctx["vault_registry"]
+    v = reg.get(t.vault)
+    if not v:
+        return jsonify({"error": f"vault {t.vault!r} is no longer registered"}), 400
+    sm = ctx["session_manager"]
+    if not sm.available:
+        return jsonify({"error": "ttyd not installed"}), 503
+    try:
+        s = sm.spawn(
+            vault=v.name, vault_path=v.path, session_type="claude",
+            claude_cmd=ctx["config"].app.get("claude_cmd", "claude"),
+            initial_text=prompt,
+        )
+    except Exception as exc:
+        log.exception("attend session spawn failed")
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(s.to_dict()), 201
 
 
 @bp.post("/api/tasks/compact")

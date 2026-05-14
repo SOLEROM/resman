@@ -1,3 +1,9 @@
+---
+noteId: "5b88a2704f5d11f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Frontend / UI
 
 ## Overview
@@ -163,7 +169,7 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 
 1. **Vault name** + **Vault path** — the path field has a `Browse…` button that opens a stacked, server-side **folder picker** (z-index 300, above the wizard). The picker is rendered by the SPA and walks the filesystem via `GET /api/fs/list`; the user can navigate, jump to home, or type a new directory name to be created under the current folder.
 2. **Scaffold the directory** (checkbox, default on) — calls `POST /api/vaults/scaffold` which runs `tools/new-vault.sh`. Uncheck to register an existing vault.
-3. **Bootstrap wiki** (checkbox, default on) — after registering, opens a Claude session via `POST /api/sessions` with `initial_command: "/claude-obsidian:wiki"`. The bootstrap may ask interactive questions; the user answers them in the Terminal tab.
+3. **Bootstrap wiki** (checkbox, default on) — after registering, opens a Claude session via `POST /api/sessions` with `bootstrap_new_vault: true`. The server pastes `tools/newValPrefix.md` + `/claude-obsidian:wiki` + `tools/newValSuffix.md` into the REPL as a single bracketed-paste message — so Claude checks the plugin first, runs the bootstrap (which may ask interactive questions the user answers in the Terminal tab), then copies the visual `workspace.json` into the new vault's `.obsidian/`.
 
 Each step's status (info / ok / error) is reported inside the wizard so a partial failure (e.g., scaffold succeeds, registration fails) is visible without losing context.
 
@@ -174,6 +180,29 @@ A `☾` / `☀` button in the header (and a duplicate in the status bar) flips
 is persisted to `localStorage` under `resman-theme`, and an inline script in
 `index.html` applies the saved theme **before render** so the page never
 flashes the wrong palette.
+
+## Connection Pill + Sessions Overview Modal
+
+The `● connected` / `disconnected` indicator on the right of the header is a
+clickable pill (`#conn-pill`). Clicking it opens a modal backed by
+`GET /api/sessions/stats` that audits every tracked ttyd + tmux session and
+its memory footprint, so the operator can spot heavy or stale terminals
+without leaving the browser.
+
+- **Per-session card** — vault, session type, port, age, tmux session name,
+  alive flag, rolled-up RSS. Below the head: a 4-column table (role · pid ·
+  command · rss) listing the ttyd process, every tmux pane, and the full
+  descendant tree rooted at each pane. Child processes are indented under
+  their pane so a runaway Claude is visible at a glance.
+- **Orphans section** — tmux sessions matching the resman prefix that the
+  control plane is not tracking (typically left over from a previous run).
+  A red **Kill all** button runs `POST /api/sessions/orphans/kill`, then
+  re-fetches `/api/sessions/stats` and re-renders the modal so the list
+  reflects the new state. The action is best-effort — failures are listed
+  per-name; a single failure does not abort the rest.
+- The modal is read-only besides that one Kill-all action; no streaming. A
+  user who wants live updates can re-open it. Closing the modal does
+  nothing else.
 
 ## Window Status Bar (bottom, always visible)
 

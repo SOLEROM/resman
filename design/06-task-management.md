@@ -1,3 +1,9 @@
+---
+noteId: "c95510904f7111f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Task Management
 
 ## Overview
@@ -82,6 +88,13 @@ subprocess (`SIGTERM`, then `SIGKILL` after a 5 s grace).
 with `scheduled_for=<future-ISO>` lands directly in `scheduled` state and is
 ignored by `_on_window_activated`. It waits for the Scheduler's one-shot
 trigger. ALL-vault parents may not be scheduled in v1.
+
+The optional `force: true` flag on `POST /api/tasks` bypasses window-gating
+for a single task: it skips the `between/ended → deferred` routing and goes
+straight to `pending`. Used by the sidebar `↘` ingest shortcut and by
+`tools/remoteAgent.sh` (where the caller — typically a phone-driven agent —
+cannot open the window manually). `force` is ignored when `scheduled_for` is
+also set; the schedule wins.
 
 ## Live Log Streaming
 
@@ -181,7 +194,7 @@ Plugin command strings come exclusively from `plugin_commands.py`.
 | `wiki-autoresearch` | `["claude", "-p", autoresearch(topic), "--dangerously-skip-permissions"]` in vault dir |
 | `wiki-canvas` | `["claude", "-p", canvas_prompt(description), "--dangerously-skip-permissions"]` in vault dir |
 | `wiki-update-hot-cache` | `["claude", "-p", UPDATE_HOT_CACHE, "--dangerously-skip-permissions"]` in vault dir |
-| `wiki-bootstrap` | `["claude", "-p", WIKI_BOOTSTRAP, "--dangerously-skip-permissions"]` in vault dir — non-interactive re-run only |
+| `wiki-bootstrap` | `["claude", "-p", new_vault_bootstrap_prompt(), "--dangerously-skip-permissions"]` in vault dir — non-interactive re-run only. The prompt wraps `/claude-obsidian:wiki` with the contents of `tools/newValPrefix.md` (plugin-presence check before) and `tools/newValSuffix.md` (visual `workspace.json` copy after) when those files exist; missing files are skipped silently |
 | `run-prompt` | `["claude", "-p", params.prompt, "--dangerously-skip-permissions"]` in vault dir |
 | `run-shell` | `[params.cmd_parts[0], *params.cmd_parts[1:]]` in vault dir |
 

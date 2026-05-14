@@ -12,6 +12,10 @@ app:
   obsidian_cmd: "flatpak run md.obsidian.Obsidian"
   ttyd_port_base: 7680             # port range for ttyd processes
   ttyd_port_max: 7999
+  # Optional: absolute path used as the starting point for the New Vault
+  # wizard's path input and the Browse-folder picker. Speeds up adding
+  # vaults that all live under a common root. Leave unset to start blank.
+  # vault_default_root_path: /home/user/vaults
 
 window_budget:
   weekly_start: "Monday 09:00"

@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from threading import RLock
 from typing import Dict, List, Optional
 
+from . import process_stats
 from .tmux_manager import TmuxManager, TmuxSessionError
 
 log = logging.getLogger(__name__)
@@ -167,6 +168,7 @@ class SessionManager:
         session_type: str,
         claude_cmd: str = "claude --dangerously-skip-permissions",
         initial_command: Optional[str] = None,
+        initial_text: Optional[str] = None,
         initial_command_delay: float = 5.0,
     ) -> Session:
         """Spawn a tmux+ttyd session.
@@ -178,13 +180,26 @@ class SessionManager:
         with `threading.Timer`, which eventlet patches to a cooperative
         greenlet — so the API call returns immediately and the keystroke
         fires in the background once Claude is ready.
+
+        initial_text — mutually exclusive with initial_command. Multi-line
+        natural-language instruction block delivered via bracketed paste
+        (load-buffer + paste-buffer -p + Enter), so the entire block lands
+        as one Claude message. Used by the new-vault wizard to wrap the
+        bootstrap slash command with the prefix/suffix instructions from
+        tools/newValPrefix.md and tools/newValSuffix.md.
         """
         if session_type not in ("claude", "shell"):
             raise ValueError(f"invalid session_type {session_type!r}")
         if not self._available:
             raise TtydNotInstalledError("ttyd not installed")
+        if initial_command and initial_text:
+            raise ValueError(
+                "initial_command and initial_text are mutually exclusive"
+            )
         if initial_command and session_type != "claude":
             raise ValueError("initial_command requires session_type='claude'")
+        if initial_text and session_type != "claude":
+            raise ValueError("initial_text requires session_type='claude'")
         tmux_name = self._next_session_name(vault, session_type)
         try:
             self.tmux.create_session(tmux_name, vault_path)
@@ -237,6 +252,8 @@ class SessionManager:
         log.info("spawned session %s on port %d (%s)", session.id, port, tmux_name)
         if initial_command:
             self._schedule_initial_command(tmux_name, initial_command, initial_command_delay)
+        elif initial_text:
+            self._schedule_initial_text(tmux_name, initial_text, initial_command_delay)
         return session
 
     def _schedule_initial_command(self, tmux_name: str, text: str, delay: float) -> None:
@@ -251,6 +268,23 @@ class SessionManager:
                 self.tmux.send_keys(tmux_name, [text])
             except Exception:
                 log.exception("deferred send-keys failed for %s", tmux_name)
+
+        timer = threading.Timer(max(0.0, float(delay)), _send)
+        timer.daemon = True
+        timer.start()
+
+    def _schedule_initial_text(self, tmux_name: str, text: str, delay: float) -> None:
+        """Paste a multi-line block into the Claude prompt after a delay.
+
+        Same delay logic as _schedule_initial_command, but uses tmux's
+        load-buffer + paste-buffer -p (bracketed paste) so the receiving
+        REPL treats the block as a single message rather than line-by-line.
+        """
+        def _send():
+            try:
+                self.tmux.send_text(tmux_name, text)
+            except Exception:
+                log.exception("deferred send-text failed for %s", tmux_name)
 
         timer = threading.Timer(max(0.0, float(delay)), _send)
         timer.daemon = True
@@ -276,7 +310,20 @@ class SessionManager:
                     session.proc.kill()
             except Exception:
                 log.exception("error killing ttyd process for %s", session_id)
-        # tmux session is intentionally left alive — user may want to reattach.
+        # Closing the browser tab is the user's explicit "I'm done with this
+        # terminal" signal. Tearing the tmux session down at the same time
+        # avoids leaving behind orphan tmux sessions that would otherwise
+        # accumulate (and show up in the sessions-overview modal as needing
+        # a manual "Kill all"). If someone wants a tmux session to survive,
+        # they can attach to it from a shell directly — we no longer try to
+        # second-guess intent here.
+        try:
+            self.tmux.kill_session(session.tmux_session)
+        except Exception:
+            log.exception(
+                "error killing tmux session %s for %s",
+                session.tmux_session, session_id,
+            )
         return True
 
     def kill_all(self) -> None:
@@ -317,3 +364,99 @@ class SessionManager:
         live = self.tmux.reconcile()
         tracked = {s.tmux_session for s in self._sessions.values()}
         return [name for name in live if name not in tracked]
+
+    def kill_orphaned_tmux_sessions(self) -> dict:
+        """Kill every tmux session matching our prefix that this process isn't
+        tracking. Used by the sessions-overview modal's "kill all orphans"
+        action so the user can reclaim resources from leftover sessions from a
+        previous run without dropping to a shell.
+
+        Returns a {killed: [...], failed: [...{name, error}]} report so the
+        UI can show what actually happened. Each kill is best-effort; one
+        failure does not abort the rest.
+        """
+        names = self.orphaned_tmux_sessions()
+        killed: List[str] = []
+        failed: List[dict] = []
+        for name in names:
+            try:
+                self.tmux.kill_session(name)
+                killed.append(name)
+            except Exception as exc:
+                log.exception("kill orphan tmux session %s failed", name)
+                failed.append({"name": name, "error": str(exc)})
+        return {"killed": killed, "failed": failed}
+
+    def stats(self) -> dict:
+        """Enriched per-session info for the sessions-overview modal.
+
+        Each entry covers what's actually consuming resources for one
+        terminal tab in the browser:
+          - the ttyd process resman spawned (pid, command, RSS)
+          - every tmux pane inside that session and the full descendant
+            tree under each pane (so a runaway claude shows up here)
+          - a session-level rolled-up RSS sum
+          - the session's age and alive flag
+
+        Orphaned tmux sessions (matching our prefix but not in the
+        registry) are also surfaced. Read-only; safe to call on every
+        modal open without holding any locks longer than the snapshot.
+        """
+        now = _utcnow()
+        with self._lock:
+            sessions = list(self._sessions.values())
+        ppid_index = process_stats.build_ppid_index()
+        out_sessions: List[dict] = []
+        for s in sessions:
+            ttyd_pid = s.proc.pid if s.proc is not None else None
+            ttyd_info = (
+                process_stats.read_proc(ttyd_pid) if ttyd_pid else None
+            )
+            ttyd_rss = ttyd_info["rss_kb"] if ttyd_info else 0
+            pane_pids = self.tmux.list_panes(s.tmux_session)
+            panes: List[dict] = []
+            pane_rss_total = 0
+            for pp in pane_pids:
+                pane_info = process_stats.read_proc(pp)
+                if pane_info is None:
+                    continue
+                tree: List[dict] = [pane_info]
+                for desc_pid in process_stats.descendants(pp, ppid_index):
+                    desc_info = process_stats.read_proc(desc_pid)
+                    if desc_info is not None:
+                        tree.append(desc_info)
+                tree_rss = sum(p["rss_kb"] for p in tree)
+                pane_rss_total += tree_rss
+                panes.append({
+                    "pane_pid": pp,
+                    "rss_kb": tree_rss,
+                    "processes": tree,
+                })
+            age_seconds = max(0, int((now - s.created_at).total_seconds()))
+            out_sessions.append({
+                "id": s.id,
+                "vault": s.vault,
+                "session_type": s.session_type,
+                "tmux_session": s.tmux_session,
+                "port": s.port,
+                "created_at": s.created_at.isoformat().replace("+00:00", "Z"),
+                "age_seconds": age_seconds,
+                "alive": s.is_alive(),
+                "ttyd": {
+                    "pid": ttyd_pid,
+                    "rss_kb": ttyd_rss,
+                    "comm": ttyd_info["comm"] if ttyd_info else None,
+                },
+                "panes": panes,
+                "total_rss_kb": ttyd_rss + pane_rss_total,
+            })
+        total_rss = sum(s["total_rss_kb"] for s in out_sessions)
+        return {
+            "available": self._available,
+            "session_count": len(out_sessions),
+            "total_rss_kb": total_rss,
+            "sessions": out_sessions,
+            "orphaned_tmux_sessions": self.orphaned_tmux_sessions()
+            if self._available else [],
+            "tmux_socket": self.tmux.socket,
+        }

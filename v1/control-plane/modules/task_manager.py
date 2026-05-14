@@ -900,8 +900,13 @@ class TaskManager:
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-bootstrap":
+            repo_root = self.resman_root.parent
+            prompt = plugin_commands.new_vault_bootstrap_prompt(
+                repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
+                repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
+            )
             return [
-                "claude", "-p", plugin_commands.WIKI_BOOTSTRAP,
+                "claude", "-p", prompt,
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "run-prompt":
@@ -912,6 +917,39 @@ class TaskManager:
             cmd_parts = list(params["cmd_parts"])
             return cmd_parts, vault_path
         return None, vault_path
+
+    def build_attend_prompt(self, task: Task) -> Optional[str]:
+        """Return the Claude prompt for an interactive re-run, or None.
+
+        Used by the "attend" action: the same prompt that the non-interactive
+        `claude -p` task ran with is delivered into an interactive Claude
+        REPL via bracketed paste, so the user can answer any prompts that
+        the original one-shot run couldn't.
+
+        Returns None for operations that don't drive Claude with a prompt
+        (shell wrappers like wiki-ingest, wiki-ingest-prefix, run-shell) —
+        those aren't attendable because there's no Claude REPL to attach to.
+        """
+        op = task.operation
+        params = task.params or {}
+        if op == "wiki-lint":
+            return plugin_commands.WIKI_LINT
+        if op == "wiki-autoresearch":
+            return plugin_commands.autoresearch_prompt(params.get("topic", ""))
+        if op == "wiki-canvas":
+            return plugin_commands.canvas_prompt(params.get("description", ""))
+        if op == "wiki-update-hot-cache":
+            return plugin_commands.WIKI_UPDATE_HOT_CACHE
+        if op == "wiki-bootstrap":
+            repo_root = self.resman_root.parent
+            return plugin_commands.new_vault_bootstrap_prompt(
+                repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
+                repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
+            )
+        if op == "run-prompt":
+            prompt = params.get("prompt")
+            return prompt if isinstance(prompt, str) and prompt else None
+        return None
 
     def _finalize(self, task: Task, exit_code: int, error: Optional[str] = None) -> None:
         # If a cancel raced ahead and already wrote a terminal event, don't

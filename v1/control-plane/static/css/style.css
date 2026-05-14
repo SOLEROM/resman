@@ -147,6 +147,59 @@ html, body {
   display: flex; align-items: center;
   gap: 10px; color: var(--text-secondary); font-size: 12px;
 }
+.conn-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; padding: 2px 6px; border-radius: 6px;
+}
+.conn-pill:hover { background: rgba(127, 127, 127, 0.12); }
+
+/* ---------- Sessions overview modal ---------- */
+.sessions-overview-summary {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  margin-bottom: 12px; font-size: 13px; color: var(--text-secondary);
+}
+.sessions-overview-summary strong { color: var(--text-primary); }
+.sessions-overview-list { display: flex; flex-direction: column; gap: 12px; }
+.session-row {
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  border-radius: 6px; padding: 10px 12px;
+}
+.session-row.dead { opacity: 0.55; }
+.session-row-head {
+  display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  font-size: 13px;
+}
+.session-row-head .sess-name { font-weight: 600; color: var(--text-primary); }
+.session-row-head .sess-meta { color: var(--text-secondary); }
+.session-row-head .sess-rss { margin-left: auto; font-variant-numeric: tabular-nums; }
+.session-procs {
+  margin-top: 8px; font-size: 12px;
+  display: grid;
+  grid-template-columns: 64px 64px 1fr auto;
+  gap: 2px 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.session-procs .hdr { font-weight: 600; color: var(--text-primary); }
+.session-procs .indent { padding-left: 14px; }
+.session-orphans {
+  margin-top: 14px; padding: 8px 10px;
+  border: 1px dashed rgba(127, 127, 127, 0.35);
+  border-radius: 6px; font-size: 12px; color: var(--text-secondary);
+}
+.session-orphans-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+}
+.session-orphans-head strong { color: var(--text-primary); font-size: 13px; }
+.session-orphans-head .btn-danger { margin-left: auto; }
+.session-orphans p { margin: 4px 0; }
+.session-orphans ul { margin: 4px 0 0 16px; padding: 0; }
+.btn-danger {
+  background: var(--danger, #c0392b); color: #fff; border: none;
+  padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.btn-danger:hover:not(:disabled) { filter: brightness(1.1); }
+.btn-danger:disabled { opacity: 0.55; cursor: default; }
 
 /* ---------- Layout ---------- */
 .app {

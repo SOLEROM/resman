@@ -1,3 +1,9 @@
+---
+noteId: "034f08604f5d11f18eaba108b9c533e7"
+tags: []
+
+---
+
 # Terminal sessions
 
 Each session is a **tmux session** wrapped in a **ttyd process** that exposes
@@ -41,17 +47,30 @@ restores each one's own view (Wiki / Ops / Tasks / Config).
 - The `✎` button renames the active tab. Renames live in `localStorage` —
   they are per-browser.
 
-## Resman never kills your tmux sessions
+## Closing a tab kills both ttyd and tmux
 
-Closing a tab terminates the ttyd process, but the underlying tmux session
-**stays alive**. You can reattach manually:
+Clicking the `×` on a tab is treated as an explicit "done with this
+terminal" signal — resman tears down both the ttyd process **and** the
+underlying tmux session so nothing is left orphaned. If you want a
+long-running Claude or shell session to survive across panel restarts,
+either keep the tab open or attach to the tmux session from a regular
+shell (which will keep it alive even if resman is restarted):
 
 ```bash
 tmux -L resman ls
 tmux -L resman attach -t rsm-vla6-claude-1
 ```
 
-This is intentional — long-running Claude sessions survive a panel restart.
+While that external attach is alive, the tmux session won't die even if
+the tab is closed in the browser.
+
+## Reclaiming leftover sessions
+
+If a previous resman run left tmux sessions behind (e.g. after a crash,
+or because an external attach kept them alive while the control plane
+was restarted), click the **● connected** pill in the top-right of the
+header. The sessions-overview modal lists every orphaned tmux session
+with a **Kill all** button to clean them up in one shot.
 
 ## Obsidian
 
