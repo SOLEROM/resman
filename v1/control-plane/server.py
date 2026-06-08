@@ -15,6 +15,7 @@ except Exception:
     EVENTLET_OK = False
 
 import argparse
+import atexit
 import logging
 import socket
 import sys
@@ -29,6 +30,7 @@ from flask_socketio import SocketIO
 
 from modules.config_manager import ConfigError, ConfigManager
 from modules.event_bus import get_bus
+from modules.mount_manager import MountManager
 from modules.obsidian_push import ObsidianPush
 from modules.routes import bp as api_bp
 from modules.scheduler import Scheduler
@@ -94,6 +96,13 @@ def build_app(
     vault_registry = VaultRegistry(config, bus)
     vault_registry.reload()
 
+    mount_manager = MountManager(
+        bus=bus,
+        get_vaults=lambda: vault_registry.registered,
+    )
+    mount_manager.sync(vault_registry.registered)
+    atexit.register(mount_manager.umount_all)
+
     window = WindowState(config_dir / "budget.json", bus)
     window.load()
 
@@ -157,6 +166,7 @@ def build_app(
         "config": config,
         "tmux": tmux,
         "vault_registry": vault_registry,
+        "mount_manager": mount_manager,
         "window": window,
         "session_manager": session_manager,
         "task_manager": task_manager,
@@ -184,8 +194,17 @@ def build_app(
         server_line += "  [PUBLIC — exposed on local network]"
     else:
         server_line = f"http://{config.app.get('host', '127.0.0.1')}:{port}"
+    active_mounts = mount_manager.status()
+    mounts_with = sum(1 for v in config.vaults if v.get("mount"))
+    if mounts_with:
+        mounts_line = f"{len(active_mounts)}/{mounts_with} bound"
+        if len(active_mounts) < mounts_with:
+            mounts_line += " (some failed — run as root or add sudoers rule)"
+    else:
+        mounts_line = "none configured"
     report = {
         "config": f"OK ({len(config.vaults)} vaults loaded)",
+        "mounts": mounts_line,
         "tmux": "OK" if tmux.is_installed() else "MISSING",
         "ttyd": "OK" if session_manager.available else "MISSING (terminal sessions disabled)",
         "scheduler": f"OK ({len(config.cron_tasks)} cron tasks)",

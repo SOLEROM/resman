@@ -29,6 +29,7 @@ class Vault:
     name: str
     path: str
     tags: List[str] = field(default_factory=list)
+    mount: Optional[str] = None   # bind-mount target path, if configured
     registered: bool = True
     path_exists: bool = True
     is_obsidian: bool = True
@@ -60,6 +61,7 @@ class VaultRegistry:
                 name=entry["name"],
                 path=entry["path"],
                 tags=list(entry.get("tags") or []),
+                mount=entry.get("mount") or None,
                 registered=True,
             )
             v.path_exists = Path(v.path).exists()

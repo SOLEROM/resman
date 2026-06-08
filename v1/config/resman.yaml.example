@@ -26,6 +26,10 @@ vaults:
   - name: example-vault
     path: /tmp/example-vault
     tags: [example]
+    # Optional: bind-mount this vault's directory onto a host path so it is
+    # accessible at a convenient location without symlinks.
+    # Requires root or a passwordless sudoers entry — see man/mounts.md.
+    # mount: /home/user/example-vault
 
 # Optional: directories to scan for unregistered vaults (folders containing .obsidian/).
 # Remove or leave empty to disable discovery. Max scan depth is 2 levels.

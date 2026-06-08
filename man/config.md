@@ -45,10 +45,20 @@ vaults:
   - name: vla6
     path: /tmp/val6
     tags: [research]
+    mount: /home/user/val6    # optional — bind-mount onto this host path
 
 scan_paths:
   - /tmp                          # walked for unregistered vaults
 ```
+
+### Vault entry fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Unique identifier matching `[a-zA-Z0-9_-]` |
+| `path` | yes | Absolute path to the vault directory |
+| `tags` | no | List of string labels (display only) |
+| `mount` | no | Absolute host path to bind-mount the vault onto at startup. Requires root or a sudoers rule — see [Mounts](mounts.md). |
 
 ### Notes
 

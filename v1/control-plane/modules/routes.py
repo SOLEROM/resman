@@ -210,6 +210,7 @@ def vault_health(name):
             ts = t["updated_at"]
             if not last_completed or ts > last_completed:
                 last_completed = ts
+    mm = _ctx().get("mount_manager")
     return jsonify({
         "name": v.name,
         "path": v.path,
@@ -219,7 +220,58 @@ def vault_health(name):
         "last_session_at": last_session,
         "last_completed_task_at": last_completed,
         "tags": list(v.tags or []),
+        "mount_point": v.mount,
+        "mount_active": mm.is_mounted(v.name) if mm else False,
     })
+
+
+@bp.post("/api/vaults/<name>/mount")
+@_csrf_required
+def mount_vault(name):
+    """Bind-mount this vault at its configured mount point.
+
+    Returns 400 if the vault has no ``mount`` configured, 409 if it is
+    already mounted, and 500 if the mount command fails (e.g. permission
+    denied — see Help > Mounts for the sudoers setup).
+    """
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    if not v.mount:
+        return jsonify({"error": "vault has no mount point configured"}), 400
+    mm = _ctx().get("mount_manager")
+    if not mm:
+        return jsonify({"error": "mount_manager not available"}), 503
+    if mm.is_mounted(name):
+        return jsonify({"ok": True, "mount_point": v.mount, "note": "already mounted"}), 200
+    ok = mm.mount_one(v)
+    if not ok:
+        return jsonify({
+            "error": "mount failed — run resman as root or add a sudoers rule. "
+                     "See Help > Mounts.",
+            "mount_point": v.mount,
+        }), 500
+    return jsonify({"ok": True, "mount_point": v.mount}), 200
+
+
+@bp.delete("/api/vaults/<name>/mount")
+@_csrf_required
+def umount_vault(name):
+    """Unmount this vault's bind-mount."""
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    mm = _ctx().get("mount_manager")
+    if not mm:
+        return jsonify({"error": "mount_manager not available"}), 503
+    if not mm.is_mounted(name):
+        return jsonify({"ok": True, "note": "not currently mounted"}), 200
+    ok = mm.umount_one(name)
+    if not ok:
+        return jsonify({"error": "umount failed — check server logs"}), 500
+    return jsonify({"ok": True})
 
 
 WIKI_HOME = "wiki/overview.md"

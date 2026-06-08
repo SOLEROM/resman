@@ -242,6 +242,65 @@ def test_user_override_falls_back_to_repo_when_missing(tmp_path):
     assert cm.get_vault("repo") is not None
 
 
+def test_vault_mount_accepts_absolute_path(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            mount: /mnt/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.get_vault("alpha")["mount"] == "/mnt/alpha"
+
+
+def test_vault_mount_optional(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert "mount" not in cm.get_vault("alpha") or cm.get_vault("alpha").get("mount") is None
+
+
+def test_vault_mount_rejects_relative_path(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            mount: relative/path
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="absolute path"):
+        cm.load()
+
+
+def test_vault_mount_rejects_empty_string(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            mount: ""
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="non-empty string"):
+        cm.load()
+
+
+def test_vault_mount_rejects_non_string(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            mount: 42
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="non-empty string"):
+        cm.load()
+
+
 def test_legacy_system_yaml_still_loads(tmp_path):
     """Old checkouts with config/system.yaml keep working until renamed."""
     cfg_dir = tmp_path / "config"

@@ -25,6 +25,7 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 - [Window state](window-state.md) — when work is allowed to run
 - [Scheduler](scheduler.md) — cron tasks and skip-when-inactive
 - [Configuration](config.md) — `resman.yaml` and `schedule.yaml`
+- [Mounts](mounts.md) — bind-mounting vaults at host paths; privilege setup; taking changes to effect
 - [LAN / `--public`](lan-access.md) — exposing the panel on the local network
 - [Troubleshooting](troubleshooting.md) — common issues
 - [Remote agent (CLI)](remote-agent.md) — drive resman from a script, cron, or openClaw over SSH
