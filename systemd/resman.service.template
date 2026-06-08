@@ -1,0 +1,15 @@
+[Unit]
+Description=Resman resource manager (port 5090)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_PATH__/v1
+ExecStart=__PROJECT_PATH__/v1/run.sh --vname __VENV_NAME__ --public
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
