@@ -6,7 +6,8 @@ tmux sessions via an isolated socket, spawns ttyd processes for browser terminal
 iframe per session), pushes vault health status into each vault's filesystem every 60
 seconds so it appears in Obsidian's graph view, and maintains a prioritized task queue
 backed by an append-only JSONL event log — all gated on a manually-managed Claude Code
-window state. Design source: plan4.md (authoritative) with plan2.md as structural backup.
+window state. This design set is authoritative; it was distilled from earlier
+planning iterations preserved in git history.
 
 ---
 
@@ -29,7 +30,7 @@ window state. Design source: plan4.md (authoritative) with plan2.md as structura
 
 ---
 
-## Implementation Phases (from plan4.md)
+## Implementation Phases
 
 | Phase | Goal | Key deliverable |
 |-------|------|-----------------|

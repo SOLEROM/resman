@@ -13,12 +13,12 @@ resman expects a Linux host with:
   in the header to do anything; otherwise resman just reads files from
   your vault paths.
 
-Run `./deps.sh --check` from `v1/` to verify what's installed.
+Run `./deps.sh --check` from the repo root to verify what's installed.
 
 ## First run
 
 ```bash
-cd v1
+cd /path/to/resman
 cp config/resman.yaml.example config/resman.yaml
 # edit resman.yaml — at minimum, list one vault
 ./run.sh

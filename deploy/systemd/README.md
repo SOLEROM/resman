@@ -14,8 +14,8 @@ Installs resman as a **systemd user service** so it starts automatically at boot
 Install system dependencies first:
 
 ```bash
-cd /path/to/repo/v1
-./deps.sh --vname .vevn22
+cd /path/to/repo
+./deps.sh --vname .venv-ubuntu24
 ```
 
 ---
@@ -23,9 +23,9 @@ cd /path/to/repo/v1
 ## Quick Install
 
 ```bash
-cd /path/to/repo/systemd
+cd /path/to/repo/deploy/systemd
 chmod +x install.sh
-./install.sh --vname .vevn22
+./install.sh --vname .venv-ubuntu24
 ```
 
 The script will:
@@ -47,7 +47,7 @@ mkdir -p ~/.config/systemd/user
 
 # 2. Generate the service file (replace paths to match your system)
 PROJECT_PATH="/path/to/repo"
-VENV_NAME=".vevn22"
+VENV_NAME=".venv-ubuntu24"
 
 sed \
   -e "s|__PROJECT_PATH__|${PROJECT_PATH}|g" \
@@ -113,17 +113,17 @@ systemctl --user daemon-reload
 
 Copy the example config and edit it before starting:
 ```bash
-cp /path/to/repo/v1/config/resman.yaml.example /path/to/repo/v1/config/resman.yaml
+cp /path/to/repo/config/resman.yaml.example /path/to/repo/config/resman.yaml
 # or place a per-user override:
-cp /path/to/repo/v1/config/resman.yaml.example ~/.resman.yaml
+cp /path/to/repo/config/resman.yaml.example ~/.resman.yaml
 ```
 
 **Service fails to start — venv errors**
 
 Re-run deps.sh to recreate the venv:
 ```bash
-cd /path/to/repo/v1
-./deps.sh --vname .vevn22
+cd /path/to/repo
+./deps.sh --vname .venv-ubuntu24
 ```
 
 **`loginctl enable-linger` requires sudo**

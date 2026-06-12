@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=__PROJECT_PATH__/v1
-ExecStart=__PROJECT_PATH__/v1/run.sh --vname __VENV_NAME__ --public
+WorkingDirectory=__PROJECT_PATH__
+ExecStart=__PROJECT_PATH__/run.sh --vname __VENV_NAME__ --public
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

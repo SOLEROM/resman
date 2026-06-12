@@ -64,7 +64,7 @@ scan_paths:
 
 - `host`/`port` are read at startup. CLI flags `--public` / `--host` /
   `--port` override the file.
-- `man_path` defaults to `<repo-root>/man` (the sibling of the `v1/` dir).
+- `man_path` defaults to `<repo-root>/man`.
 - `vault_default_root_path` (optional, absolute) speeds up adding new
   vaults when they all live under a common root (e.g. `/home/user/vaults`).
   When set, the **New Vault** wizard pre-fills the path input with this

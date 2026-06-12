@@ -332,8 +332,8 @@ def test_wiki_bootstrap_wraps_prefix_and_suffix_when_files_present(tmp_path):
     repo, the wiki-bootstrap prompt is sandwiched between their contents so
     Claude checks the plugin before bootstrap and copies the visual
     workspace file after."""
-    tools = tmp_path / "tools"
-    tools.mkdir()
+    tools = tmp_path / "resman" / "tools"
+    tools.mkdir(parents=True)
     (tools / "newValPrefix.md").write_text("PREFIX-CHECK-PLUGIN\n")
     (tools / "newValSuffix.md").write_text("SUFFIX-COPY-WORKSPACE\n")
     runner_calls = []
@@ -908,8 +908,8 @@ def test_build_attend_prompt_wiki_update_hot_cache(tmp_path):
 
 
 def test_build_attend_prompt_wiki_bootstrap_wraps_prefix_suffix(tmp_path):
-    tools = tmp_path / "tools"
-    tools.mkdir()
+    tools = tmp_path / "resman" / "tools"
+    tools.mkdir(parents=True)
     (tools / "newValPrefix.md").write_text("ATTEND-PREFIX\n")
     (tools / "newValSuffix.md").write_text("ATTEND-SUFFIX\n")
     tm, _, _ = make_tm(tmp_path)

@@ -496,9 +496,9 @@ def test_scaffold_500_when_script_missing(tmp_path):
 
 
 def test_scaffold_runs_real_script(tmp_path, monkeypatch):
-    """Point resman_root at the real v1 tree so tools/new-vault.sh runs."""
+    """Point resman_root at the real repo root so tools/new-vault.sh runs."""
     app, ctx, _ = make_test_app(tmp_path)
-    real_root = Path(__file__).resolve().parents[1]  # v1/
+    real_root = Path(__file__).resolve().parents[1]  # repo root
     ctx["resman_root"] = real_root
     target = tmp_path / "scaffolded-vault"
     rv = app.test_client().post(
@@ -682,9 +682,9 @@ def test_vault_wiki_tree_skips_dotfiles_and_symlinks(tmp_path):
 
 def test_help_tree_walks_man_directory(tmp_path):
     """make_test_app sets resman_root = tmp_path/resman, so the default man
-    location is tmp_path/man — drop a small tree there and verify the API."""
-    man = tmp_path / "man"
-    man.mkdir()
+    location is tmp_path/resman/man — drop a small tree there and verify the API."""
+    man = tmp_path / "resman" / "man"
+    man.mkdir(parents=True)
     (man / "index.md").write_text("# Index")
     (man / "vaults.md").write_text("# Vaults")
     (man / "reference").mkdir()
@@ -706,8 +706,8 @@ def test_help_tree_walks_man_directory(tmp_path):
 
 
 def test_help_page_default_is_index(tmp_path):
-    man = tmp_path / "man"
-    man.mkdir()
+    man = tmp_path / "resman" / "man"
+    man.mkdir(parents=True)
     (man / "index.md").write_text("# Welcome")
     app, _, _ = make_test_app(tmp_path)
     rv = app.test_client().get("/api/help/page")
@@ -718,8 +718,8 @@ def test_help_page_default_is_index(tmp_path):
 
 
 def test_help_page_path_traversal_blocked(tmp_path):
-    man = tmp_path / "man"
-    man.mkdir()
+    man = tmp_path / "resman" / "man"
+    man.mkdir(parents=True)
     (tmp_path / "secret.md").write_text("not for you")
     app, _, _ = make_test_app(tmp_path)
     rv = app.test_client().get("/api/help/page?file=../secret.md")
@@ -729,8 +729,8 @@ def test_help_page_path_traversal_blocked(tmp_path):
 def test_help_page_rejects_non_markdown(tmp_path):
     """Even if a non-.md file lives in man/, refuse to serve it — keeps the
     surface small and avoids the help tab leaking arbitrary repo files."""
-    man = tmp_path / "man"
-    man.mkdir()
+    man = tmp_path / "resman" / "man"
+    man.mkdir(parents=True)
     (man / "secret.txt").write_text("nope")
     app, _, _ = make_test_app(tmp_path)
     rv = app.test_client().get("/api/help/page?file=secret.txt")

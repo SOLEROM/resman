@@ -172,7 +172,7 @@ Lint every Friday from cron:
 ## Troubleshooting
 
 **`✗ cannot reach resman at http://127.0.0.1:5090`**
-The control plane isn't running. Start it with `cd v1 && ./run.sh`. If
+The control plane isn't running. Start it with `./run.sh`. If
 resman is on a different host or port, pass `--base-url`.
 
 **`✗ server returned HTTP 400: {"error":"vault 'X' is not registered"}`**

@@ -34,6 +34,7 @@ __pycache__/
 .Python
 venv/
 .venv/
+.venv-*/
 env/
 *.egg-info/
 dist/
@@ -58,9 +59,7 @@ pip-log.txt
 Thumbs.db
 
 # ── Misspelled venvs (historical) ─────────────────────────────────────────────
-v1/.vevn22/
-v1/.vevn/
-v1/.vevn
+.vevn*/
 .vevn
 
 todo

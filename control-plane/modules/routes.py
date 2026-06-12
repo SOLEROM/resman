@@ -375,7 +375,7 @@ def vault_wiki_tree(name):
 def _man_root() -> Path:
     """Locate the man/ help tree.
 
-    Defaults to the repo root sibling of v1/ (i.e. ``RESMAN_ROOT.parent/man``)
+    Defaults to ``RESMAN_ROOT/man`` (the repo ships the manual at its root)
     so the docs travel with the source. Overridable via ``app.man_path`` in
     resman.yaml for installs that ship man pages elsewhere.
     """
@@ -383,7 +383,7 @@ def _man_root() -> Path:
     override = (cm.app.get("man_path") or "").strip()
     if override:
         return Path(override).expanduser().resolve()
-    return (_ctx()["resman_root"].parent / "man").resolve()
+    return (_ctx()["resman_root"] / "man").resolve()
 
 
 def _build_help_tree(root: Path, rel: Path = Path(".")) -> list[dict]:
@@ -575,7 +575,7 @@ def spawn_session():
             return jsonify({
                 "error": "bootstrap_new_vault and initial_command are mutually exclusive"
             }), 400
-        repo_root = _ctx()["resman_root"].parent
+        repo_root = _ctx()["resman_root"]
         initial_text = plugin_commands.new_vault_bootstrap_prompt(
             repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
             repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
