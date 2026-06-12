@@ -877,7 +877,7 @@ class TaskManager:
             return cmd, vault_path
         if op == "wiki-ingest-prefix":
             ingest = str(self.resman_root / "tools" / "ingest.sh")
-            prefix_file = str(self.resman_root.parent / URL_INGEST_PREFIX_FILE)
+            prefix_file = str(self.resman_root / URL_INGEST_PREFIX_FILE)
             cmd = [ingest, vault_path, params["url"], "--prefix", prefix_file]
             if params.get("update_canvas"):
                 cmd.append("--can")
@@ -900,7 +900,7 @@ class TaskManager:
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-bootstrap":
-            repo_root = self.resman_root.parent
+            repo_root = self.resman_root
             prompt = plugin_commands.new_vault_bootstrap_prompt(
                 repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
                 repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
@@ -941,7 +941,7 @@ class TaskManager:
         if op == "wiki-update-hot-cache":
             return plugin_commands.WIKI_UPDATE_HOT_CACHE
         if op == "wiki-bootstrap":
-            repo_root = self.resman_root.parent
+            repo_root = self.resman_root
             return plugin_commands.new_vault_bootstrap_prompt(
                 repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
                 repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,

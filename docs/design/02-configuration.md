@@ -55,7 +55,7 @@ scan_paths:                    # optional; remove to disable vault discovery
 
 The `app:` block also accepts an optional `man_path:` — an absolute path to a
 directory of `.md` files served by the **Help** tab. Defaults to `<repo>/man`
-(the sibling of the `v1/` source root).
+(i.e. `RESMAN_ROOT/man`, the manual shipped at the repo root).
 
 `app.vault_default_root_path` (optional, absolute) is the starting point the
 **New Vault** wizard uses to pre-fill its path input and seed the Browse

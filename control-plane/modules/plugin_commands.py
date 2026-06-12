@@ -16,9 +16,8 @@ WIKI_UPDATE_HOT_CACHE = "/claude-obsidian:update-hot-cache"
 # standalone operation so users can re-run it on existing vaults.
 WIKI_BOOTSTRAP = "/claude-obsidian:wiki"
 
-# Repo-root-relative paths (sibling of v1/) — same convention as
-# prompts/urlInjestPrefix.md. Resolved by callers with
-# `resman_root.parent / NEW_VAULT_PREFIX_FILE`.
+# Repo-root-relative paths — same convention as prompts/urlInjestPrefix.md.
+# Resolved by callers with `resman_root / NEW_VAULT_PREFIX_FILE`.
 NEW_VAULT_PREFIX_FILE = "tools/newValPrefix.md"
 NEW_VAULT_SUFFIX_FILE = "tools/newValSuffix.md"
 

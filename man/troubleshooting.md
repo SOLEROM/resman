@@ -76,7 +76,7 @@ retry. The port range is configured by `app.ttyd_port_base` /
 
 ## Help tab says "man/ directory not found"
 
-resman expects `<repo-root>/man/` — the sibling of `v1/`. If your install
+resman expects `<repo-root>/man/`. If your install
 puts it elsewhere, set `app.man_path` in `resman.yaml`:
 
 ```yaml

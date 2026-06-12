@@ -8,7 +8,7 @@
 #
 # Tasks created here go through POST /api/tasks so they appear in the
 # Tasks tab automatically (same code path as the UI). The wiki-ingest
-# operation is dispatched by the control plane to v1/tools/ingest.sh —
+# operation is dispatched by the control plane to tools/ingest.sh —
 # do NOT call that script directly from here; we want validation,
 # window-gating, log streaming, and tab visibility for free.
 #
@@ -28,7 +28,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USER_OVERRIDE="$HOME/.resman.yaml"
-REPO_RESMAN_YAML="$ROOT_DIR/v1/config/resman.yaml"
+REPO_RESMAN_YAML="$ROOT_DIR/config/resman.yaml"
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 
@@ -134,7 +134,7 @@ PY
 }
 
 # Pick the live resman.yaml using the same priority order ConfigManager uses:
-# ~/.resman.yaml first, then v1/config/resman.yaml.
+# ~/.resman.yaml first, then config/resman.yaml.
 pick_resman_yaml() {
   if [[ -f "$USER_OVERRIDE" ]]; then
     echo "$USER_OVERRIDE"

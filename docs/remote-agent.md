@@ -40,7 +40,7 @@ tell you. Use the user's stated path consistently for the session.
 
 - **You never touch vault files.** The script POSTs a task to the resman
   REST API; resman dispatches the task through its TaskManager and runs
-  the underlying script (e.g. `v1/tools/ingest.sh` for `wiki-ingest`).
+  the underlying script (e.g. `tools/ingest.sh` for `wiki-ingest`).
 - **Every task you create is visible to the user** in their browser at
   the resman Tasks tab. They can watch live logs, cancel a runaway, or
   promote a deferred task — without you.
@@ -86,7 +86,7 @@ bash /mnt/resman/tools/remoteAgent.sh --list-vaults
 ```
 
 Output: one vault name per line, exit code 0. If exit code is 2, the
-control plane is down — tell the user to start resman with `cd v1 &&
+control plane is down — tell the user to start resman with `cd /path/to/resman &&
 ./run.sh` and stop. Do not retry until they confirm.
 
 To see what work is in flight or recently happened:
@@ -258,7 +258,7 @@ Not JSON — one entry per line of plain text. Parse line-by-line.
 |------|---------|-------------|
 | `0` | Success | Report the JSON payload to the user. |
 | `1` | Usage / argument error | A bug in **your** invocation. Re-read this file; check the operation's required flags. Don't blame the script. |
-| `2` | Server unreachable | resman isn't running. Tell the user to start `cd v1 && ./run.sh`. Stop, don't retry. |
+| `2` | Server unreachable | resman isn't running. Tell the user to start it with `./run.sh`. Stop, don't retry. |
 | `3` | Server returned 4xx/5xx | resman rejected the request (e.g., unknown vault, invalid URL). Read stderr for the body, surface it to the user verbatim. |
 | `4` | `--wait`: task ended in failed/cancelled/interrupted | The task failed. Read `exit_code` and any error in the final JSON, surface to the user. |
 | `5` | `--wait`: poll timed out | The task is still running but exceeded your timeout. Tell the user the task id and that it's still going — they can check the Tasks tab. |

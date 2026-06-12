@@ -3,16 +3,16 @@
 # Run as the user who will own the service (not root).
 #
 # Usage:
-#   ./install.sh                          # auto-detects project root (one level up)
+#   ./install.sh                          # auto-detects project root (two levels up)
 #   ./install.sh --project /path/to/repo  # explicit project root
-#   ./install.sh --vname .vevn22          # venv name passed to run.sh (default: .venv)
+#   ./install.sh --vname .venv-ubuntu24   # venv name passed to run.sh (default: .venv)
 #   ./install.sh --no-start               # install + enable only, don't start now
 #   ./install.sh --uninstall              # stop, disable, and remove the service
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_PATH="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+PROJECT_PATH="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 VENV_NAME=".venv"
 START_NOW=1
 UNINSTALL=0
@@ -53,8 +53,8 @@ if [[ ! -f "$TEMPLATE" ]]; then
   exit 1
 fi
 
-if [[ ! -x "$PROJECT_PATH/v1/run.sh" ]]; then
-  echo "ERROR: run.sh not found or not executable at $PROJECT_PATH/v1/run.sh"
+if [[ ! -x "$PROJECT_PATH/run.sh" ]]; then
+  echo "ERROR: run.sh not found or not executable at $PROJECT_PATH/run.sh"
   echo "  Pass the correct project root with --project /path/to/repo"
   exit 1
 fi

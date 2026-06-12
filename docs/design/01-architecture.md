@@ -101,4 +101,4 @@ ttyd processes (one per active terminal session)
 
 ## Open Questions
 
-- None — all architectural decisions are resolved in plan4.md
+- None — all architectural decisions are resolved in this design set.
