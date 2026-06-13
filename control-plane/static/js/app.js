@@ -610,6 +610,10 @@ const OPERATIONS = {
     label: "Re-run wiki bootstrap", group: "Wiki", params: [],
     note: "Non-interactive re-run only; new vaults must use the wizard.",
   },
+  "wiki-hint": {
+    label: "Generate hint (vault description)", group: "Wiki", params: [],
+    note: "Inspects the wiki and writes wiki/hint.json — the label, summary and tags shown on this vault's landing-page card.",
+  },
   "wiki-ingest": {
     label: "Ingest a URL", group: "Research",
     params: [
@@ -664,6 +668,7 @@ function operationIcon(op) {
   if (op === "wiki-lint")          return "✓";
   if (op === "wiki-update-hot-cache") return "⟳";
   if (op === "wiki-bootstrap")     return "★";
+  if (op === "wiki-hint")          return "ℹ";
   if (op === "wiki-autoresearch")  return "🔎";
   if (op === "wiki-canvas")        return "▦";
   if (op === "run-prompt")         return "›";
@@ -712,6 +717,7 @@ const ATTENDABLE_OPERATIONS = new Set([
   "wiki-canvas",
   "wiki-update-hot-cache",
   "wiki-bootstrap",
+  "wiki-hint",
   "run-prompt",
 ]);
 

@@ -11,6 +11,46 @@ from typing import Optional
 
 WIKI_LINT = "/claude-obsidian:wiki-lint"
 WIKI_UPDATE_HOT_CACHE = "/claude-obsidian:update-hot-cache"
+
+# Generate (or refresh) the vault's wiki/hint.json — the short description the
+# landing page reads to render a vault's thumbnail card. Unlike garage, which
+# parses Claude's stdout and writes the file from the web layer, a resman task
+# runs `claude -p` directly in the vault with write access, so the prompt
+# instructs Claude to inspect the wiki via the wiki-query skill AND write the
+# hint.json itself. The schema mirrors modules/vault_hints.py: label, summary,
+# tags[], updatedBy, updatedAt, source.
+WIKI_HINT = (
+    "You are running inside an Obsidian wiki vault. The current working "
+    "directory is the vault root; its wiki lives in ./wiki/.\n\n"
+    "Goal: generate (or refresh) ./wiki/hint.json — a short, machine-readable "
+    "description of what THIS vault is about. resman's landing page reads it to "
+    "render the vault's thumbnail card, and URL classifiers read it to decide "
+    "whether an incoming link belongs to this vault. So the summary must "
+    "describe the TOPIC of the vault, not the structure of the wiki.\n\n"
+    "Step 1 — inspect. Use the installed Claude Code plugin skill "
+    "`claude-obsidian:wiki-query` to inspect the wiki: read wiki/index.md and a "
+    "representative sample of page titles and frontmatter. Invoke the skill "
+    "directly; do not re-implement its workflow yourself. If the wiki is empty "
+    "or unbuilt, fall back to reading wiki/hot.md, wiki/overview.md and the "
+    "vault README, and summarise from those.\n\n"
+    "Step 2 — decide. From what you read, choose:\n"
+    "  - label:   a short display name, 1-3 words.\n"
+    "  - summary: one line, at most 300 characters, of what the vault covers.\n"
+    "  - tags:    3-8 lowercase topical tags.\n\n"
+    "Step 3 — write. Write the file ./wiki/hint.json (overwrite it if it "
+    "already exists) with EXACTLY this JSON shape, 2-space indented:\n"
+    "{\n"
+    '  "label": "<label>",\n'
+    '  "summary": "<summary>",\n'
+    '  "tags": ["tag1", "tag2", "..."],\n'
+    '  "updatedBy": "resman-auto",\n'
+    '  "updatedAt": "<current UTC time, ISO-8601 with a trailing Z, '
+    'e.g. 2026-01-01T00:00:00Z>",\n'
+    '  "source": "auto"\n'
+    "}\n"
+    "Use the Write tool, and write only that one file. When done, print a "
+    "single line confirming the label and summary you saved."
+)
 # Bootstrap or check the claude-obsidian wiki structure inside a vault.
 # Used by the new-vault wizard right after scaffolding, and exposed as a
 # standalone operation so users can re-run it on existing vaults.

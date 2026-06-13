@@ -831,8 +831,8 @@ def attend_task(tid):
 
     Only operations that drive Claude with a prompt are attendable
     (wiki-lint, wiki-autoresearch, wiki-canvas, wiki-update-hot-cache,
-    wiki-bootstrap, run-prompt). Shell-based operations (wiki-ingest,
-    wiki-ingest-prefix, run-shell) return 400.
+    wiki-bootstrap, wiki-hint, run-prompt). Shell-based operations
+    (wiki-ingest, wiki-ingest-prefix, run-shell) return 400.
     """
     ctx = _ctx()
     tm = ctx["task_manager"]

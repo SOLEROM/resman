@@ -395,6 +395,37 @@ def test_wiki_bootstrap_defers_when_window_inactive(tmp_path):
     assert t.state == "deferred"
 
 
+def test_wiki_hint_runs_claude_with_correct_command(tmp_path):
+    """wiki-hint runs `claude -p <WIKI_HINT prompt> --dangerously-skip-permissions`
+    in the vault dir. The prompt must instruct Claude to write wiki/hint.json so
+    the landing-page card has something to read."""
+    runner_calls = []
+    def runner(cmd, cwd, log_file):
+        runner_calls.append({"cmd": list(cmd), "cwd": cwd})
+        return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    t = tm.create_task("hint", "alpha", "wiki-hint", {}, "high")
+    assert t.state == "completed"
+    assert len(runner_calls) == 1
+    cmd = runner_calls[0]["cmd"]
+    assert cmd[0] == "claude"
+    assert "-p" in cmd
+    prompt = cmd[cmd.index("-p") + 1]
+    assert "wiki/hint.json" in prompt
+    assert "claude-obsidian:wiki-query" in prompt
+    assert "--dangerously-skip-permissions" in cmd
+    assert runner_calls[0]["cwd"].endswith("alpha")
+
+
+def test_wiki_hint_takes_no_params(tmp_path):
+    """wiki-hint is parameterless — like wiki-lint, extra params are ignored
+    and an empty params dict is accepted."""
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("hint", "alpha", "wiki-hint", {}, "medium")
+    assert t.operation == "wiki-hint"
+    assert t.state == "completed"
+
+
 def test_wiki_canvas_validates_description(tmp_path):
     tm, _, _ = make_tm(tmp_path)
     # description is optional — empty / missing is allowed
@@ -928,6 +959,14 @@ def test_build_attend_prompt_wiki_update_hot_cache(tmp_path):
     tm, _, _ = make_tm(tmp_path)
     t = tm.create_task("h", "alpha", "wiki-update-hot-cache", {}, "high")
     assert tm.build_attend_prompt(t) == "/claude-obsidian:update-hot-cache"
+
+
+def test_build_attend_prompt_wiki_hint(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    t = tm.create_task("h", "alpha", "wiki-hint", {}, "high")
+    prompt = tm.build_attend_prompt(t)
+    assert prompt is not None
+    assert "wiki/hint.json" in prompt
 
 
 def test_build_attend_prompt_wiki_bootstrap_wraps_prefix_suffix(tmp_path):

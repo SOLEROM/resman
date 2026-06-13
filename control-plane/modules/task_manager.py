@@ -53,6 +53,7 @@ OPERATIONS = (
     "wiki-canvas",
     "wiki-update-hot-cache",
     "wiki-bootstrap",
+    "wiki-hint",
     "run-prompt",
     "run-shell",
 )
@@ -902,6 +903,11 @@ class TaskManager:
                 "claude", "-p", plugin_commands.WIKI_UPDATE_HOT_CACHE,
                 "--dangerously-skip-permissions",
             ], vault_path
+        if op == "wiki-hint":
+            return [
+                "claude", "-p", plugin_commands.WIKI_HINT,
+                "--dangerously-skip-permissions",
+            ], vault_path
         if op == "wiki-bootstrap":
             repo_root = self.resman_root
             prompt = plugin_commands.new_vault_bootstrap_prompt(
@@ -943,6 +949,8 @@ class TaskManager:
             return plugin_commands.canvas_prompt(params.get("description", ""))
         if op == "wiki-update-hot-cache":
             return plugin_commands.WIKI_UPDATE_HOT_CACHE
+        if op == "wiki-hint":
+            return plugin_commands.WIKI_HINT
         if op == "wiki-bootstrap":
             repo_root = self.resman_root
             return plugin_commands.new_vault_bootstrap_prompt(
