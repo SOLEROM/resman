@@ -82,3 +82,107 @@ def test_fetch_creds_without_token_is_auth_error(tmp_path):
     p.write_text(json.dumps({"claudeAiOauth": {"refreshToken": "x"}}))
     r = claude_usage.fetch_usage(path=p)
     assert r["reason"] == "auth_error"
+
+
+# ── Wakeup classifier (pure; no CLI spawned) ────────────────────────────────
+def test_classify_wakeup_states():
+    assert claude_usage.classify_wakeup(0, "whatever") == "ok"
+    assert claude_usage.classify_wakeup(1, "You've reached your usage limit") == "limit"
+    assert claude_usage.classify_wakeup(1, "HTTP 429 too many requests") == "limit"
+    assert claude_usage.classify_wakeup(1, "Please run /login to authenticate") == "auth"
+    assert claude_usage.classify_wakeup(1, "invalid api key") == "auth"
+    assert claude_usage.classify_wakeup(1, "some unexpected crash") == "fail"
+
+
+# ── Stale-token recovery: auth_error → claude wakeup → retry ─────────────────
+def _creds(tmp_path, token="tok"):
+    p = tmp_path / "creds.json"
+    p.write_text(json.dumps({"claudeAiOauth": {"accessToken": token}}))
+    return p
+
+
+def _ok(session=None, weekly=None, status=200):
+    r = claude_usage._result("ok", status)
+    r["session_pct"] = session
+    r["weekly_pct"] = weekly
+    return r
+
+
+def test_healthy_200_never_runs_the_wakeup(tmp_path, monkeypatch):
+    seen = {"canary": False}
+    monkeypatch.setattr(claude_usage, "_fetch_with_token", lambda *a: _ok(session=4.0))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary",
+                        lambda t: seen.__setitem__("canary", True) or "ok")
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "ok" and r["session_pct"] == 4.0
+    assert seen["canary"] is False  # zero token spend on the happy path
+
+
+def test_auth_error_then_wakeup_refreshes_and_retry_succeeds(tmp_path, monkeypatch):
+    seq = [claude_usage._result("auth_error", 401), _ok(session=12.0, weekly=3.0)]
+    monkeypatch.setattr(claude_usage, "_fetch_with_token", lambda *a: seq.pop(0))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary", lambda t: "ok")
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "ok"
+    assert r["session_pct"] == 12.0 and r["weekly_pct"] == 3.0
+
+
+def test_auth_error_at_limit_returns_real_numbers_flagged(tmp_path, monkeypatch):
+    # Account at limit: the refreshed retry returns the real 100% — flag it.
+    seq = [claude_usage._result("auth_error", 401), _ok(session=100, weekly=17)]
+    monkeypatch.setattr(claude_usage, "_fetch_with_token", lambda *a: seq.pop(0))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary", lambda t: "limit")
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "limit_reached"
+    assert r["session_pct"] == 100 and r["weekly_pct"] == 17
+
+
+def test_auth_error_at_limit_synthesises_100_when_endpoint_silent(tmp_path, monkeypatch):
+    # At limit AND the usage endpoint still won't answer → synthesise 100% session.
+    monkeypatch.setattr(claude_usage, "_fetch_with_token",
+                        lambda *a: claude_usage._result("auth_error", 401))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary", lambda t: "limit")
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "limit_reached"
+    assert r["session_pct"] == 100
+    assert r["ok"] is True
+
+
+def test_auth_error_genuine_logout_stays_auth_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_usage, "_fetch_with_token",
+                        lambda *a: claude_usage._result("auth_error", 401))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary", lambda t: "auth")
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "auth_error"
+
+
+def test_auth_error_wakeup_unavailable_stays_auth_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_usage, "_fetch_with_token",
+                        lambda *a: claude_usage._result("auth_error", 401))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary", lambda t: None)  # no CLI
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "auth_error"
+
+
+def test_wakeup_can_be_disabled_by_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESMAN_USAGE_WAKEUP", "0")
+    seen = {"canary": False}
+    monkeypatch.setattr(claude_usage, "_fetch_with_token",
+                        lambda *a: claude_usage._result("auth_error", 401))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary",
+                        lambda t: seen.__setitem__("canary", True) or "ok")
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "auth_error"
+    assert seen["canary"] is False  # disabled → CLI never spawned
+
+
+def test_fetch_error_does_not_trigger_wakeup(tmp_path, monkeypatch):
+    # Network/Cloudflare failures aren't a stale token — don't spend a wakeup.
+    seen = {"canary": False}
+    monkeypatch.setattr(claude_usage, "_fetch_with_token",
+                        lambda *a: claude_usage._result("fetch_error", 403))
+    monkeypatch.setattr(claude_usage, "_run_claude_canary",
+                        lambda t: seen.__setitem__("canary", True) or "ok")
+    r = claude_usage.fetch_usage(path=_creds(tmp_path))
+    assert r["reason"] == "fetch_error"
+    assert seen["canary"] is False

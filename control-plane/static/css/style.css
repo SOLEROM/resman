@@ -1008,6 +1008,14 @@ button.ghost:hover { color: var(--text-primary); }
   min-width: 30px;
   font-variant-numeric: tabular-nums;
 }
+.meter-after.at-limit {  /* account is over its usage limit — read as blocked, not fine */
+  color: var(--danger); font-weight: 700;
+}
+.meter-reset {  /* schedule end/reset time printed after the limit % */
+  color: var(--text-secondary); font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.meter-reset:empty { display: none; }
 .meter-sync {
   background: transparent;
   border: 1px solid var(--border);
@@ -1022,6 +1030,8 @@ button.ghost:hover { color: var(--text-primary); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- Footer "Log" button (lower right) ---------- */
+/* Flexible gap pushes the Log button to the far-right edge of the status bar. */
+.status-bar .spacer { flex: 1; }
 .status-log-btn {
   display: inline-flex; align-items: center; gap: 4px;
   background: transparent; border: 1px solid var(--border);

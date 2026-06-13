@@ -1690,6 +1690,12 @@ function renderWindowSchedule() {
     wlabel.textContent = c ? `Window ${c.index}/${c.count}` : "Window";
     wfill.style.width = (pct == null ? 0 : pct) + "%";
     wtime.textContent = pct == null ? "—" : pct + "%";
+    // After the limit %, the wall-clock time this window ends (schedule-based).
+    const wreset = $("#window-reset");
+    if (wreset) {
+      const wend = c ? clockOf(c.end) : "";
+      wreset.textContent = wend ? `· ends ${wend}` : "";
+    }
     let title;
     if (c) {
       title = `Window ${c.index}/${c.count} ${clockOf(c.start)}–${clockOf(c.end)}`
@@ -1713,6 +1719,13 @@ function renderWindowSchedule() {
     const pct = wk ? Math.round((wk.fraction || 0) * 100) : null;
     kfill.style.width = (pct == null ? 0 : pct) + "%";
     ktime.textContent = pct == null ? "—" : pct + "%";
+    // After the limit %, the day + time the weekly cycle resets (e.g. "Mon 09:00").
+    const kreset = $("#weekly-reset");
+    if (kreset) {
+      kreset.textContent = wk
+        ? `· ${String(wk.weekday_name).slice(0, 3)} ${String(wk.hour).padStart(2, "0")}:00`
+        : "";
+    }
     if (kmeter) {
       const base = wk
         ? `Weekly cycle ${pct}% elapsed — resets in ${fmtCountdown(wk.seconds_remaining)}`
@@ -1723,16 +1736,20 @@ function renderWindowSchedule() {
     }
   }
   // --- Limit used (after each bar): real % once synced, else "?". ---
-  setLimitText($("#window-limit"), usage.window_limit_pct);
-  setLimitText($("#weekly-limit"), usage.weekly_limit_pct);
+  // `limit_reached` means claude.ai (or the wakeup canary) reports the account
+  // is over its limit — flag the figure red so 100% reads as "blocked", not "fine".
+  const atLimit = usage.reason === "limit_reached";
+  setLimitText($("#window-limit"), usage.window_limit_pct, atLimit);
+  setLimitText($("#weekly-limit"), usage.weekly_limit_pct, atLimit);
   // Sync button tooltip carries last-sync time + any auth/fetch hint.
   const btn = $("#btn-window-sync");
   if (btn) btn.title = syncTooltip(usage);
 }
 
-function setLimitText(el, pct) {
+function setLimitText(el, pct, atLimit) {
   if (!el) return;
   el.textContent = (pct == null) ? "?" : Math.round(pct) + "%";
+  el.classList.toggle("at-limit", !!atLimit && pct != null);
 }
 
 // One tooltip line describing a limit readout + its reset, or why it's unknown.
@@ -1745,7 +1762,10 @@ function limitNote(label, pct, resetsAt, usage) {
       return `${label} limit: ? — couldn't reach claude.ai (click ⟳ to retry)`;
     return `${label} limit: ? — click ⟳ to fetch usage`;
   }
-  let s = `${label} limit ${Math.round(pct)}% used`;
+  const atLimit = usage.reason === "limit_reached";
+  let s = atLimit
+    ? `${label} limit ${Math.round(pct)}% — at usage limit`
+    : `${label} limit ${Math.round(pct)}% used`;
   if (resetsAt) {
     const left = secsUntil(resetsAt);
     if (left != null) s += ` · resets in ${fmtCountdown(left)}`;

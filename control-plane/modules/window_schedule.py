@@ -351,7 +351,9 @@ def _sync_message(usage: dict) -> str:
     if sp is not None or wp is not None:
         s = f"{round(sp)}%" if sp is not None else "?"
         w = f"{round(wp)}%" if wp is not None else "?"
-        return f"manual sync — session {s}, weekly {w}"
+        prefix = "manual sync — at usage limit" if usage.get("reason") == "limit_reached" \
+            else "manual sync —"
+        return f"{prefix} session {s}, weekly {w}"
     reason = usage.get("reason")
     return f"manual sync — {reason}" if reason else "manual sync"
 
@@ -362,6 +364,9 @@ def _sync_activity(usage: dict) -> dict:
     if sp is not None or wp is not None:
         s = f"{round(sp)}%" if sp is not None else "?"
         w = f"{round(wp)}%" if wp is not None else "?"
+        if usage.get("reason") == "limit_reached":
+            return {"source": "window-sync", "level": "warn",
+                    "message": f"window limit reached — session {s}, weekly {w}"}
         return {"source": "window-sync", "level": "info",
                 "message": f"window limit sync ok — session {s}, weekly {w}"}
     reason = usage.get("reason")

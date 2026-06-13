@@ -7,13 +7,33 @@ local OAuth token (``~/.claude/.credentials.json`` →
 * ``five_hour.utilization`` — the rolling 5-hour **session** limit
 * ``seven_day.utilization`` — the rolling 7-day **weekly** limit
 
-These are the "10% session · 26% weekly" figures in the reference UI. The call
-is read-only and spends **no** tokens (unlike cld20's optional ``claude -p``
-wakeup, which we do not do). It is classified, never raised:
+These are the "10% session · 26% weekly" figures in the reference UI. The
+happy-path call is read-only and spends **no** tokens. It is classified, never
+raised:
 
-* ``ok``          — utilization numbers present
-* ``auth_error``  — genuine 401/403, or missing/blank creds (logged out / token rejected)
-* ``fetch_error`` — network failure, Cloudflare bot-challenge, or any other non-200
+* ``ok``            — utilization numbers present
+* ``limit_reached`` — account is at its usage limit (session synthesised to 100%)
+* ``auth_error``    — genuine 401/403, or missing/blank creds (logged out / token rejected)
+* ``fetch_error``   — network failure, Cloudflare bot-challenge, or any other non-200
+
+Stale-token recovery
+--------------------
+The read uses the OAuth access token stored in ``.credentials.json`` as-is. That
+token expires every few hours; nothing in resman refreshes it, so on a machine
+where the ``claude`` CLI isn't run regularly the stored token goes stale and
+claude.ai answers the read with a **401** — which we would otherwise report as
+"logged out / token rejected (use Claude, then retry)" even though the *refresh*
+token is perfectly valid.
+
+So, exactly like cld20's ``usage.sh``, we automate that "use Claude, then retry":
+**only** when the read comes back ``auth_error`` do we run ``claude -p "hi"`` once.
+That wakeup (a) makes the CLI mint a fresh access token from the refresh token and
+write it back to ``.credentials.json``, after which we re-read usage with the
+fresh token; and (b) doubles as an at-limit canary — when the account is over its
+limit the CLI says so, and we synthesise a ``limit_reached`` / 100%-session
+reading (cld20's behaviour) if the endpoint itself still gives no number. The
+wakeup spends at most one trivial message, never fires on the healthy 200 path,
+and can be disabled with ``RESMAN_USAGE_WAKEUP=0`` (alias ``CLD20_WAKEUP=0``).
 
 Transport
 ---------
@@ -38,6 +58,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import urllib.error
@@ -52,6 +73,23 @@ CLIENT_NAME = "claude-code"
 CLIENT_VERSION = "2.1.161"
 USER_AGENT = f"claude-cli/{CLIENT_VERSION} (external, cli)"
 DEFAULT_TIMEOUT = 12
+
+# ── Stale-token / at-limit wakeup (cld20's `claude -p "hi"` canary) ──────────
+# Runs only on the auth_error fallback. The prompt is intentionally trivial so a
+# healthy account spends near-nothing; an at-limit account spends nothing (the
+# CLI is rejected before inference).
+WAKEUP_PROMPT = "hi"
+# Seconds to allow the wakeup. It runs inside the interactive /api/window/sync
+# request, so keep it bounded; a `claude -p "hi"` round-trip (+ token refresh) is
+# normally a few seconds. A timeout is classified as "fail" → keeps auth_error.
+WAKEUP_TIMEOUT = 30
+
+# Classify a non-zero `claude -p` exit by its output (mirrors cld20/usage.sh).
+_LIMIT_RE = re.compile(
+    r"usage\s*limit|rate\s*limit|reached\s*your|quota|too\s*many\s*requests|\b429\b", re.I)
+_AUTH_RE = re.compile(
+    r"log\s*in|authenticat|credential|invalid\s*api\s*key|unauthor|/login|oauth\s*token|not\s*logged",
+    re.I)
 
 
 def creds_path() -> Path:
@@ -228,21 +266,23 @@ def _fetch_via_urllib(token: str, timeout: int):
         return None
 
 
-def fetch_usage(path: Optional[Path] = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
-    """Read creds, GET the usage endpoint, return a classified dict. Never raises.
+def _read_token(path: Path) -> Optional[str]:
+    """Pull ``claudeAiOauth.accessToken`` from the creds file, or None if the file
+    is missing/unreadable/malformed or the token is blank."""
+    try:
+        creds = json.loads(path.read_text(encoding="utf-8"))
+        token = creds["claudeAiOauth"]["accessToken"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return token or None
+
+
+def _fetch_with_token(token: str, timeout: int) -> dict:
+    """GET the usage endpoint with a specific token and classify the response.
 
     Tries ``bun`` first (the only client claude.ai's Cloudflare edge reliably
     lets through), then falls back to ``urllib``.
     """
-    p = Path(path) if path else creds_path()
-    try:
-        creds = json.loads(p.read_text(encoding="utf-8"))
-        token = creds["claudeAiOauth"]["accessToken"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return _result("auth_error")
-    if not token:
-        return _result("auth_error")
-
     result = _fetch_via_bun(token, timeout)
     if result is None:
         result = _fetch_via_urllib(token, timeout)
@@ -250,3 +290,141 @@ def fetch_usage(path: Optional[Path] = None, timeout: int = DEFAULT_TIMEOUT) -> 
         return _result("fetch_error")
     status, body = result
     return parse_usage(status, body)
+
+
+def classify_wakeup(returncode: int, output: str) -> str:
+    """Map a ``claude -p`` result to a wakeup state — pure, so it's unit-testable
+    without spawning the CLI. Mirrors cld20/usage.sh's precedence:
+    ``ok`` (exit 0) | ``limit`` | ``auth`` | ``fail``."""
+    if returncode == 0:
+        return "ok"
+    text = output or ""
+    if _LIMIT_RE.search(text):
+        return "limit"
+    if _AUTH_RE.search(text):
+        return "auth"
+    return "fail"
+
+
+def find_claude() -> Optional[str]:
+    """Locate the ``claude`` CLI robustly (same rationale as :func:`find_bun` —
+    the server's PATH often lacks ``~/.local/bin``). Honours a ``CLD20_CLAUDE`` /
+    ``RESMAN_CLAUDE`` override, then PATH, then the common install locations."""
+    override = os.environ.get("CLD20_CLAUDE") or os.environ.get("RESMAN_CLAUDE")
+    if override and os.access(override, os.X_OK):
+        return override
+    found = shutil.which("claude")
+    if found:
+        return found
+    candidates = [
+        Path.home() / ".local" / "bin" / "claude",
+        Path.home() / ".claude" / "local" / "claude",
+        Path("/usr/local/bin/claude"),
+        Path("/usr/bin/claude"),
+    ]
+    for c in candidates:
+        if os.access(c, os.X_OK):
+            return str(c)
+    return None
+
+
+def _wakeup_enabled() -> bool:
+    """The stale-token wakeup is on by default; ``RESMAN_USAGE_WAKEUP=0`` (alias
+    ``CLD20_WAKEUP=0``) turns it off for hosts that must never spend a token."""
+    v = os.environ.get("RESMAN_USAGE_WAKEUP")
+    if v is None:
+        v = os.environ.get("CLD20_WAKEUP")
+    if v is None:
+        return True
+    return v.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _run_claude_canary(timeout: int) -> Optional[str]:
+    """Run ``claude -p "hi"`` once and return its wakeup state, or ``None`` if the
+    CLI is unavailable / failed to launch (so the caller keeps the prior result).
+
+    Side effect: the CLI refreshes the OAuth access token on disk when it's stale
+    — which is the whole point of running it on the auth_error path.
+    """
+    claude = find_claude()
+    if not claude:
+        log.info("claude CLI not found (PATH or ~/.local/bin); cannot refresh stale token")
+        return None
+    try:
+        proc = subprocess.run(
+            [claude, "-p", WAKEUP_PROMPT, "--output-format", "text"],
+            capture_output=True,
+            text=True,
+            timeout=max(timeout, WAKEUP_TIMEOUT),
+            stdin=subprocess.DEVNULL,
+            env={**os.environ},
+        )
+    except subprocess.TimeoutExpired:
+        log.info("claude wakeup timed out after %ss", max(timeout, WAKEUP_TIMEOUT))
+        return "fail"
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.info("claude wakeup failed to run: %s", exc)
+        return None
+    state = classify_wakeup(proc.returncode, f"{proc.stdout or ''}\n{proc.stderr or ''}")
+    log.info("claude wakeup state=%s (rc=%s)", state, proc.returncode)
+    return state
+
+
+def _synthesised_limit(prev: dict) -> dict:
+    """An at-limit reading when the usage endpoint gave no session number: record
+    a plain 100% session (cld20's behaviour), preserving any weekly number the
+    retry managed to read."""
+    out = _result("limit_reached", prev.get("http_status"))
+    out["ok"] = True
+    out["session_pct"] = 100
+    out["weekly_pct"] = prev.get("weekly_pct")
+    out["weekly_resets_at"] = prev.get("weekly_resets_at")
+    return out
+
+
+def _recover_from_auth_error(path: Path, prior: dict, timeout: int) -> Optional[dict]:
+    """The read came back ``auth_error`` (stored token rejected). Run the cld20
+    wakeup to refresh the token / detect an at-limit account, then retry. Returns
+    a fresh result, or ``None`` to keep ``prior`` (wakeup disabled/unavailable, or
+    the account is genuinely logged out)."""
+    if not _wakeup_enabled():
+        return None
+    state = _run_claude_canary(timeout)
+    if state is None or state in ("auth", "fail"):
+        # No CLI, or the CLI itself is logged out / broken → genuinely auth_error.
+        return None
+    # state in ("ok", "limit"): the wakeup just refreshed the token on disk.
+    token = _read_token(path)
+    retry = _fetch_with_token(token, timeout) if token else _result("auth_error")
+    if retry["reason"] == "ok":
+        if state == "limit":
+            # Real numbers AND the CLI says at-limit — flag it for the UI.
+            retry["reason"] = "limit_reached"
+        return retry
+    if state == "limit":
+        return _synthesised_limit(retry)
+    # state == "ok" but the retry still failed: surface the retry's reason
+    # (fetch_error/auth_error) rather than masking it.
+    return retry
+
+
+def fetch_usage(path: Optional[Path] = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    """Read creds, GET the usage endpoint, return a classified dict. Never raises.
+
+    Healthy path: a single read-only GET (no token spent). If that GET is
+    rejected as ``auth_error`` (a stale stored token, the common "logged out /
+    token rejected" false alarm), fall back to cld20's ``claude -p "hi"`` wakeup
+    to refresh the token and detect an at-limit account, then retry — see the
+    module docstring.
+    """
+    p = Path(path) if path else creds_path()
+    token = _read_token(p)
+    if not token:
+        # No token at all → truly logged out; a wakeup can't refresh nothing.
+        return _result("auth_error")
+
+    out = _fetch_with_token(token, timeout)
+    if out["reason"] != "auth_error":
+        return out
+    recovered = _recover_from_auth_error(p, out, timeout)
+    return recovered if recovered is not None else out
