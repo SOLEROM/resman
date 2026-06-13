@@ -14,6 +14,7 @@ from typing import Any
 from flask import Blueprint, current_app, jsonify, request
 
 from . import plugin_commands
+from . import vault_hints
 from . import wiki_unread
 from . import window_schedule as window_schedule_mod
 from .config_manager import ConfigError, VAULT_NAME_RE
@@ -127,6 +128,34 @@ def list_vaults():
         "vaults": _ctx()["vault_registry"].to_list(),
         "vault_default_root": default_root or None,
     })
+
+
+@bp.get("/api/landing")
+def landing():
+    """Per-vault summary cards for the landing page.
+
+    Returns one entry per *registered* vault, pairing its identity with the
+    generated ``wiki/hint.json`` (label/summary/tags/updated*). The hint is
+    ``null`` when the vault has no hint file yet, so the SPA falls back to
+    the bare vault name. A single call powers the whole grid — no N+1 from
+    the client. Hint reads are skipped for vaults whose path is missing.
+    """
+    reg = _ctx()["vault_registry"]
+    out = []
+    for v in reg.registered:
+        hint = vault_hints.read_hint(v.path) if v.path_exists else None
+        has_wiki = (Path(v.path) / "wiki").is_dir() if v.path_exists else False
+        out.append({
+            "name": v.name,
+            "path": v.path,
+            "tags": list(v.tags or []),
+            "path_exists": v.path_exists,
+            "is_obsidian": v.is_obsidian,
+            "mount": v.mount,
+            "has_wiki": has_wiki,
+            "hint": hint,
+        })
+    return jsonify({"vaults": out})
 
 
 @bp.post("/api/vaults")

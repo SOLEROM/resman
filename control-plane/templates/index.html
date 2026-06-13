@@ -29,7 +29,8 @@
 <body>
 
 <header class="header">
-  <div class="header-brand">
+  <div class="header-brand" id="header-brand" role="button" tabindex="0"
+       title="Home — all vaults" aria-label="Go to vault landing page">
     <span class="header-icon">⚗</span>
     <span class="header-title">resman</span>
     <span class="header-tagline">— Research Vault Manager</span>
@@ -95,7 +96,20 @@
     </aside>
 
     <main class="main">
-      <section id="tab-ops" class="tab-panel active">
+      <section id="tab-home" class="tab-panel active">
+        <div class="toolbar landing-toolbar">
+          <span class="landing-title">Vaults</span>
+          <span id="landing-count" class="muted small"></span>
+          <div class="spacer"></div>
+          <button id="btn-landing-refresh" class="btn btn-sm"
+                  title="Reload vault summaries">↻</button>
+        </div>
+        <div id="landing-grid" class="landing-grid">
+          <p class="muted" style="padding:16px">Loading vaults…</p>
+        </div>
+      </section>
+
+      <section id="tab-ops" class="tab-panel">
         <div class="term-tabs" id="term-tabs"></div>
         <div class="term-frames" id="term-frames"></div>
       </section>

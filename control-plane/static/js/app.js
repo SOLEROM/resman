@@ -3,6 +3,10 @@
 const state = {
   vaults: [],
   discovered: [],
+  // Landing-page cards: one entry per registered vault paired with its
+  // generated wiki/hint.json (fetched from /api/landing). Powers the home
+  // screen the logo opens.
+  landing: [],
   selectedVault: null,
   sessions: [],
   activeSessionId: null,
@@ -282,11 +286,101 @@ function showPanel(tabName) {
   if (tabName === "config") loadConfig();
   if (tabName === "tasks") loadTasks();
   if (tabName === "help") loadHelp();
+  if (tabName === "home") loadLanding();
   if (tabName === "wiki" && state.selectedVault) loadWikiTree();
-  if (state.selectedVault && tabName !== "help") {
+  // "home" and "help" are vault-independent global views — don't pin them as
+  // a vault's remembered panel (would dump the user back onto the landing /
+  // help screen the next time they re-select that vault).
+  if (state.selectedVault && tabName !== "help" && tabName !== "home") {
     state.lastPanelByVault[state.selectedVault] = tabName;
     saveLastPanelByVault();
   }
+}
+
+// ----- landing / home page (vault thumbnails) -----
+function isHomeActive() {
+  const p = $("#tab-home");
+  return !!(p && p.classList.contains("active"));
+}
+
+async function loadLanding() {
+  try {
+    const data = await api("/api/landing");
+    state.landing = data.vaults || [];
+  } catch (_) {
+    state.landing = [];
+  }
+  renderLanding();
+}
+
+function renderLanding() {
+  const root = $("#landing-grid");
+  if (!root) return;
+  const count = $("#landing-count");
+  const vaults = state.landing;
+  if (count) {
+    count.textContent = vaults.length
+      ? `${vaults.length} vault${vaults.length > 1 ? "s" : ""}` : "";
+  }
+  if (!vaults.length) {
+    root.innerHTML =
+      `<div class="landing-empty muted">No vaults configured yet — add one with ` +
+      `<strong>+ New Vault</strong> in the sidebar and it will appear here.</div>`;
+    return;
+  }
+  root.innerHTML = vaults.map(landingCardHTML).join("");
+  root.querySelectorAll(".vault-card").forEach((card) => {
+    const open = () => openVaultFromLanding(card.dataset.vault);
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+  });
+}
+
+function landingCardHTML(v) {
+  const hint = v.hint || {};
+  const title = (hint.label && hint.label.trim()) || v.name;
+  const showId = title !== v.name;
+  // Status dot reuses the sidebar's session/task colour rule.
+  const color = vaultColor({ name: v.name });
+  const tags = (hint.tags && hint.tags.length) ? hint.tags : (v.tags || []);
+  const shown = tags.slice(0, 8);
+  const tagsHTML = shown.map((t) => `<span class="tag">${esc(t)}</span>`).join("") +
+    (tags.length > shown.length
+      ? `<span class="tag tag-more">+${tags.length - shown.length}</span>` : "");
+  const summary = (hint.summary && hint.summary.trim())
+    ? esc(hint.summary)
+    : `<span class="muted">No description yet — run the wiki bootstrap to generate one.</span>`;
+  const warn = !v.path_exists
+    ? `<span class="vault-warn" title="path not found">⚠</span>`
+    : (!v.is_obsidian ? `<span class="vault-warn" title="missing .obsidian/">?</span>` : "");
+  const foot = [];
+  if (hint.updatedBy) foot.push(`<span class="lc-by">${esc(hint.updatedBy)}</span>`);
+  if (hint.updatedAt) {
+    const rel = formatAge(hint.updatedAt);
+    if (rel) foot.push(`<span class="lc-when" title="${esc(hint.updatedAt)}">${esc(rel)}</span>`);
+  }
+  return `
+    <article class="vault-card" data-vault="${esc(v.name)}" role="button" tabindex="0"
+             title="Open ${esc(v.name)} wiki">
+      <header class="lc-head">
+        <span class="vault-dot vault-dot-${color}" title="${esc(vaultDotTitle({ name: v.name }))}"></span>
+        <h3 class="lc-title">${esc(title)}</h3>
+        ${warn}
+      </header>
+      ${showId ? `<div class="lc-id">${esc(v.name)}</div>` : ""}
+      <p class="lc-summary">${summary}</p>
+      ${tagsHTML ? `<div class="lc-tags">${tagsHTML}</div>` : ""}
+      ${foot.length ? `<footer class="lc-foot">${foot.join('<span class="lc-sep">·</span>')}</footer>` : ""}
+    </article>`;
+}
+
+// Clicking a landing card selects the vault and drops the user straight onto
+// its wiki (the explicit ask — a card is a shortcut to "read this vault").
+function openVaultFromLanding(name) {
+  selectVault(name);
+  showPanel("wiki");
 }
 
 // Sidebar `↘` / `⇲` buttons — queue a wiki-ingest task for the given vault and
@@ -560,6 +654,8 @@ async function loadTasks() {
   state.tasks = data.tasks || [];
   renderTasks();
   renderVaultList();
+  // Keep landing-card status dots live while the home screen is open.
+  if (isHomeActive()) renderLanding();
 }
 
 function operationIcon(op) {
@@ -2169,6 +2265,7 @@ async function loadSessions() {
   $("#ttyd-warning").hidden = data.available;
   renderSessions();
   renderActiveSession();
+  if (isHomeActive()) renderLanding();
 }
 
 async function registerVault(name, path) {
@@ -2509,6 +2606,18 @@ function setupFilters() {
 }
 
 function setupToolbar() {
+  // The brand/logo is the home button — it opens the global vault landing
+  // page. role="button"/tabindex make it keyboard-operable too.
+  const brand = $("#header-brand");
+  if (brand) {
+    const goHome = () => showPanel("home");
+    brand.addEventListener("click", goHome);
+    brand.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goHome(); }
+    });
+  }
+  const btnLandingRefresh = $("#btn-landing-refresh");
+  if (btnLandingRefresh) btnLandingRefresh.addEventListener("click", loadLanding);
   $("#btn-claude").addEventListener("click", () => {
     if (state.selectedVault) spawnSession(state.selectedVault, "claude");
     else alert("Select a vault first.");
@@ -2810,7 +2919,11 @@ function setupSocket() {
       alert("Terminal session crashed: " + (p?.message || ""));
       loadSessions();
     });
-    sock.on("config_reloaded", () => loadVaults());
+    sock.on("config_reloaded", () => {
+      loadVaults();
+      // A vault may have been added/removed — refresh the grid if it's open.
+      if (isHomeActive()) loadLanding();
+    });
     sock.on("cron_skip_warning", (p) => {
       console.warn("cron skip warning", p);
       showCronSkipBanner(p);
@@ -2828,6 +2941,9 @@ async function init() {
   setupStatusBar();
   setupSocket();
   await Promise.all([loadVaults(), loadTasks(), loadSessions(), loadWindow(), loadWindowSchedule()]);
+  // Home is the default panel on boot — populate the vault grid now that
+  // tasks/sessions are loaded so each card's status dot is accurate.
+  loadLanding();
   // Fetch live usage limits once on load (the time bars are already showing
   // from loadWindowSchedule); then refresh time every 30s and re-pull the
   // limits every 10 min so they stay current without hammering claude.ai.
