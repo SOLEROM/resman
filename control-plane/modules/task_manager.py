@@ -447,7 +447,9 @@ class TaskManager:
 
         with self._dispatch_lock:
             if vault == "ALL" and parent_id is None:
-                return self._create_parent_all(name, operation, validated_params, priority, schedule, run_now)
+                return self._create_parent_all(
+                    name, operation, validated_params, priority, schedule, run_now, force,
+                )
             return self._create_single(
                 name, vault, operation, validated_params, priority, schedule,
                 parent_id, run_now, normalized_scheduled, force,
@@ -523,6 +525,7 @@ class TaskManager:
         priority: str,
         schedule: str,
         run_now: bool,
+        force: bool = False,
     ) -> Task:
         ts = _utcnow_iso()
         parent_id = f"t-{uuid.uuid4().hex[:12]}"
@@ -545,7 +548,7 @@ class TaskManager:
         for vname in vault_names:
             self._create_single(
                 f"{name}-{vname}", vname, operation, params, priority, schedule,
-                parent_id, run_now,
+                parent_id, run_now, force=force,
             )
         self.bus.emit("task_updated", {"task_id": parent_id, "state": parent.state})
         return parent

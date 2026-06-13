@@ -1078,7 +1078,14 @@ async function submitTriggerForm() {
     params,
     priority: $("#t-pri").value,
   };
-  if (scheduled_for) body.scheduled_for = scheduled_for;
+  if (scheduled_for) {
+    body.scheduled_for = scheduled_for;
+  } else {
+    // "run now" must dispatch immediately. Without this the backend gates the
+    // task on the active work window and parks it as `deferred` when the window
+    // is closed, so it sits idle until the user manually promotes it (▶).
+    body.force = true;
+  }
 
   try {
     await api("/api/tasks", { method: "POST", body: JSON.stringify(body) });

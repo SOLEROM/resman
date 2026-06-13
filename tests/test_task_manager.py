@@ -258,6 +258,29 @@ def test_all_vault_creates_children(tmp_path):
     assert tm.get(parent.id).state == "completed"
 
 
+def test_all_vault_force_bypasses_window_gate(tmp_path):
+    """A 'run now' all-vaults task must dispatch every child immediately even
+    when the window is closed — force has to reach the children, not just the
+    parent. Without threading force through, children would be deferred."""
+    tm, _, _ = make_tm(tmp_path, vaults=("alpha", "beta"), active=False)
+    parent = tm.create_task("lint-all", "ALL", "wiki-lint", {}, "high", force=True)
+    children = [t for t in tm._tasks.values() if t.parent_id == parent.id]
+    assert len(children) == 2
+    assert all(c.state == "completed" for c in children)
+    assert tm.get(parent.id).state == "completed"
+
+
+def test_all_vault_without_force_defers_children_when_window_closed(tmp_path):
+    """Counterpart: with the window closed and no force, children defer (and so
+    the parent does not complete). Guards the gate against being bypassed."""
+    tm, _, _ = make_tm(tmp_path, vaults=("alpha", "beta"), active=False)
+    parent = tm.create_task("lint-all", "ALL", "wiki-lint", {}, "high")
+    children = [t for t in tm._tasks.values() if t.parent_id == parent.id]
+    assert len(children) == 2
+    assert all(c.state == "deferred" for c in children)
+    assert tm.get(parent.id).state != "completed"
+
+
 def test_cancel_pending_writes_cancelled_event(tmp_path):
     tm, _, _ = make_tm(tmp_path, active=False)
     t = tm.create_task("a", "alpha", "wiki-lint", {}, "low")
