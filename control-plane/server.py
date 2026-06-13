@@ -17,6 +17,7 @@ except Exception:
 import argparse
 import atexit
 import logging
+import os
 import socket
 import sys
 import time
@@ -39,6 +40,9 @@ from modules.task_manager import TaskManager
 from modules.tmux_manager import TmuxManager
 from modules.vault_registry import VaultRegistry
 from modules.websocket_handlers import attach_socketio
+from modules.window_schedule import WindowSchedule
+from modules import claude_usage
+from modules.activity_log import ActivityLog, install_logging_bridge
 from modules.window_state import WindowState
 
 log = logging.getLogger("resman")
@@ -106,6 +110,12 @@ def build_app(
     window = WindowState(config_dir / "budget.json", bus)
     window.load()
 
+    # The schedule pulls live session/weekly limits from claude.ai on sync,
+    # using the operator's local OAuth creds (read-only, no token spend).
+    window_schedule = WindowSchedule(config_dir / "window_schedule.json", bus,
+                                     usage_provider=claude_usage.fetch_usage)
+    window_schedule.load()
+
     session_manager = SessionManager(
         tmux=tmux,
         port_base=config.app.get("ttyd_port_base", 7680),
@@ -150,6 +160,13 @@ def build_app(
         bus=bus,
     )
 
+    # Volatile activity log (footer "Log" window). Created last so it captures
+    # live operations, not startup replay churn; lives in /tmp and is deleted
+    # on exit. install_logging_bridge mirrors WARNING+ from resman loggers.
+    activity = ActivityLog(Path("/tmp/resman") / f"activity-{os.getpid()}.log", bus)
+    install_logging_bridge(activity)
+    atexit.register(activity.close)
+
     template_dir = Path(__file__).resolve().parent / "templates"
     static_dir = Path(__file__).resolve().parent / "static"
     app = Flask(
@@ -168,10 +185,12 @@ def build_app(
         "vault_registry": vault_registry,
         "mount_manager": mount_manager,
         "window": window,
+        "window_schedule": window_schedule,
         "session_manager": session_manager,
         "task_manager": task_manager,
         "obsidian_push": obsidian_push,
         "scheduler": scheduler,
+        "activity": activity,
         "bus": bus,
         "socketio": socketio,
         "resman_root": RESMAN_ROOT,

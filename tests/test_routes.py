@@ -20,8 +20,10 @@ from modules.task_manager import TaskManager
 from modules.tmux_manager import TmuxManager
 from modules.vault_registry import VaultRegistry
 from modules.window_state import WindowState
+from modules.window_schedule import WindowSchedule
 from modules.obsidian_push import ObsidianPush
 from modules.scheduler import Scheduler
+from modules.activity_log import ActivityLog
 
 
 def make_test_app(tmp_path: Path):
@@ -42,6 +44,8 @@ def make_test_app(tmp_path: Path):
     reg.reload()
     ws = WindowState(cfg_dir / "budget.json", bus)
     ws.load()
+    wsched = WindowSchedule(cfg_dir / "window_schedule.json", bus)
+    wsched.load()
     sm = SessionManager(tmux=tmux, port_base=7680, port_max=7700, ttyd_path="ttyd-not-here")
     runner_calls = []
     def runner(cmd, cwd, log_file):
@@ -66,6 +70,7 @@ def make_test_app(tmp_path: Path):
         has_session_for=lambda n: any(s.vault == n for s in sm.list()),
     )
     scheduler = Scheduler(cm, tm, push, ws.is_window_active, bus=bus)
+    activity = ActivityLog(cfg_dir / "activity.log", bus)
 
     from flask import Flask, render_template
     template_dir = Path(__file__).resolve().parents[1] / "control-plane" / "templates"
@@ -73,8 +78,10 @@ def make_test_app(tmp_path: Path):
     app = Flask("resman-test", template_folder=str(template_dir), static_folder=str(static_dir))
     app.config["RESMAN"] = {
         "config": cm, "tmux": tmux, "vault_registry": reg, "window": ws,
+        "window_schedule": wsched,
         "session_manager": sm, "task_manager": tm, "obsidian_push": push,
-        "scheduler": scheduler, "bus": bus, "resman_root": tmp_path / "resman",
+        "scheduler": scheduler, "activity": activity, "bus": bus,
+        "resman_root": tmp_path / "resman",
     }
     from modules.routes import bp
     app.register_blueprint(bp)
@@ -1027,3 +1034,229 @@ def test_attend_returns_503_when_ttyd_missing(tmp_path):
         headers={"X-Requested-With": "resman"},
     )
     assert rv.status_code == 503
+
+
+# ----- Wiki read/unread + search + random -----
+def _seed_wiki(tmp_path):
+    """Create a small wiki/ tree inside the fixture's `alpha` vault."""
+    wiki = tmp_path / "alpha" / "wiki"
+    (wiki / "concepts").mkdir(parents=True)
+    (wiki / "overview.md").write_text("# Overview\n\nThe vault landing page.\n")
+    (wiki / "concepts" / "gguf.md").write_text("# GGUF\n\nA tensor file format.\n")
+    return wiki
+
+
+def test_wiki_tree_reports_unread_flags(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    rv = app.test_client().get("/api/vaults/alpha/wiki/tree")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["missing"] is False
+    # First reconcile marks every page unread.
+    flat = []
+    def walk(ns):
+        for n in ns:
+            if n["type"] == "file":
+                flat.append(n)
+            else:
+                walk(n.get("children", []))
+    walk(body["tree"])
+    assert flat, "expected file nodes"
+    assert all(n["unread"] for n in flat)
+
+
+def test_wiki_read_toggle_roundtrip(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    client = app.test_client()
+    client.get("/api/vaults/alpha/wiki/tree")  # reconcile → all unread
+    # Mark read.
+    rv = client.post(
+        "/api/vaults/alpha/wiki/read",
+        headers={"X-Requested-With": "resman"},
+        json={"file": "wiki/concepts/gguf.md", "read": True},
+    )
+    assert rv.status_code == 200
+    assert rv.get_json()["unread"] is False
+    # Mark unread again.
+    rv = client.post(
+        "/api/vaults/alpha/wiki/read",
+        headers={"X-Requested-With": "resman"},
+        json={"file": "wiki/concepts/gguf.md", "read": False},
+    )
+    assert rv.get_json()["unread"] is True
+
+
+def test_wiki_read_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    rv = app.test_client().post(
+        "/api/vaults/alpha/wiki/read",
+        json={"file": "wiki/overview.md", "read": True},
+    )
+    assert rv.status_code == 403
+
+
+def test_wiki_random_returns_unread_then_none(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    client = app.test_client()
+    rv = client.get("/api/vaults/alpha/wiki/random")
+    assert rv.status_code == 200
+    assert rv.get_json()["file"] in ("wiki/overview.md", "wiki/concepts/gguf.md")
+    # Mark everything read, then random must report nothing.
+    for f in ("wiki/overview.md", "wiki/concepts/gguf.md"):
+        client.post("/api/vaults/alpha/wiki/read",
+                    headers={"X-Requested-With": "resman"},
+                    json={"file": f, "read": True})
+    assert client.get("/api/vaults/alpha/wiki/random").get_json()["file"] is None
+
+
+def test_wiki_search_ranks_and_highlights(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    rv = app.test_client().get("/api/vaults/alpha/wiki/search?q=gguf")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["query"] == "gguf"
+    assert body["hits"], "expected a hit for 'gguf'"
+    assert body["hits"][0]["rel"] == "concepts/gguf.md"
+    assert "gguf" in body["hits"][0]["snippet"].lower()
+
+
+def test_wiki_endpoints_404_for_unknown_vault(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    assert client.get("/api/vaults/ghost/wiki/random").status_code == 404
+    assert client.get("/api/vaults/ghost/wiki/search?q=x").status_code == 404
+    rv = client.post("/api/vaults/ghost/wiki/read",
+                     headers={"X-Requested-With": "resman"},
+                     json={"file": "wiki/x.md", "read": True})
+    assert rv.status_code == 404
+
+
+# ----- Window schedule (cld20 model) -----
+def test_window_schedule_get_defaults(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().get("/api/window/schedule")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert [w["server_start"] for w in body["windows"]] == [0, 5, 10, 15, 20]
+    assert "status" in body and "current" in body["status"]
+
+
+def test_window_schedule_put_updates(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    rv = client.put(
+        "/api/window/schedule",
+        headers={"X-Requested-With": "resman"},
+        json={"windows": [
+            {"server_start": 9, "night_window": False},
+            {"server_start": 22, "night_window": True},
+        ], "weekly_anchor": {"weekday": 0, "hour": 9}},
+    )
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert [w["server_start"] for w in body["windows"]] == [9, 22]
+    assert body["windows"][1]["night_window"] is True
+
+
+def test_window_schedule_put_validates(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().put(
+        "/api/window/schedule",
+        headers={"X-Requested-With": "resman"},
+        json={"windows": [{"server_start": 99, "night_window": False}]},
+    )
+    assert rv.status_code == 400
+
+
+def test_window_schedule_put_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().put("/api/window/schedule", json={"operator_hour_offset": 1})
+    assert rv.status_code == 403
+
+
+def test_window_next_night(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    client.put("/api/window/schedule",
+               headers={"X-Requested-With": "resman"},
+               json={"windows": [{"server_start": 1, "night_window": True}]})
+    rv = client.get("/api/window/next-night")
+    assert rv.status_code == 200
+    assert rv.get_json()["at"] is not None
+
+
+def test_window_sync_stamps_state(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().post(
+        "/api/window/sync", headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 200
+    body = rv.get_json()
+    # The sync stamps synced_at and returns the full state (status + log).
+    assert body["status"]["usage"]["synced_at"] is not None
+    assert any("manual sync" in e["message"] for e in body["log"])
+
+
+def test_window_sync_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().post("/api/window/sync")
+    assert rv.status_code == 403
+
+
+# ----- Activity log -----
+def test_logs_get_returns_entries(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["activity"].record("hello from test", source="test")
+    rv = app.test_client().get("/api/logs")
+    assert rv.status_code == 200
+    msgs = [e["message"] for e in rv.get_json()["entries"]]
+    assert "hello from test" in msgs
+
+
+def test_logs_level_filter(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["activity"].record("an info", level="info")
+    ctx["activity"].record("an error", level="error")
+    rv = app.test_client().get("/api/logs?level=error")
+    msgs = [e["message"] for e in rv.get_json()["entries"]]
+    assert "an error" in msgs and "an info" not in msgs
+
+
+def test_logs_clear(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["activity"].record("doomed")
+    rv = app.test_client().post("/api/logs/clear", headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 200
+    msgs = [e["message"] for e in app.test_client().get("/api/logs").get_json()["entries"]]
+    assert "doomed" not in msgs
+
+
+def test_logs_clear_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    assert app.test_client().post("/api/logs/clear").status_code == 403
+
+
+def test_window_sync_writes_activity_log(tmp_path):
+    # The ⟳ sync button must leave a trail in the activity log (start + result).
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    client.post("/api/window/sync", headers={"X-Requested-With": "resman"})
+    msgs = [e["message"] for e in client.get("/api/logs").get_json()["entries"]]
+    assert any("window limit sync started" in m for m in msgs)
+    assert any("window limit sync" in m and "started" not in m for m in msgs)
+
+
+def test_task_create_writes_activity_log(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    client.post(
+        "/api/tasks",
+        headers={"X-Requested-With": "resman"},
+        json={"vault": "alpha", "operation": "wiki-lint", "priority": "high"},
+    )
+    msgs = [e["message"] for e in client.get("/api/logs").get_json()["entries"]]
+    assert any("task queued" in m for m in msgs)

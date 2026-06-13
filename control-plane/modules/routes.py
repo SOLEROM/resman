@@ -14,6 +14,8 @@ from typing import Any
 from flask import Blueprint, current_app, jsonify, request
 
 from . import plugin_commands
+from . import wiki_unread
+from . import window_schedule as window_schedule_mod
 from .config_manager import ConfigError, VAULT_NAME_RE
 
 log = logging.getLogger(__name__)
@@ -33,6 +35,15 @@ def _csrf_required(view):
 
 def _ctx() -> dict:
     return current_app.config["RESMAN"]
+
+
+def _activity(message: str, *, level: str = "info", source: str = "app",
+              detail: str | None = None) -> None:
+    """Emit an activity-log entry on the bus (no-op if the bus is absent)."""
+    bus = _ctx().get("bus")
+    if bus:
+        bus.emit("activity", {"level": level, "source": source,
+                              "message": message, "detail": detail})
 
 
 # ----- Filesystem browser (read-only, used by the new-vault picker) -----
@@ -136,7 +147,9 @@ def register_vault():
     try:
         cm.add_vault(name, path, tags=tags)
     except ConfigError as exc:
+        _activity(f"vault register failed: {name} — {exc}", level="warn", source="vault")
         return jsonify({"error": str(exc)}), 400
+    _activity(f"vault registered: {name}", source="vault", detail=path)
     return jsonify({"ok": True, "name": name})
 
 
@@ -176,12 +189,16 @@ def scaffold_vault():
         log.exception("scaffold subprocess failed")
         return jsonify({"error": str(exc)}), 500
     if result.returncode != 0:
+        _activity(f"vault scaffold failed: {name} (exit {result.returncode})",
+                  level="error", source="vault",
+                  detail=(result.stderr or "").strip())
         return jsonify({
             "error": "new-vault.sh failed",
             "exit_code": result.returncode,
             "stderr": (result.stderr or "").strip(),
             "stdout": (result.stdout or "").strip(),
         }), 500
+    _activity(f"vault scaffolded: {name}", source="vault", detail=str(target))
     return jsonify({
         "ok": True,
         "path": str(target),
@@ -312,13 +329,17 @@ def vault_wiki(name):
     return jsonify({"file": rel, "content": content})
 
 
-def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path(".")) -> list[dict]:
+def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path("."),
+                     unread: set[str] | None = None) -> list[dict]:
     """Walk <vault>/wiki/ recursively, returning sorted dirs + .md files.
 
     Paths in the response are relative to the vault root (so the SPA can pass
     them straight to GET /api/vaults/<name>/wiki?file=…). Hidden entries and
-    symlinks are skipped.
+    symlinks are skipped. ``unread`` is the set of wiki-relative page paths
+    (e.g. ``concepts/gguf.md``) that carry an unread marker — each file node
+    gets an ``unread`` flag the sidebar uses to render its indicator.
     """
+    unread = unread or set()
     entries: list[dict] = []
     base = wiki_root / rel
     try:
@@ -337,13 +358,14 @@ def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path(".")) -
                 "type": "dir",
                 "name": child.name,
                 "path": vault_rel,
-                "children": _build_wiki_tree(wiki_root, vault_root, rel_child),
+                "children": _build_wiki_tree(wiki_root, vault_root, rel_child, unread),
             })
         elif child.is_file() and child.suffix.lower() == ".md":
             entries.append({
                 "type": "file",
                 "name": child.name,
                 "path": vault_rel,
+                "unread": rel_child.as_posix() in unread,
             })
     return entries
 
@@ -368,7 +390,79 @@ def vault_wiki_tree(name):
     wiki_root = vault_root / "wiki"
     if not wiki_root.is_dir():
         return jsonify({"missing": True, "tree": []})
-    return jsonify({"missing": False, "tree": _build_wiki_tree(wiki_root, vault_root)})
+    # Reconcile read/unread markers on every tree load so freshly rsync'd
+    # pages surface as unread (matches garage). Best-effort: a failure here
+    # must never break the tree itself.
+    try:
+        unread = wiki_unread.reconcile(wiki_root)
+    except Exception:
+        log.exception("wiki unread reconcile failed for %s", name)
+        unread = set()
+    return jsonify({
+        "missing": False,
+        "tree": _build_wiki_tree(wiki_root, vault_root, Path("."), unread),
+    })
+
+
+@bp.post("/api/vaults/<name>/wiki/read")
+@_csrf_required
+def vault_wiki_set_read(name):
+    """Toggle the read/unread marker for a wiki page.
+
+    Body: ``{file: "wiki/concepts/gguf.md", read: true|false}``. ``read:true``
+    removes the unread marker, ``read:false`` creates it. Returns the page's
+    resulting unread state.
+    """
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    body = request.get_json(force=True, silent=True) or {}
+    rel = (body.get("file") or "").strip()
+    if not rel:
+        return jsonify({"error": "file required"}), 400
+    if not rel.startswith("wiki/"):
+        return jsonify({"error": "file must be a wiki/ path"}), 400
+    read = bool(body.get("read"))
+    wiki_rel = rel[5:]
+    wiki_root = Path(v.path).resolve() / "wiki"
+    ok = (wiki_unread.mark_read(wiki_root, wiki_rel) if read
+          else wiki_unread.mark_unread(wiki_root, wiki_rel))
+    if not ok:
+        return jsonify({"error": "invalid path"}), 400
+    return jsonify({
+        "file": "wiki/" + wiki_rel,
+        "unread": wiki_unread.is_unread(wiki_root, wiki_rel),
+    })
+
+
+@bp.get("/api/vaults/<name>/wiki/random")
+def vault_wiki_random(name):
+    """Pick a random unread wiki page (reconciles first). Returns
+    ``{file: "wiki/…"}`` or ``{file: null}`` when nothing is unread."""
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    wiki_root = Path(v.path).resolve() / "wiki"
+    if not wiki_root.is_dir():
+        return jsonify({"file": None})
+    rel = wiki_unread.pick_random_unread(wiki_root)
+    return jsonify({"file": ("wiki/" + rel) if rel else None})
+
+
+@bp.get("/api/vaults/<name>/wiki/search")
+def vault_wiki_search(name):
+    """Full-text search over the vault's wiki pages (titles weighted 5×)."""
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    q = (request.args.get("q") or "").strip()
+    wiki_root = Path(v.path).resolve() / "wiki"
+    if not wiki_root.is_dir():
+        return jsonify({"query": q, "hits": []})
+    return jsonify({"query": q, "hits": wiki_unread.search(wiki_root, q)})
 
 
 # ----- Help (in-app docs from the repo's man/ tree) -----
@@ -532,7 +626,11 @@ def kill_orphan_sessions():
     if not sm.available:
         return jsonify({"killed": [], "failed": [],
                         "note": "ttyd unavailable; no sessions tracked"}), 200
-    return jsonify(sm.kill_orphaned_tmux_sessions())
+    result = sm.kill_orphaned_tmux_sessions()
+    killed, failed = len(result.get("killed", [])), len(result.get("failed", []))
+    _activity(f"killed {killed} orphan session(s)" + (f", {failed} failed" if failed else ""),
+              level="warn" if failed else "info", source="session")
+    return jsonify(result)
 
 
 @bp.post("/api/sessions")
@@ -589,7 +687,10 @@ def spawn_session():
         )
     except Exception as exc:
         log.exception("spawn session failed")
+        _activity(f"session spawn failed: {v.name} ({session_type}) — {exc}",
+                  level="error", source="session")
         return jsonify({"error": str(exc)}), 500
+    _activity(f"session spawned: {v.name} ({session_type})", source="session")
     return jsonify(s.to_dict()), 201
 
 
@@ -640,7 +741,11 @@ def create_task():
             force=bool(body.get("force")),
         )
     except ValueError as exc:
+        _activity(f"task rejected: {body.get('operation')} — {exc}",
+                  level="warn", source="task")
         return jsonify({"error": str(exc)}), 400
+    _activity(f"task queued: {t.operation} on {t.vault or 'all'} [{t.priority}]",
+              source="task", detail=t.id)
     return jsonify(t.to_dict()), 201
 
 
@@ -766,6 +871,82 @@ def set_window():
     return jsonify({"error": f"unknown action {action!r}"}), 400
 
 
+# ----- Window schedule (cld20-style daily/weekly windows) -----
+@bp.get("/api/window/schedule")
+def get_window_schedule():
+    """Return the configured windows + live status (current/next/weekly) + log."""
+    sched = _ctx().get("window_schedule")
+    if not sched:
+        return jsonify({"error": "window schedule unavailable"}), 503
+    return jsonify(sched.to_dict())
+
+
+@bp.put("/api/window/schedule")
+@_csrf_required
+def put_window_schedule():
+    """Update window-schedule parameters (windows, weekly_anchor, offset, length)."""
+    sched = _ctx().get("window_schedule")
+    if not sched:
+        return jsonify({"error": "window schedule unavailable"}), 503
+    body = request.get_json(force=True, silent=True) or {}
+    fields = {k: body[k] for k in
+              ("windows", "weekly_anchor", "operator_hour_offset", "window_length_hours",
+               "refresh_interval_minutes", "sync_interval_minutes")
+              if k in body}
+    try:
+        return jsonify(sched.update(**fields))
+    except window_schedule_mod.ScheduleError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@bp.get("/api/window/next-night")
+def get_next_night_window():
+    """ISO start of the next night window, for scheduling night-window tasks."""
+    sched = _ctx().get("window_schedule")
+    if not sched:
+        return jsonify({"error": "window schedule unavailable"}), 503
+    return jsonify({"at": sched.next_night_window_iso()})
+
+
+@bp.post("/api/window/sync")
+@_csrf_required
+def post_window_sync():
+    """Refresh window/limit state on demand (the footer ⟳ sync button)."""
+    sched = _ctx().get("window_schedule")
+    if not sched:
+        return jsonify({"error": "window schedule unavailable"}), 503
+    return jsonify(sched.sync())
+
+
+# ----- Activity log (volatile, footer "Log" window) -----
+@bp.get("/api/logs")
+def get_logs():
+    """Recent activity-log entries. Optional ?limit=&level=&source= filters."""
+    activity = _ctx().get("activity")
+    if not activity:
+        return jsonify({"entries": []})
+    try:
+        limit = int(request.args.get("limit", 300))
+    except (TypeError, ValueError):
+        limit = 300
+    entries = activity.list(
+        limit=limit,
+        level=request.args.get("level"),
+        source=request.args.get("source"),
+    )
+    return jsonify({"entries": entries})
+
+
+@bp.post("/api/logs/clear")
+@_csrf_required
+def clear_logs():
+    """Clear the activity log."""
+    activity = _ctx().get("activity")
+    if activity:
+        activity.clear()
+    return jsonify({"ok": True})
+
+
 # ----- Cron -----
 @bp.get("/api/cron")
 def list_cron():
@@ -831,5 +1012,7 @@ def save_yaml():
         else:
             cm.save_schedule_yaml(content)
     except ConfigError as exc:
+        _activity(f"config save failed: {fname} — {exc}", level="warn", source="config")
         return jsonify({"error": str(exc)}), 400
+    _activity(f"config saved: {fname}", source="config")
     return jsonify({"ok": True})

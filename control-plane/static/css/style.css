@@ -58,6 +58,35 @@
   --status-idle:    #8b949e;
 }
 
+/* Green — "phosphor" terminal palette ported from the garage reference
+   design system (frontDesign/Garage Design System). The exact hex ramp is
+   the garage green theme; mapped onto resman's variable names. */
+:root[data-theme="green"] {
+  --bg-base:      #0a0f0c;
+  --bg-surface:   #101711;
+  --bg-elevated:  #141d16;
+  --bg-hover:     #18271c;
+
+  --border:       #1d2a21;
+  --border-light: #16201a;
+
+  --text-primary:   #d6e8da;
+  --text-secondary: #7f9584;
+  --text-muted:     #4d5e51;
+
+  --accent:    #36c97a;
+  --accent-bg: #0f5c34;
+  --success:   #36c97a;
+  --warning:   #e9b97a;
+  --danger:    #ff6b66;
+  --info:      #45d8e0;
+
+  --status-running: #36c97a;
+  --status-stopped: #ff6b66;
+  --status-warn:    #e9b97a;
+  --status-idle:    #7f9584;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
 
@@ -640,6 +669,44 @@ button.ghost:hover { color: var(--text-primary); }
 .wiki-body th { background: var(--bg-surface); font-weight: 600; }
 .wiki-body hr { border: none; border-top: 1px solid var(--border-light); margin: 16px 0; }
 
+/* Collapsed metadata block at the top of a wiki/help page: folds the YAML
+   frontmatter (and any pre-heading prose) so the page leads with its first
+   heading. Default closed; click the summary to read the raw metadata. */
+.wiki-frontmatter {
+  margin: 0 0 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  background: var(--bg-surface);
+}
+.wiki-frontmatter > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 5px 12px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wiki-frontmatter > summary::-webkit-details-marker { display: none; }
+.wiki-frontmatter > summary::before {
+  content: "▸";
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+.wiki-frontmatter[open] > summary::before { transform: rotate(90deg); }
+.wiki-frontmatter[open] > summary { border-bottom: 1px solid var(--border-light); }
+.wiki-fm-body { padding: 2px 12px; }
+.wiki-fm {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+.wiki-fm-body > :last-child { margin-bottom: 0; }
+
 .wiki-error {
   padding: 14px;
   color: var(--danger);
@@ -714,9 +781,64 @@ button.ghost:hover { color: var(--text-primary); }
   background: var(--accent-bg, rgba(120,160,255,0.15));
   color: var(--accent);
   font-weight: 600;
+  /* Selection box: a clear left accent rail so the active page reads as a
+     highlighted box on the tree. */
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .wiki-tree ul ul .wiki-tree-label { padding-left: 28px; }
 .wiki-tree ul ul ul .wiki-tree-label { padding-left: 44px; }
+
+/* Read/unread indicator: a small accent dot before unread pages. Read pages
+   reserve the same space (hidden dot) so labels stay aligned. */
+.wiki-tree .wiki-unread-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-right: 6px; border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+  visibility: hidden;
+}
+.wiki-tree .wiki-file.unread > .wiki-tree-label .wiki-unread-dot { visibility: visible; }
+.wiki-tree .wiki-file.unread > .wiki-tree-label { font-weight: 600; }
+/* A folder with unread descendants gets a faint accent dot on its name. */
+.wiki-tree .wiki-dir.has-unread > .wiki-tree-label::after {
+  content: "";
+  display: inline-block;
+  width: 5px; height: 5px; margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.55;
+  vertical-align: middle;
+}
+
+/* ---------- Wiki search ---------- */
+.wiki-search {
+  width: 180px;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font: inherit; font-size: 12px;
+}
+.wiki-search:focus { outline: none; border-color: var(--accent); }
+.wiki-search-results { padding: 8px 4px; }
+.wiki-search-hit {
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.wiki-search-hit:hover { background: var(--bg-elevated); border-color: var(--border); }
+.wiki-search-hit .hit-title { color: var(--accent); font-weight: 600; }
+.wiki-search-hit .hit-path { color: var(--text-muted); font-size: 11px; font-family: ui-monospace, monospace; }
+.wiki-search-hit .hit-snippet { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+.wiki-search-hit .hit-snippet mark {
+  background: var(--accent-bg); color: var(--text-primary);
+  border-radius: 2px; padding: 0 1px;
+}
 
 /* Wikilinks rendered from [[Page]] / [[Page|alias]]. Dashed underline so they
    are visually distinct from regular markdown links. Missing link target is
@@ -844,22 +966,177 @@ button.ghost:hover { color: var(--text-primary); }
 .status-dot.connected    { background: var(--status-running); }
 .status-dot.disconnected { background: var(--status-stopped); }
 
-#window-label { color: var(--text-primary); font-weight: 500; }
-#window-time { color: var(--text-secondary); }
-
-/* ---------- Theme toggle ---------- */
-.theme-toggle {
-  background: transparent; color: var(--text-secondary);
-  border: 1px solid var(--border);
-  width: 28px; height: 26px; border-radius: 4px;
-  cursor: pointer; padding: 0; font: inherit;
-  display: inline-flex; align-items: center; justify-content: center;
+/* ---------- Footer usage meters (window = green, week = blue) ---------- */
+/* Each meter: a colored bar whose fill tracks *time* elapsed, the time % printed
+   after it, and the *limit* used overlaid inside the bar ("?" until metered). */
+.status-sep { color: var(--text-muted); }
+.meter {
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
 }
-.theme-toggle:hover { color: var(--text-primary); background: var(--bg-hover); }
-.theme-toggle .icon-sun  { display: none; }
-.theme-toggle .icon-moon { display: inline; }
-:root[data-theme="light"] .theme-toggle .icon-sun  { display: inline; }
-:root[data-theme="light"] .theme-toggle .icon-moon { display: none; }
+.meter-label {
+  color: var(--text-secondary); font-size: 11px;
+  min-width: 38px;
+}
+.meter-bar {
+  position: relative;
+  display: inline-block;
+  width: 120px; height: 15px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 4px; overflow: hidden;
+  vertical-align: middle;
+}
+.meter-fill {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 0%;
+  transition: width .3s ease;
+  opacity: .85;
+}
+.meter-window .meter-fill { background: var(--success); }
+.meter-week   .meter-fill { background: var(--info); }
+.meter-inside {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 600;
+  color: var(--text-primary);
+  text-shadow: 0 0 3px var(--bg-surface), 0 0 3px var(--bg-surface);
+  pointer-events: none;
+}
+.meter-after {  /* the limit-used % — the headline number, so emphasise it */
+  color: var(--text-primary); font-weight: 600; font-size: 11px;
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+}
+.meter-sync {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 4px; cursor: pointer;
+  width: 22px; height: 20px; padding: 0;
+  font-size: 13px; line-height: 1;
+}
+.meter-sync:hover { color: var(--text-primary); border-color: var(--accent); }
+.meter-sync:disabled { opacity: .5; cursor: default; }
+.meter-sync.spinning { animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Footer "Log" button (lower right) ---------- */
+.status-log-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 4px; cursor: pointer;
+  height: 22px; padding: 0 8px;
+  font-size: 11px; font-family: inherit; line-height: 1;
+}
+.status-log-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+.log-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--warning); flex-shrink: 0;
+}
+.log-dot.error { background: var(--danger); }
+
+/* ---------- Activity log window ---------- */
+.log-window { display: flex; flex-direction: column; min-height: 0; }
+.log-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 8px;
+}
+.log-toolbar .spacer { flex: 1; }
+.log-filter { display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-secondary); font-size: 12px; }
+.log-filter select { width: auto; }
+.log-list {
+  height: 50vh; min-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-base);
+  padding: 4px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 64px 46px 78px 1fr;
+  gap: 8px;
+  padding: 2px 12px;
+  align-items: baseline;
+  border-left: 2px solid transparent;
+}
+.log-row:hover { background: var(--bg-hover); }
+.log-time   { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.log-level  { text-transform: uppercase; font-size: 10px; font-weight: 700; }
+.log-source { color: var(--text-secondary); }
+.log-msg    { color: var(--text-primary); word-break: break-word; }
+.log-detail { display: block; color: var(--text-muted); font-size: 11px; }
+.log-info  .log-level { color: var(--info); }
+.log-debug .log-level { color: var(--text-muted); }
+.log-warn  { border-left-color: var(--warning); }
+.log-warn  .log-level { color: var(--warning); }
+.log-error { border-left-color: var(--danger); background: rgba(248, 81, 73, 0.06); }
+.log-error .log-level { color: var(--danger); }
+.log-empty { padding: 18px; text-align: center; }
+
+/* ---------- Window management modal ---------- */
+.wc-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.wc-anchor { display: flex; align-items: center; gap: 8px; }
+.wc-anchor select { width: auto; }
+.wc-windows-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 6px 0;
+}
+.wc-window-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.wc-window-row .wc-start { width: 70px; }
+.wc-window-row label { margin: 0; }
+.wc-night { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.wc-night input { width: auto; }
+.wc-remove { margin-left: auto; }
+.wc-section { margin-top: 16px; }
+.wc-section > strong { display: block; margin-bottom: 6px; }
+.wc-check {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 3px 0; font-size: 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+.wc-check > span:first-child { color: var(--text-secondary); }
+.wc-log-row { font-size: 12px; padding: 2px 0; }
+.wc-manual-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+
+/* Task-trigger "When" window picker */
+.when-select { min-width: 240px; }
+
+/* ---------- Theme switch (3-way segmented control) ----------
+   Ported from the garage reference: green ● / dark ◐ / light ○. The
+   active segment fills with the accent colour. */
+.theme-switch {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-base); padding: 2px; gap: 2px;
+}
+.theme-switch button {
+  background: transparent; color: var(--text-secondary);
+  border: none; border-radius: 999px;
+  width: 24px; height: 22px; padding: 0; font: inherit; font-size: 12px;
+  cursor: pointer; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color .1s, background .1s;
+}
+.theme-switch button:hover { color: var(--text-primary); }
+.theme-switch button.active {
+  background: var(--accent); color: var(--bg-base);
+}
 
 /* ---------- Dropdown ---------- */
 .dropdown { position: relative; }

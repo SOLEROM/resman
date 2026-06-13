@@ -11,8 +11,13 @@ inside each vault. The convention is:
 ```
 
 resman opens `wiki/overview.md` for the currently selected vault when the tab
-is shown. The toolbar exposes three explicit page buttons plus a reload:
+is shown. The toolbar exposes search, random, a read toggle, three explicit
+page buttons, plus a reload:
 
+- **Search wiki…** — type a query and press Enter to search every page
+  (titles weigh more than body text). Clearing the box restores the page.
+- **Random** — jump to a random **unread** page (see Read/unread below).
+- **Mark read ✓ / Mark unread** — toggle the open page's read state.
 - **Hot** — loads `wiki/hot.md`
 - **Index** — loads `wiki/index.md`
 - **Overview** — loads `wiki/overview.md`
@@ -21,17 +26,32 @@ is shown. The toolbar exposes three explicit page buttons plus a reload:
 ## Sidebar page tree
 
 The Wiki tab has a **left sidebar** listing every markdown page under
-`<vault>/wiki/` (recursively). Click a page to load it. The active page is
-highlighted. Subdirectories nest under their parent. Click the sidebar's
-**↻** to refresh the tree without reloading the current page.
+`<vault>/wiki/` (recursively). Click a page to load it — the selected page is
+highlighted with an accent box and scrolled into view. Subdirectories nest
+under their parent. Click the sidebar's **↻** to refresh the tree.
+
+## Read / unread
+
+resman tracks which pages you've read. **Unread** pages show an accent dot in
+the tree; folders containing unread pages show a faint dot. Read state is
+stored as tiny sidecar marker files next to each page (`.<page>.unrd`), so it
+survives the rsync that mirrors wiki pages between machines.
+
+- Opening a page does **not** mark it read — use **Mark read ✓** to do that
+  explicitly (and **Mark unread** to flip it back).
+- New or freshly-synced pages show up as unread automatically.
+- **Random** picks a random unread page so you can chip away at the backlog.
 
 ## API
 
-The browser fetches two endpoints:
+The browser fetches these endpoints:
 
 ```
-GET /api/vaults/<name>/wiki/tree            ← the sidebar tree
-GET /api/vaults/<name>/wiki?file=…          ← a single page's markdown
+GET  /api/vaults/<name>/wiki/tree            ← sidebar tree (each file has `unread`)
+GET  /api/vaults/<name>/wiki?file=…          ← a single page's markdown
+POST /api/vaults/<name>/wiki/read            ← { file, read } toggle read/unread
+GET  /api/vaults/<name>/wiki/random          ← a random unread page
+GET  /api/vaults/<name>/wiki/search?q=…      ← ranked search hits
 ```
 
 Path traversal is blocked server-side — the resolved file must live under the

@@ -23,7 +23,16 @@ const state = {
   // project has its own UI state. Persisted to localStorage so it
   // survives reload. Help is not remembered (vault-independent).
   lastPanelByVault: loadLastPanelByVault(),
+  // Volatile activity log — a client mirror of the server's /tmp log, fed by
+  // the "activity_logged" socket event. `logOpen` tracks the window; `logFilter`
+  // is the current minimum level; `logUnseenError` lights the footer dot.
+  activityLog: [],
+  logOpen: false,
+  logFilter: "",
+  logUnseenError: false,
 };
+
+const ACTIVITY_LOG_MAX = 2000;
 
 function loadTabLabels() {
   try {
@@ -204,6 +213,9 @@ function selectVault(name) {
   }
   renderVaultList();
   renderVaultContext();
+  // History is per-vault — drop the previous vault's trail before landing.
+  state.wikiHistory = [];
+  state.wikiHistoryIdx = -1;
   loadWikiTree();
   loadWiki(WIKI_HOME);
   renderTasks();
@@ -813,6 +825,27 @@ function renderTriggerForm(forceVault) {
     oSel.innerHTML = renderOpOptions();
   }
   renderOpFields();
+  renderTriggerWindowOptions();
+}
+
+// Populate the "When" picker with the upcoming windows from the schedule, so a
+// task can be aimed at a specific window (or "run now"). A still-valid prior
+// selection is preserved across rebuilds (the list refreshes as countdowns tick).
+function renderTriggerWindowOptions() {
+  const sel = $("#t-window");
+  if (!sel) return;
+  const prev = sel.value;
+  const up = (state.windowSchedule && state.windowSchedule.status
+              && state.windowSchedule.status.upcoming) || [];
+  const opts = [`<option value="">run now</option>`];
+  for (const w of up) {
+    const label = `Window ${w.index}/${w.count} · ${clockOf(w.start)}`
+      + (w.night ? " 🌙" : "")
+      + ` · in ${fmtCountdown(w.seconds_until_start)}`;
+    opts.push(`<option value="${esc(w.start)}">${esc(label)}</option>`);
+  }
+  sel.innerHTML = opts.join("");
+  if (prev && up.some((w) => w.start === prev)) sel.value = prev;
 }
 
 function renderOpOptions(selected) {
@@ -889,7 +922,7 @@ function prefillTrigger(orig) {
   const vSel = $("#t-vault");
   const oSel = $("#t-op");
   const priSel = $("#t-pri");
-  const whenInput = $("#t-when");
+  const whenSel = $("#t-window");
   if (orig.vault === "ALL") {
     if (allEl) allEl.checked = true;
     if (vSel) vSel.disabled = true;
@@ -899,7 +932,7 @@ function prefillTrigger(orig) {
   }
   if (oSel) oSel.value = orig.operation;
   if (priSel) priSel.value = orig.priority;
-  if (whenInput) whenInput.value = "";  // re-run defaults to run-now
+  if (whenSel) whenSel.value = "";  // re-run defaults to run-now
   renderOpFields(orig.params || {});
   const trigger = $("#task-trigger");
   if (trigger) trigger.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -926,14 +959,13 @@ async function submitTriggerForm() {
   }
 
   let scheduled_for = null;
-  const whenRaw = $("#t-when").value;
+  const whenSel = $("#t-window");
+  const whenRaw = whenSel ? whenSel.value : "";
   if (whenRaw) {
+    // Value is the chosen window's naive-local start ISO → convert to UTC.
     const dt = new Date(whenRaw);
     if (isNaN(dt.getTime())) {
-      errEl.textContent = "Invalid datetime."; return;
-    }
-    if (dt.getTime() <= Date.now()) {
-      errEl.textContent = "Scheduled time must be in the future."; return;
+      errEl.textContent = "Invalid window selection."; return;
     }
     if (allChecked) {
       errEl.textContent = "Scheduling all-vault tasks is not supported yet."; return;
@@ -954,7 +986,7 @@ async function submitTriggerForm() {
 
   try {
     await api("/api/tasks", { method: "POST", body: JSON.stringify(body) });
-    if ($("#t-when")) $("#t-when").value = "";
+    if (whenSel) whenSel.value = "";
     await loadTasks();
   } catch (err) {
     errEl.textContent = "Create failed: " + (err.body?.error || err.message);
@@ -966,6 +998,17 @@ const WIKI_HOME = "wiki/overview.md";
 state.wikiFile = WIKI_HOME;
 state.wikiTree = null;
 state.wikiTreeMissing = false;
+// Vault-relative paths (e.g. "wiki/concepts/gguf.md") that are currently
+// unread, derived from the tree response. Drives the tree dots + read toggle.
+state.wikiUnread = new Set();
+
+// Browser-style back/forward history of visited pages, scoped to the current
+// vault (reset on vault switch). wikiHistory is the ordered list of files;
+// wikiHistoryIdx points at the page currently shown. Navigating to a new page
+// truncates anything ahead of the pointer (same as a browser); the Back/Forward
+// buttons just walk the pointer without recording a new entry.
+state.wikiHistory = [];
+state.wikiHistoryIdx = -1;
 
 // Rewrite Obsidian wikilinks ([[Page]] or [[Page|alias]]) to inline anchors
 // before marked.parse() runs. We emit a plain <a class="wikilink"> with the
@@ -980,6 +1023,41 @@ function rewriteWikilinks(md) {
     const a = (alias || target || "").trim();
     return `<a href="#" class="wikilink" data-wiki-target="${esc(t)}">${esc(a)}</a>`;
   });
+}
+
+// Render a markdown page, folding its leading metadata into a collapsed
+// <details> so the page leads with its first heading instead of a wall of
+// `key: value` frontmatter lines. "Metadata" means the YAML frontmatter block
+// (--- ... ---) plus any stray prose that sits before the first heading. We
+// detect the frontmatter first, then look for the heading in what's left, so a
+// `# comment` line inside the YAML can't be mistaken for the heading. Pages
+// with no frontmatter and no pre-heading prose render straight through.
+// `wikilinks` toggles Obsidian [[link]] rewriting (on for the wiki, off for
+// help/man pages, matching the previous per-call behaviour).
+function renderWikiMarkdown(raw, { wikilinks = true } = {}) {
+  const text = raw || "";
+  const render = (s) =>
+    window.marked.parse(wikilinks ? rewriteWikilinks(s) : s, { breaks: true });
+
+  const fm = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
+  const afterFm = fm ? text.slice(fm[0].length) : text;
+  const headingIdx = afterFm.search(/^#{1,6}\s/m);
+
+  // Pre-heading prose only exists (and only folds) when a heading follows it;
+  // with no heading the remainder is the body and stays visible.
+  const preProse = headingIdx > 0 ? afterFm.slice(0, headingIdx) : "";
+  const body = headingIdx > 0 ? afterFm.slice(headingIdx) : afterFm;
+
+  const foldProse = preProse.trim();
+  if (!fm && !foldProse) return render(body);
+
+  let head = "";
+  if (fm) head += `<pre class="wiki-fm">${esc(fm[1])}</pre>`;
+  if (foldProse) head += render(preProse);
+
+  return `<details class="wiki-frontmatter"><summary>metadata</summary>`
+       + `<div class="wiki-fm-body">${head}</div></details>`
+       + render(body);
 }
 
 // Resolve a wikilink target ("Foo Bar" or "subdir/Foo") to a vault-relative
@@ -1029,18 +1107,32 @@ function renderWikiTree() {
     root.innerHTML = `<p class="muted" style="padding:8px 12px">Empty.</p>`;
     return;
   }
+  const fileUnread = (n) => state.wikiUnread.has(n.path);
+  const dirHasUnread = (n) => {
+    let any = false;
+    const walk = (ns) => ns.forEach((c) => {
+      if (any) return;
+      if (c.type === "file") { if (fileUnread(c)) any = true; }
+      else if (c.children) walk(c.children);
+    });
+    walk(n.children || []);
+    return any;
+  };
   const renderNodes = (nodes) => {
     return `<ul>` + nodes.map((n) => {
       if (n.type === "dir") {
-        return `<li class="wiki-dir">
+        const u = dirHasUnread(n) ? "has-unread" : "";
+        return `<li class="wiki-dir ${u}">
           <span class="wiki-tree-label">${esc(n.name)}/</span>
           ${renderNodes(n.children || [])}
         </li>`;
       }
       const label = n.name.replace(/\.md$/, "");
       const isActive = n.path === state.wikiFile;
-      return `<li class="wiki-file ${isActive ? "active" : ""}">
-        <span class="wiki-tree-label" data-path="${esc(n.path)}" title="${esc(n.path)}">${esc(label)}</span>
+      const unread = fileUnread(n) ? "unread" : "";
+      return `<li class="wiki-file ${isActive ? "active" : ""} ${unread}">
+        <span class="wiki-tree-label" data-path="${esc(n.path)}" title="${esc(n.path)}"
+              ><span class="wiki-unread-dot" aria-hidden="true"></span>${esc(label)}</span>
       </li>`;
     }).join("") + `</ul>`;
   };
@@ -1048,6 +1140,9 @@ function renderWikiTree() {
   root.querySelectorAll(".wiki-file > .wiki-tree-label").forEach((el) => {
     el.addEventListener("click", () => loadWiki(el.dataset.path));
   });
+  // Keep the selected page visible in the sidebar after a jump.
+  const activeEl = root.querySelector(".wiki-file.active");
+  if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
 }
 
 async function loadWikiTree() {
@@ -1061,17 +1156,62 @@ async function loadWikiTree() {
     const data = await api("/api/vaults/" + encodeURIComponent(state.selectedVault) + "/wiki/tree");
     state.wikiTree = data.tree || [];
     state.wikiTreeMissing = !!data.missing;
+    rebuildWikiUnread();
   } catch (err) {
     state.wikiTree = [];
     state.wikiTreeMissing = false;
+    state.wikiUnread = new Set();
     const root = $("#wiki-tree-list");
     if (root) root.innerHTML = `<p class="wiki-error" style="padding:8px 12px">${esc(err.message)}</p>`;
     return;
   }
   renderWikiTree();
+  updateReadToggle();
 }
 
-async function loadWiki(file) {
+// Recompute the unread set from the cached tree (each file node carries an
+// `unread` flag the backend set during reconcile).
+function rebuildWikiUnread() {
+  const set = new Set();
+  const walk = (nodes) => (nodes || []).forEach((n) => {
+    if (n.type === "file") { if (n.unread) set.add(n.path); }
+    else if (n.children) walk(n.children);
+  });
+  walk(state.wikiTree || []);
+  state.wikiUnread = set;
+}
+
+// Record a freshly-navigated page onto the history stack. No-op reloads (the
+// refresh button, restoring after a cleared search) land on the same file as
+// the current pointer and are collapsed so Back doesn't bounce in place.
+function pushWikiHistory(file) {
+  if (!file) return;
+  if (state.wikiHistory[state.wikiHistoryIdx] === file) return;
+  state.wikiHistory = state.wikiHistory.slice(0, state.wikiHistoryIdx + 1);
+  state.wikiHistory.push(file);
+  state.wikiHistoryIdx = state.wikiHistory.length - 1;
+}
+
+// Walk the history pointer by delta (-1 = Back, +1 = Forward) and load the
+// page there without re-recording it. Out-of-range deltas are ignored.
+function goWikiHistory(delta) {
+  const idx = state.wikiHistoryIdx + delta;
+  if (idx < 0 || idx >= state.wikiHistory.length) return;
+  state.wikiHistoryIdx = idx;
+  loadWiki(state.wikiHistory[idx], { fromHistory: true });
+}
+
+// Enable/disable the Back/Forward buttons to reflect where the pointer sits.
+function updateWikiNavButtons() {
+  const back = $("#btn-wiki-back");
+  const fwd = $("#btn-wiki-fwd");
+  if (back) back.disabled = state.wikiHistoryIdx <= 0;
+  if (fwd) fwd.disabled = state.wikiHistoryIdx >= state.wikiHistory.length - 1;
+}
+
+// opts.fromHistory: true when invoked by the Back/Forward buttons, so the
+// page isn't re-recorded into history (which would defeat the navigation).
+async function loadWiki(file, opts = {}) {
   const ctxEl = $("#wiki-context");
   const fileEl = $("#wiki-file");
   const root = $("#wiki-content");
@@ -1084,8 +1224,11 @@ async function loadWiki(file) {
     if (fileEl) fileEl.textContent = "";
     root.innerHTML = `<p class="muted">Select a vault to view its wiki.</p>`;
     renderWikiTree();
+    updateWikiNavButtons();
     return;
   }
+  if (!opts.fromHistory) pushWikiHistory(state.wikiFile);
+  updateWikiNavButtons();
   if (ctxEl) {
     ctxEl.textContent = state.selectedVault;
     ctxEl.classList.remove("empty");
@@ -1093,6 +1236,7 @@ async function loadWiki(file) {
   if (fileEl) fileEl.textContent = state.wikiFile;
   root.innerHTML = `<p class="muted">Loading…</p>`;
   renderWikiTree();
+  updateReadToggle();
   const url = "/api/vaults/" + encodeURIComponent(state.selectedVault)
             + "/wiki?file=" + encodeURIComponent(state.wikiFile);
   let data;
@@ -1117,8 +1261,120 @@ async function loadWiki(file) {
     root.innerHTML = `<pre>${esc(data.content || "")}</pre>`;
     return;
   }
-  const html = window.marked.parse(rewriteWikilinks(data.content || ""), { breaks: true });
-  root.innerHTML = html;
+  root.innerHTML = renderWikiMarkdown(data.content || "", { wikilinks: true });
+}
+
+// ----- wiki read/unread + random + search -----
+// Reading a page does NOT auto-mark it read (matches the garage reference);
+// the user toggles state explicitly via this button.
+function updateReadToggle() {
+  const btn = $("#btn-wiki-read");
+  if (!btn) return;
+  if (!state.selectedVault || !state.wikiFile || state.wikiTreeMissing) {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  const unread = state.wikiUnread.has(state.wikiFile);
+  btn.textContent = unread ? "Mark read ✓" : "Mark unread";
+  btn.title = unread ? "Mark this page as read" : "Mark this page as unread";
+  btn.classList.toggle("btn-accent", unread);
+}
+
+async function toggleReadCurrent() {
+  if (!state.selectedVault || !state.wikiFile) return;
+  // If the page is currently unread, the action marks it read (and vice versa).
+  const read = state.wikiUnread.has(state.wikiFile);
+  try {
+    const r = await api("/api/vaults/" + encodeURIComponent(state.selectedVault) + "/wiki/read", {
+      method: "POST",
+      body: JSON.stringify({ file: state.wikiFile, read }),
+    });
+    if (r.unread) state.wikiUnread.add(state.wikiFile);
+    else state.wikiUnread.delete(state.wikiFile);
+    renderWikiTree();
+    updateReadToggle();
+  } catch (err) {
+    alert("Could not update read state: " + (err.body?.error || err.message));
+  }
+}
+
+async function loadRandomWiki() {
+  if (!state.selectedVault) { alert("Select a vault first."); return; }
+  try {
+    const r = await api("/api/vaults/" + encodeURIComponent(state.selectedVault) + "/wiki/random");
+    if (!r.file) {
+      alert("Nothing unread — every wiki page is marked read.");
+      return;
+    }
+    // The random endpoint reconciles server-side, so reload the tree to pick
+    // up any newly-flagged pages before jumping to the chosen one.
+    await loadWikiTree();
+    loadWiki(r.file);
+  } catch (err) {
+    alert("Random page failed: " + (err.body?.error || err.message));
+  }
+}
+
+async function doWikiSearch(q) {
+  q = (q || "").trim();
+  if (!state.selectedVault) return;
+  if (!q) { loadWiki(state.wikiFile); return; }  // cleared box restores the page
+  const root = $("#wiki-content");
+  root.innerHTML = `<p class="muted">Searching…</p>`;
+  let data;
+  try {
+    data = await api("/api/vaults/" + encodeURIComponent(state.selectedVault)
+                     + "/wiki/search?q=" + encodeURIComponent(q));
+  } catch (err) {
+    root.innerHTML = `<div class="wiki-error">${esc(err.message)}</div>`;
+    return;
+  }
+  renderWikiSearchResults(data);
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Build the snippet HTML entirely on the client: escape the plain server text
+// first, then wrap matched query tokens in <mark>. The only HTML introduced is
+// the <mark> we add, so there is no path for server text to become markup.
+function highlightSnippet(text, query) {
+  let out = esc(text || "");
+  const tokens = (query || "").toLowerCase().split(/\s+/)
+    .filter((t) => t.length >= 2)
+    .sort((a, b) => b.length - a.length);
+  for (const t of tokens) {
+    out = out.replace(new RegExp("(" + escapeRegExp(esc(t)) + ")", "ig"), "<mark>$1</mark>");
+  }
+  return out;
+}
+
+function renderWikiSearchResults(data) {
+  const root = $("#wiki-content");
+  const hits = data.hits || [];
+  if (!hits.length) {
+    root.innerHTML = `<div class="wiki-search-results">
+      <p class="muted">No matches for “${esc(data.query)}”.</p></div>`;
+    return;
+  }
+  root.innerHTML = `<div class="wiki-search-results">
+    <p class="muted">${hits.length} result${hits.length === 1 ? "" : "s"} for “${esc(data.query)}”</p>
+    ${hits.map((h) => `
+      <div class="wiki-search-hit" data-path="${esc(h.file)}">
+        <div class="hit-title">${esc(h.title)}</div>
+        <div class="hit-path">${esc(h.rel)}</div>
+        <div class="hit-snippet">${highlightSnippet(h.snippet, data.query)}</div>
+      </div>`).join("")}
+  </div>`;
+  root.querySelectorAll(".wiki-search-hit").forEach((el) => {
+    el.addEventListener("click", () => {
+      const search = $("#wiki-search");
+      if (search) search.value = "";
+      loadWiki(el.dataset.path);
+    });
+  });
 }
 
 // ----- help (in-app docs from man/) -----
@@ -1202,7 +1458,7 @@ async function loadHelpPage(file) {
     content.innerHTML = `<pre>${esc(data.content || "")}</pre>`;
     return;
   }
-  content.innerHTML = window.marked.parse(data.content || "", { breaks: true });
+  content.innerHTML = renderWikiMarkdown(data.content || "", { wikilinks: false });
   // In-page links to other .md files re-route through the help tree rather
   // than navigate the browser away from the SPA.
   content.querySelectorAll("a[href]").forEach((a) => {
@@ -1340,34 +1596,34 @@ async function loadWindow() {
   renderWindow();
 }
 
+// The manual window gate (active/between/ended) no longer lives in the footer —
+// the schedule line shows window status there. The gate's state + controls live
+// in the ⊞ Windows modal (renderManualGate). renderWindow just keeps the
+// status-bar class in sync and refreshes the modal section if it's open.
 function renderWindow() {
-  const w = state.window;
+  const w = state.window || {};
   const bar = $("#status-bar");
-  bar.classList.remove("active", "between", "ended");
-  bar.classList.add(w.window_state || "between");
-  let label = "Window: " + (w.window_state || "between").toUpperCase();
-  let time = "";
-  let overrun = false;
-  if (w.window_state === "active" && w.window_ends_at) {
-    const ends = new Date(w.window_ends_at);
-    const now = new Date();
-    const diffSec = Math.floor((ends - now) / 1000);
-    if (diffSec > 0) {
-      const h = Math.floor(diffSec / 3600);
-      const m = Math.floor((diffSec % 3600) / 60);
-      time = `ends in ${h}h ${m}m`;
-    } else {
-      const overSec = -diffSec;
-      const oh = Math.floor(overSec / 3600);
-      const om = Math.floor((overSec % 3600) / 60);
-      time = `overrun by ${oh}h ${om}m`;
-      overrun = true;
-    }
+  if (bar) {
+    bar.classList.remove("active", "between", "ended");
+    bar.classList.add(w.window_state || "between");
   }
-  $("#window-label").textContent = label;
-  $("#window-time").textContent = time;
-  const overBtn = $("#btn-window-overrun");
-  if (overBtn) overBtn.hidden = !overrun;
+  renderManualGate();
+}
+
+function renderManualGate() {
+  const root = $("#wc-manual");
+  if (!root) return;  // modal not open
+  const w = state.window || {};
+  const st = (w.window_state || "between").toUpperCase();
+  let detail = "";
+  if (w.window_state === "active" && w.window_ends_at) {
+    const diffSec = Math.floor((new Date(w.window_ends_at) - new Date()) / 1000);
+    detail = diffSec > 0
+      ? ` · ends in ${fmtCountdown(diffSec)}`
+      : ` · overrun by ${fmtCountdown(-diffSec)}`;
+  }
+  root.innerHTML =
+    `<div class="wc-check"><span>Manual gate</span><span>${esc(st)}${esc(detail)}</span></div>`;
 }
 
 async function windowAction(action) {
@@ -1381,9 +1637,472 @@ async function windowAction(action) {
     const w = await api("/api/window", { method: "POST", body: JSON.stringify(payload) });
     state.window = w;
     renderWindow();
+    renderManualGate();
     await loadTasks();
   } catch (err) {
     alert("Window action failed: " + err.message);
+  }
+}
+
+// ----- window schedule (cld20-style daily/weekly windows) -----
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday",
+                       "Friday", "Saturday", "Sunday"];
+
+function fmtCountdown(sec) {
+  if (sec == null) return "";
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${sec}s`;
+}
+
+// Window timestamps are naive server-local ISO ("YYYY-MM-DDTHH:MM:SS").
+function clockOf(iso) {
+  const m = /T(\d{2}:\d{2})/.exec(iso || "");
+  return m ? m[1] : "";
+}
+
+async function loadWindowSchedule() {
+  try {
+    state.windowSchedule = await api("/api/window/schedule");
+  } catch (_) {
+    return;
+  }
+  renderWindowSchedule();
+  renderTriggerWindowOptions();  // keep the task "When" picker in sync
+}
+
+// The footer shows two meters — the local window (green) and the weekly cycle
+// (blue). For each, the bar fills with the *time* elapsed and that same time %
+// is shown INSIDE the bar; the number AFTER the bar is the *limit* used
+// (session / weekly utilization from claude.ai), or "?" until synced.
+function renderWindowSchedule() {
+  const sched = state.windowSchedule;
+  const st = sched && sched.status;
+  const usage = (st && st.usage) || {};
+  // --- Window meter (green): fill + inside = window time; after = session limit. ---
+  const wlabel = $("#window-meter-label"), wfill = $("#window-bar-fill"),
+        wtime = $("#window-time"), wmeter = $("#meter-window");
+  if (wlabel && wfill && wtime) {
+    const c = st && st.current;
+    const pct = c ? Math.round((c.fraction || 0) * 100) : null;
+    wlabel.textContent = c ? `Window ${c.index}/${c.count}` : "Window";
+    wfill.style.width = (pct == null ? 0 : pct) + "%";
+    wtime.textContent = pct == null ? "—" : pct + "%";
+    let title;
+    if (c) {
+      title = `Window ${c.index}/${c.count} ${clockOf(c.start)}–${clockOf(c.end)}`
+        + (c.night ? " 🌙" : "")
+        + ` · ${pct}% elapsed · ends in ${fmtCountdown(c.seconds_until_end)}`;
+    } else {
+      const n = st && st.next;
+      title = n
+        ? `Between windows · next ${clockOf(n.start)}`
+          + (n.night ? " 🌙" : "") + ` in ${fmtCountdown(n.seconds_until_start)}`
+        : "No windows configured";
+    }
+    if (wmeter) wmeter.title = title + "\n"
+      + limitNote("Session", usage.window_limit_pct, usage.session_resets_at, usage);
+  }
+  // --- Week meter (blue): fill + inside = week time; after = weekly limit. ---
+  const kfill = $("#weekly-bar-fill"), ktime = $("#weekly-time"),
+        kmeter = $("#meter-week");
+  if (kfill && ktime) {
+    const wk = st && st.weekly;
+    const pct = wk ? Math.round((wk.fraction || 0) * 100) : null;
+    kfill.style.width = (pct == null ? 0 : pct) + "%";
+    ktime.textContent = pct == null ? "—" : pct + "%";
+    if (kmeter) {
+      const base = wk
+        ? `Weekly cycle ${pct}% elapsed — resets in ${fmtCountdown(wk.seconds_remaining)}`
+          + ` (${esc(wk.weekday_name)} ${String(wk.hour).padStart(2, "0")}:00)`
+        : "Weekly cycle";
+      kmeter.title = base + "\n"
+        + limitNote("Weekly", usage.weekly_limit_pct, usage.weekly_resets_at, usage);
+    }
+  }
+  // --- Limit used (after each bar): real % once synced, else "?". ---
+  setLimitText($("#window-limit"), usage.window_limit_pct);
+  setLimitText($("#weekly-limit"), usage.weekly_limit_pct);
+  // Sync button tooltip carries last-sync time + any auth/fetch hint.
+  const btn = $("#btn-window-sync");
+  if (btn) btn.title = syncTooltip(usage);
+}
+
+function setLimitText(el, pct) {
+  if (!el) return;
+  el.textContent = (pct == null) ? "?" : Math.round(pct) + "%";
+}
+
+// One tooltip line describing a limit readout + its reset, or why it's unknown.
+function limitNote(label, pct, resetsAt, usage) {
+  if (pct == null) {
+    const reason = usage.reason;
+    if (reason === "auth_error")
+      return `${label} limit: ? — logged out / token rejected (use Claude, then ⟳)`;
+    if (reason === "fetch_error")
+      return `${label} limit: ? — couldn't reach claude.ai (click ⟳ to retry)`;
+    return `${label} limit: ? — click ⟳ to fetch usage`;
+  }
+  let s = `${label} limit ${Math.round(pct)}% used`;
+  if (resetsAt) {
+    const left = secsUntil(resetsAt);
+    if (left != null) s += ` · resets in ${fmtCountdown(left)}`;
+  }
+  return s;
+}
+
+function syncTooltip(usage) {
+  const base = "Sync — fetch session/weekly usage from claude.ai";
+  if (usage.synced_at) return base + `\nlast synced ${clockOf(usage.synced_at)}`;
+  return base;
+}
+
+// Seconds from now until an ISO timestamp (claude.ai returns UTC "…Z"); null if
+// unparseable.
+function secsUntil(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return null;
+  return Math.max(0, Math.round((t - Date.now()) / 1000));
+}
+
+// Footer ⟳ sync button — re-pull window state + live usage limits. Falls back
+// to a plain schedule reload if the sync endpoint is unavailable.
+async function syncWindowState() {
+  const btn = $("#btn-window-sync");
+  if (btn) { btn.disabled = true; btn.classList.add("spinning"); }
+  try {
+    state.windowSchedule = await api("/api/window/sync", { method: "POST" });
+    renderWindowSchedule();
+    renderTriggerWindowOptions();
+  } catch (_) {
+    await loadWindowSchedule();
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove("spinning"); }
+  }
+}
+
+// ----- activity log (footer "Log" window) -----
+const LOG_LEVELS = ["debug", "info", "warn", "error"];
+
+function fmtLogTime(ts) {
+  const d = new Date((ts || 0) * 1000);
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function activityRowHtml(e) {
+  const lvl = LOG_LEVELS.includes(e.level) ? e.level : "info";
+  const detail = e.detail
+    ? `<span class="log-detail">${esc(e.detail)}</span>` : "";
+  return `<div class="log-row log-${lvl}" data-seq="${e.seq}">`
+    + `<span class="log-time">${esc(fmtLogTime(e.ts))}</span>`
+    + `<span class="log-level">${esc(lvl)}</span>`
+    + `<span class="log-source">${esc(e.source || "app")}</span>`
+    + `<span class="log-msg">${esc(e.message)}${detail}</span>`
+    + `</div>`;
+}
+
+// A socket "activity_logged" entry arrived. Keep the client mirror current even
+// when the window is closed (so opening it shows recent history instantly), and
+// append live when it's open.
+function onActivityLogged(entry) {
+  if (!entry || typeof entry !== "object") return;
+  state.activityLog.push(entry);
+  if (state.activityLog.length > ACTIVITY_LOG_MAX) {
+    state.activityLog.splice(0, state.activityLog.length - ACTIVITY_LOG_MAX);
+  }
+  if (state.logOpen) {
+    appendActivityRow(entry);
+  } else if (entry.level === "error" || entry.level === "warn") {
+    state.logUnseenError = true;
+    const dot = $("#activity-log-dot");
+    if (dot) { dot.hidden = false; dot.classList.toggle("error", entry.level === "error"); }
+  }
+}
+
+function appendActivityRow(entry) {
+  const list = $("#log-list");
+  if (!list) return;
+  // Respect the active level filter.
+  if (state.logFilter && LOG_LEVELS.indexOf(entry.level) < LOG_LEVELS.indexOf(state.logFilter)) {
+    return;
+  }
+  const empty = list.querySelector(".log-empty");
+  if (empty) empty.remove();
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  list.insertAdjacentHTML("beforeend", activityRowHtml(entry));
+  if (atBottom) list.scrollTop = list.scrollHeight;  // sticky auto-scroll
+}
+
+function renderActivityLogList() {
+  const list = $("#log-list");
+  if (!list) return;
+  const min = state.logFilter ? LOG_LEVELS.indexOf(state.logFilter) : 0;
+  const rows = state.activityLog.filter((e) => LOG_LEVELS.indexOf(e.level) >= min);
+  list.innerHTML = rows.length
+    ? rows.map(activityRowHtml).join("")
+    : `<div class="log-empty muted">No log entries${state.logFilter ? " at this level" : ""} yet.</div>`;
+  list.scrollTop = list.scrollHeight;
+  const c = $("#log-count");
+  if (c) {
+    c.textContent = state.logFilter
+      ? `${rows.length} of ${state.activityLog.length} entries`
+      : `${state.activityLog.length} entries`;
+  }
+}
+
+async function openActivityLog() {
+  state.logOpen = true;
+  state.logUnseenError = false;
+  const dot = $("#activity-log-dot");
+  if (dot) { dot.hidden = true; dot.classList.remove("error"); }
+  const body = `
+    <div class="log-window">
+      <div class="log-toolbar">
+        <label class="log-filter">level
+          <select id="log-level-filter">
+            <option value="">all</option>
+            <option value="info">info+</option>
+            <option value="warn">warn+</option>
+            <option value="error">errors</option>
+          </select>
+        </label>
+        <span class="muted small" id="log-count"></span>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-xs" id="log-clear">Clear</button>
+      </div>
+      <div id="log-list" class="log-list"></div>
+    </div>`;
+  showModal("Activity log", body);
+  // Restore the saved filter into the select.
+  const sel = $("#log-level-filter");
+  if (sel) {
+    sel.value = state.logFilter;
+    sel.addEventListener("change", () => {
+      state.logFilter = sel.value;
+      renderActivityLogList();
+    });
+  }
+  const clr = $("#log-clear");
+  if (clr) clr.addEventListener("click", clearActivityLog);
+  // Pull the authoritative recent list from the server, then render.
+  try {
+    const data = await api("/api/logs?limit=1000");
+    state.activityLog = data.entries || [];
+  } catch (_) { /* keep the socket-fed mirror */ }
+  renderActivityLogList();  // also refreshes #log-count
+  // Closing the modal clears the open flag (modal-close + backdrop click).
+  hookModalCloseOnce(() => { state.logOpen = false; });
+}
+
+async function clearActivityLog() {
+  try {
+    await api("/api/logs/clear", { method: "POST" });
+  } catch (_) { /* still clear the client mirror */ }
+  state.activityLog = [];
+  renderActivityLogList();  // also refreshes #log-count
+}
+
+// Run `fn` once when the modal next closes (via the × button or backdrop).
+function hookModalCloseOnce(fn) {
+  const backdrop = $("#modal-backdrop");
+  if (!backdrop) { fn(); return; }
+  const obs = new MutationObserver(() => {
+    if (backdrop.hidden) { obs.disconnect(); fn(); }
+  });
+  obs.observe(backdrop, { attributes: true, attributeFilter: ["hidden"] });
+}
+
+// ----- window management config modal (top-bar ⊞ Windows) -----
+async function openWindowsConfig() {
+  let sched;
+  try {
+    sched = await api("/api/window/schedule");
+  } catch (err) {
+    alert("Could not load window schedule: " + err.message);
+    return;
+  }
+  state.windowSchedule = sched;
+  renderWindowSchedule();
+  const names = sched.weekday_names || WEEKDAY_NAMES;
+  state.windowDraft = {
+    windows: (sched.windows || []).map((w) => ({
+      server_start: w.server_start, night_window: !!w.night_window,
+    })),
+    weekly_anchor: {
+      weekday: (sched.weekly_anchor || {}).weekday ?? 0,
+      hour: (sched.weekly_anchor || {}).hour ?? 0,
+    },
+    operator_hour_offset: sched.operator_hour_offset ?? 0,
+    window_length_hours: sched.window_length_hours ?? 5,
+    refresh_interval_minutes: sched.refresh_interval_minutes ?? 1,
+    sync_interval_minutes: sched.sync_interval_minutes ?? 10,
+  };
+  const d = state.windowDraft;
+  const dayOpts = names.map((n, i) =>
+    `<option value="${i}" ${i === d.weekly_anchor.weekday ? "selected" : ""}>${esc(n)}</option>`
+  ).join("");
+  const body = `
+    <div class="wc">
+      <div class="wc-grid">
+        <label for="wc-length">Window length (hours)</label>
+        <input type="number" id="wc-length" min="1" max="24" value="${d.window_length_hours}">
+        <label for="wc-offset">Operator hour offset</label>
+        <input type="number" id="wc-offset" min="-12" max="14" value="${d.operator_hour_offset}">
+        <label for="wc-weekday">Weekly anchor</label>
+        <div class="wc-anchor">
+          <select id="wc-weekday">${dayOpts}</select>
+          <input type="number" id="wc-anchor-hour" min="0" max="23" value="${d.weekly_anchor.hour}"
+                 title="hour (0–23)" style="width:64px">
+          <span class="muted small">day + hour the weekly cycle resets</span>
+        </div>
+        <label for="wc-refresh">Status refresh (minutes)</label>
+        <div class="wc-anchor">
+          <input type="number" id="wc-refresh" min="1" max="60" value="${d.refresh_interval_minutes}"
+                 style="width:80px">
+          <span class="muted small">redraw the footer bars from cached state — no claude.ai call</span>
+        </div>
+        <label for="wc-sync">Limit sync (minutes)</label>
+        <div class="wc-anchor">
+          <input type="number" id="wc-sync" min="1" max="1440" value="${d.sync_interval_minutes}"
+                 style="width:80px">
+          <span class="muted small">pull fresh session/weekly limits from claude.ai</span>
+        </div>
+      </div>
+      <div class="wc-windows-head">
+        <strong>Daily windows</strong>
+        <button type="button" class="btn btn-xs" id="wc-add">+ Add window</button>
+      </div>
+      <div id="wc-windows"></div>
+      <div class="wc-section">
+        <strong>Checks &amp; status</strong>
+        <div id="wc-checks-body"></div>
+      </div>
+      <div class="wc-section">
+        <strong>Manual gate</strong>
+        <div id="wc-manual"></div>
+        <div class="wc-manual-actions">
+          <button type="button" class="btn btn-xs" data-win="start">Start window now</button>
+          <button type="button" class="btn btn-xs" data-win="end">End window now</button>
+          <button type="button" class="btn btn-xs" data-win="start_weekly">Start weekly</button>
+          <button type="button" class="btn btn-xs" data-win="end_weekly">End weekly</button>
+        </div>
+        <p class="muted small">Tasks created while the gate is inactive are
+          deferred until a window starts. (The schedule above is informational;
+          this gate is what actually allows work to run.)</p>
+      </div>
+      <div class="wc-section">
+        <strong>Recent window log</strong>
+        <div id="wc-log-body"></div>
+      </div>
+      <div id="wc-error" class="trigger-error"></div>
+    </div>`;
+  showModal("Window management", body, saveWindowsConfig);
+  renderWindowRows();
+  renderWindowChecks(sched);
+  renderWindowLog(sched);
+  renderManualGate();
+  $$(".wc-manual-actions [data-win]").forEach((b) => b.addEventListener("click", async () => {
+    await windowAction(b.dataset.win);
+  }));
+  const add = $("#wc-add");
+  if (add) add.addEventListener("click", () => {
+    const used = new Set(state.windowDraft.windows.map((w) => w.server_start));
+    let h = 0;
+    while (used.has(h) && h < 23) h++;
+    state.windowDraft.windows.push({ server_start: h, night_window: false });
+    renderWindowRows();
+  });
+}
+
+function renderWindowRows() {
+  const root = $("#wc-windows");
+  if (!root) return;
+  const draft = state.windowDraft;
+  root.innerHTML = draft.windows.map((w, i) => `
+    <div class="wc-window-row" data-i="${i}">
+      <span class="muted small">#${i + 1}</span>
+      <label for="wc-start-${i}">start hour</label>
+      <input type="number" id="wc-start-${i}" class="wc-start" data-i="${i}" min="0" max="23" value="${w.server_start}">
+      <label class="wc-night"><input type="checkbox" class="wc-nightbox" data-i="${i}" ${w.night_window ? "checked" : ""}> night 🌙</label>
+      <button type="button" class="btn btn-xs btn-danger wc-remove" data-i="${i}" title="Remove window">×</button>
+    </div>`).join("") || `<p class="muted small">No windows — add at least one.</p>`;
+  root.querySelectorAll(".wc-start").forEach((el) => el.addEventListener("change", (e) => {
+    state.windowDraft.windows[+e.target.dataset.i].server_start = parseInt(e.target.value, 10);
+  }));
+  root.querySelectorAll(".wc-nightbox").forEach((el) => el.addEventListener("change", (e) => {
+    state.windowDraft.windows[+e.target.dataset.i].night_window = e.target.checked;
+  }));
+  root.querySelectorAll(".wc-remove").forEach((el) => el.addEventListener("click", (e) => {
+    state.windowDraft.windows.splice(+e.target.dataset.i, 1);
+    renderWindowRows();
+  }));
+}
+
+function renderWindowChecks(sched) {
+  const root = $("#wc-checks-body");
+  if (!root) return;
+  const st = sched.status || {};
+  const line = (label, inst) => {
+    if (!inst) return `<div class="wc-check"><span>${label}</span><span class="muted">—</span></div>`;
+    const extra = inst.night ? " 🌙" : "";
+    return `<div class="wc-check"><span>${label}</span>
+      <span>Window ${inst.index}/${inst.count} · ${clockOf(inst.start)}–${clockOf(inst.end)}${extra}</span></div>`;
+  };
+  let weekly = "";
+  if (st.weekly) {
+    const pct = Math.round((st.weekly.fraction || 0) * 100);
+    weekly = `<div class="wc-check"><span>Weekly cycle</span>
+      <span>${pct}% · resets in ${fmtCountdown(st.weekly.seconds_remaining)}
+      (${esc(st.weekly.weekday_name)} ${String(st.weekly.hour).padStart(2, "0")}:00)</span></div>`;
+  }
+  root.innerHTML = line("Current", st.current) + line("Next", st.next)
+                 + line("Next night", st.next_night) + weekly;
+}
+
+function renderWindowLog(sched) {
+  const root = $("#wc-log-body");
+  if (!root) return;
+  const log = sched.log || [];
+  if (!log.length) { root.innerHTML = `<p class="muted small">No events recorded yet.</p>`; return; }
+  root.innerHTML = log.map((e) =>
+    `<div class="wc-log-row"><span class="muted small">${esc(clockOf(e.at) || e.at || "")}</span> ${esc(e.message)}</div>`
+  ).join("");
+}
+
+async function saveWindowsConfig() {
+  const errEl = $("#wc-error");
+  if (errEl) errEl.textContent = "";
+  const lengthEl = $("#wc-length"), offsetEl = $("#wc-offset"),
+        weekdayEl = $("#wc-weekday"), hourEl = $("#wc-anchor-hour"),
+        refreshEl = $("#wc-refresh"), syncEl = $("#wc-sync");
+  if (!lengthEl || !offsetEl || !weekdayEl || !hourEl || !refreshEl || !syncEl)
+    return false;  // modal gone
+  const draft = state.windowDraft;
+  const payload = {
+    windows: draft.windows,
+    weekly_anchor: {
+      weekday: parseInt(weekdayEl.value, 10),
+      hour: parseInt(hourEl.value, 10),
+    },
+    operator_hour_offset: parseInt(offsetEl.value, 10),
+    window_length_hours: parseInt(lengthEl.value, 10),
+    refresh_interval_minutes: parseInt(refreshEl.value, 10),
+    sync_interval_minutes: parseInt(syncEl.value, 10),
+  };
+  try {
+    state.windowSchedule = await api("/api/window/schedule", {
+      method: "PUT", body: JSON.stringify(payload),
+    });
+    renderWindowSchedule();
+    applyWindowTimers();  // re-arm with the new cadences immediately
+    return true;
+  } catch (err) {
+    if (errEl) errEl.textContent = err.body?.error || err.message;
+    return false;  // keep modal open so the user can fix the input
   }
 }
 
@@ -1791,6 +2510,10 @@ function setupToolbar() {
   if (btnObs) btnObs.addEventListener("click", openVaultInObsidian);
   const btnCompact = $("#btn-task-compact");
   if (btnCompact) btnCompact.addEventListener("click", compactTasksLog);
+  const btnWikiBack = $("#btn-wiki-back");
+  if (btnWikiBack) btnWikiBack.addEventListener("click", () => goWikiHistory(-1));
+  const btnWikiFwd = $("#btn-wiki-fwd");
+  if (btnWikiFwd) btnWikiFwd.addEventListener("click", () => goWikiHistory(1));
   const btnWikiRefresh = $("#btn-wiki-refresh");
   if (btnWikiRefresh) btnWikiRefresh.addEventListener("click", () => {
     loadWikiTree();
@@ -1798,6 +2521,18 @@ function setupToolbar() {
   });
   const btnWikiTreeRefresh = $("#btn-wiki-tree-refresh");
   if (btnWikiTreeRefresh) btnWikiTreeRefresh.addEventListener("click", loadWikiTree);
+  const btnWikiRandom = $("#btn-wiki-random");
+  if (btnWikiRandom) btnWikiRandom.addEventListener("click", loadRandomWiki);
+  const btnWikiRead = $("#btn-wiki-read");
+  if (btnWikiRead) btnWikiRead.addEventListener("click", toggleReadCurrent);
+  const wikiSearch = $("#wiki-search");
+  if (wikiSearch) {
+    wikiSearch.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doWikiSearch(e.target.value);
+    });
+    // Native clear (×) on type=search fires an empty "search" event.
+    wikiSearch.addEventListener("search", (e) => doWikiSearch(e.target.value));
+  }
   // Hot / Index / Overview — declarative wiring via data-wiki-page so adding
   // another canonical page later is just an HTML edit.
   document.querySelectorAll("[data-wiki-page]").forEach((btn) => {
@@ -1842,28 +2577,44 @@ function setupToolbar() {
 }
 
 function setupStatusBar() {
-  $("#btn-sync").addEventListener("click", () => {
-    const m = $("#sync-menu");
-    m.hidden = !m.hidden;
+  // Window state + its start/end/weekly controls now live in the ⊞ Windows
+  // modal (the footer just shows the schedule), so there is no sync menu here.
+  $$("#theme-switch button[data-theme-set]").forEach((btn) => {
+    btn.addEventListener("click", () => setTheme(btn.dataset.themeSet));
   });
-  $$("#sync-menu button").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      $("#sync-menu").hidden = true;
-      windowAction(btn.dataset.action);
-    });
-  });
-  $("#btn-theme").addEventListener("click", toggleTheme);
-  const overBtn = $("#btn-window-overrun");
-  if (overBtn) overBtn.addEventListener("click", () => windowAction("end"));
+  renderThemeSwitch();
   const connPill = $("#conn-pill");
   if (connPill) connPill.addEventListener("click", openSessionsOverview);
+  const btnWindows = $("#btn-windows");
+  if (btnWindows) btnWindows.addEventListener("click", openWindowsConfig);
+  const btnSync = $("#btn-window-sync");
+  if (btnSync) btnSync.addEventListener("click", syncWindowState);
+  const btnLog = $("#btn-activity-log");
+  if (btnLog) btnLog.addEventListener("click", openActivityLog);
 }
 
-function toggleTheme() {
-  const current = document.documentElement.getAttribute("data-theme") || "dark";
-  const next = current === "dark" ? "light" : "dark";
-  document.documentElement.setAttribute("data-theme", next);
-  try { localStorage.setItem("resman-theme", next); } catch (_) {}
+// Three-way theme switch (green / dark / light) — mirrors the garage
+// reference. The chosen theme is written to <html data-theme> and persisted
+// under "resman-theme" so the FOUC inline script can restore it pre-paint.
+const THEMES = ["green", "dark", "light"];
+
+function currentTheme() {
+  const t = document.documentElement.getAttribute("data-theme");
+  return THEMES.includes(t) ? t : "dark";
+}
+
+function setTheme(name) {
+  if (!THEMES.includes(name)) return;
+  document.documentElement.setAttribute("data-theme", name);
+  try { localStorage.setItem("resman-theme", name); } catch (_) {}
+  renderThemeSwitch();
+}
+
+function renderThemeSwitch() {
+  const active = currentTheme();
+  $$("#theme-switch button[data-theme-set]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.themeSet === active);
+  });
 }
 
 function setConn(state) {
@@ -2033,7 +2784,8 @@ function setupSocket() {
       pre.textContent += msg.chunk || "";
       if (log.autoscroll !== false) pre.scrollTop = pre.scrollHeight;
     });
-    sock.on("window_state_changed", () => loadWindow());
+    sock.on("window_state_changed", () => { loadWindow(); loadWindowSchedule(); });
+    sock.on("activity_logged", (e) => onActivityLogged(e));
     sock.on("session_crashed", (p) => {
       alert("Terminal session crashed: " + (p?.message || ""));
       loadSessions();
@@ -2055,8 +2807,32 @@ async function init() {
   setupToolbar();
   setupStatusBar();
   setupSocket();
-  await Promise.all([loadVaults(), loadTasks(), loadSessions(), loadWindow()]);
-  setInterval(renderWindow, 30 * 1000);
+  await Promise.all([loadVaults(), loadTasks(), loadSessions(), loadWindow(), loadWindowSchedule()]);
+  // Fetch live usage limits once on load (the time bars are already showing
+  // from loadWindowSchedule); then refresh time every 30s and re-pull the
+  // limits every 10 min so they stay current without hammering claude.ai.
+  syncWindowState();
+  applyWindowTimers();
+}
+
+// Footer poll timers, driven by the ⊞ Windows config (refresh_interval_minutes
+// redraws the bars from cached state; sync_interval_minutes re-pulls live limits
+// from claude.ai). Re-armed on save so a changed cadence takes effect at once.
+let _windowRefreshTimer = null, _windowSyncTimer = null;
+function applyWindowTimers() {
+  const sched = state.windowSchedule || {};
+  const refreshMs = clampInt(sched.refresh_interval_minutes, 1, 60, 1) * 60 * 1000;
+  const syncMs = clampInt(sched.sync_interval_minutes, 1, 1440, 10) * 60 * 1000;
+  if (_windowRefreshTimer) clearInterval(_windowRefreshTimer);
+  if (_windowSyncTimer) clearInterval(_windowSyncTimer);
+  _windowRefreshTimer = setInterval(() => { renderWindow(); loadWindowSchedule(); }, refreshMs);
+  _windowSyncTimer = setInterval(syncWindowState, syncMs);
+}
+
+function clampInt(v, lo, hi, fallback) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
 }
 
 document.addEventListener("DOMContentLoaded", init);

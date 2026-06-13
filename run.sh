@@ -18,6 +18,13 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+# systemd --user (and other non-login launchers) start us with a bare PATH that
+# lacks ~/.bun/bin. The usage-limit fetch shells out to `bun` (the only client
+# claude.ai's Cloudflare edge lets through — see modules/claude_usage.py), so
+# make sure bun is reachable. claude_usage.find_bun() also resolves it directly,
+# so this is belt-and-suspenders for anything else the server spawns.
+[[ -d "$HOME/.bun/bin" ]] && export PATH="$HOME/.bun/bin:$PATH"
+
 VNAME=""
 USER_PROVIDED_VENV=0
 FORWARD=()

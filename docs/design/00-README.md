@@ -27,6 +27,9 @@ planning iterations preserved in git history.
 | 10 | [10-frontend.md](10-frontend.md) | UI layout, sidebar filter bar, vault dot priority rule, terminal iframes, status bar |
 | 11 | [11-security.md](11-security.md) | Subprocess safety, input validation, path traversal prevention, run-shell acknowledgment |
 | 12 | [12-error-handling.md](12-error-handling.md) | Startup fail-fast vs graceful degradation, error behavior table, JSONL crash consistency |
+| 13 | [13-window-schedule.md](13-window-schedule.md) | cld20-style daily/weekly window schedule, config modal, footer, night-window task scheduling |
+| 14 | [14-wiki-read-unread.md](14-wiki-read-unread.md) | Wiki read/unread markers, reconcile, search ranking, random-unread |
+| 15 | [15-activity-log.md](15-activity-log.md) | Volatile activity log, footer Log window, bus auto-capture, logging bridge |
 
 ---
 
@@ -165,3 +168,12 @@ shortcut (see 2026-05-12 block above).
 | PID-aware replay — `started` event carries the OS PID; `os.kill(pid, 0)` distinguishes "subprocess survived a control-plane restart" (stays `running`) from "process gone" (flips to `interrupted`). Overdue `scheduled` tasks surface as warnings, not auto-promotion | 06, 12 |
 | Async dispatch under eventlet — `server.py` wires `task_manager.set_executor(eventlet.spawn)` so `POST /api/tasks` returns immediately while the streaming runner pushes chunks; the request handler no longer blocks for the full task duration | 06, 09 |
 | Socket.IO events `task_log_appended` (live log chunk) and `task_scheduled` (one-shot trigger registration) | 06, 08, 09 |
+
+### Operator-feedback round 2 — window meters, live limits, activity log
+
+| Addition | File |
+|----------|------|
+| Footer redesigned as two **usage meters** (window = green, week = blue): bar fill + the number **inside** the bar = time elapsed; the number **after** the bar = limit used. Manual gate + sync menu relocated to the ⊞ Windows modal | 13 |
+| Live **usage limits** ported from cld20 (`modules/claude_usage.py`): read-only `GET claude.ai/api/oauth/usage` with the operator's OAuth token → session (`five_hour`) + weekly (`seven_day`) utilization. `WindowSchedule.sync()` caches it; `POST /api/window/sync` (⟳) fetches on demand | 13 |
+| `tools/window-status.sh` — shell mirror of the window/week derivation **and** the limit fetch (via the same `claude_usage` module), for on-demand checks without the server | 13 |
+| **Volatile activity log** (`modules/activity_log.py`) — RAM ring buffer + `/tmp/resman/activity-<pid>.log`, created on start, deleted on stop (with dead-PID sweep). Auto-captures existing bus events, an explicit `"activity"` bus channel, and a `logging.Handler` for WARNING+. Footer **📋 Log** button opens a live, level-filterable window. `GET /api/logs`, `POST /api/logs/clear`, Socket.IO `activity_logged` | 15 |

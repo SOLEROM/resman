@@ -19,6 +19,7 @@ EVENT_NAMES = (
     "task_log_appended",
     "task_scheduled",
     "cron_skip_warning",
+    "activity_logged",
 )
 
 

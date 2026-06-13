@@ -4,12 +4,14 @@
   <meta charset="utf-8" />
   <title>resman</title>
   <link rel="stylesheet" href="/static/css/style.css" />
-  <!-- Apply saved theme before render so the page never flashes the wrong palette. -->
+  <!-- Apply saved theme before render so the page never flashes the wrong palette.
+       Valid themes: green | dark | light. Default follows the OS colour scheme. -->
   <script>
     (function () {
       try {
         var saved = localStorage.getItem("resman-theme");
-        var theme = saved || (window.matchMedia &&
+        var valid = { green: 1, dark: 1, light: 1 };
+        var theme = (saved && valid[saved]) ? saved : (window.matchMedia &&
           window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
         document.documentElement.setAttribute("data-theme", theme);
       } catch (_) {
@@ -50,15 +52,18 @@
     </span>
   </div>
   <div class="header-status">
+    <button id="btn-windows" class="btn btn-sm"
+            title="Window management — configure daily/weekly work windows">⊞ Windows</button>
     <span class="conn-pill" id="conn-pill"
           title="Click to see every running tmux + ttyd session and its memory footprint">
       <span class="status-dot" id="conn-dot"></span>
       <span id="conn-label">connecting...</span>
     </span>
-    <button id="btn-theme" class="theme-toggle"
-            title="Toggle dark / light theme" aria-label="Toggle theme">
-      <span class="icon-moon">☾</span><span class="icon-sun">☀</span>
-    </button>
+    <div class="theme-switch" id="theme-switch" role="group" aria-label="Theme">
+      <button data-theme-set="green" title="Phosphor green" aria-label="Green theme">●</button>
+      <button data-theme-set="dark"  title="Dark (white on black)" aria-label="Dark theme">◐</button>
+      <button data-theme-set="light" title="Light (black on white)" aria-label="Light theme">○</button>
+    </div>
   </div>
 </header>
 
@@ -100,9 +105,15 @@
           <span id="wiki-context" class="vault-context empty">No vault selected</span>
           <span id="wiki-file" class="muted" style="margin-left:8px;font-size:12px"></span>
           <div class="spacer"></div>
+          <input id="wiki-search" class="wiki-search" type="search"
+                 placeholder="Search wiki…" autocomplete="off" spellcheck="false" />
+          <button id="btn-wiki-random" class="btn btn-sm" title="Open a random unread page">Random</button>
+          <button id="btn-wiki-read" class="btn btn-sm" title="Toggle read/unread for this page" hidden>read</button>
           <button class="btn btn-sm" data-wiki-page="wiki/hot.md" title="Load wiki/hot.md">Hot</button>
           <button class="btn btn-sm" data-wiki-page="wiki/index.md" title="Load wiki/index.md">Index</button>
           <button class="btn btn-sm" data-wiki-page="wiki/overview.md" title="Load wiki/overview.md">Overview</button>
+          <button id="btn-wiki-back" class="btn btn-sm" title="Back to previous page" disabled>←</button>
+          <button id="btn-wiki-fwd" class="btn btn-sm" title="Forward" disabled>→</button>
           <button id="btn-wiki-refresh" class="btn btn-sm" title="Reload current page">↻</button>
         </div>
         <div class="wiki-layout">
@@ -152,10 +163,12 @@
               </select>
             </div>
 
-            <label for="t-when">When</label>
+            <label for="t-window">When</label>
             <div class="trigger-meta">
-              <input type="datetime-local" id="t-when">
-              <span class="muted small">empty = run now</span>
+              <select id="t-window" class="when-select">
+                <option value="">run now</option>
+              </select>
+              <span class="muted small">pick which window to run in, or “run now”</span>
             </div>
           </div>
           <div class="trigger-actions">
@@ -215,20 +228,32 @@
   </div>
 
   <footer class="status-bar" id="status-bar">
-    <span class="status-dot" id="window-dot"></span>
-    <span id="window-label">Window: loading...</span>
-    <span id="window-time" class="muted"></span>
-    <button id="btn-window-overrun" class="btn btn-sm btn-danger" hidden>End window now</button>
+    <!-- Two usage meters: the local window (green) and the weekly cycle (blue).
+         Bar fill + the number INSIDE the bar = time elapsed; the number AFTER
+         the bar = the usage limit used (session / weekly), or ? until synced. -->
+    <span class="meter meter-window" id="meter-window" title="Current window">
+      <span class="meter-label" id="window-meter-label">Window</span>
+      <span class="meter-bar">
+        <span class="meter-fill" id="window-bar-fill"></span>
+        <span class="meter-inside" id="window-time">—</span>
+      </span>
+      <span class="meter-after" id="window-limit" title="Session limit used">?</span>
+    </span>
+    <span class="meter meter-week" id="meter-week" title="Weekly cycle">
+      <span class="meter-label">Week</span>
+      <span class="meter-bar">
+        <span class="meter-fill" id="weekly-bar-fill"></span>
+        <span class="meter-inside" id="weekly-time">—</span>
+      </span>
+      <span class="meter-after" id="weekly-limit" title="Weekly limit used">?</span>
+    </span>
+    <button type="button" class="meter-sync" id="btn-window-sync"
+            title="Sync — fetch session/weekly usage from claude.ai">⟳</button>
     <div class="spacer"></div>
-    <div class="dropdown">
-      <button id="btn-sync" class="btn btn-sm">sync ▾</button>
-      <div class="dropdown-menu" id="sync-menu" hidden>
-        <button data-action="start">Start window now</button>
-        <button data-action="end">End window now</button>
-        <button data-action="start_weekly">Start weekly period</button>
-        <button data-action="end_weekly">End weekly period</button>
-      </div>
-    </div>
+    <button type="button" class="status-log-btn" id="btn-activity-log"
+            title="Show the activity log">
+      <span class="log-dot" id="activity-log-dot" hidden></span>📋 Log
+    </button>
   </footer>
 </div>
 

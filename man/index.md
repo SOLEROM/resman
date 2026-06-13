@@ -21,8 +21,9 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 - [Vaults](vaults.md) — registering, discovering, scaffolding, health
 - [Sessions](sessions.md) — Ops tab, Claude vs shell, tabs, renaming, Obsidian
 - [Tasks](tasks.md) — operations-first trigger, live logs, scheduling, ALL-vault parent/child, cancel/compaction; sidebar `↘` shortcut for URL ingest
-- [Wiki](wiki.md) — the per-vault Wiki tab, sidebar page tree, clickable `[[wikilinks]]`
-- [Window state](window-state.md) — when work is allowed to run
+- [Wiki](wiki.md) — the per-vault Wiki tab, sidebar page tree, read/unread tracking, search, random, clickable `[[wikilinks]]`
+- [Window state](window-state.md) — when work is allowed to run; daily/weekly window schedule (⊞ Windows); footer usage meters + limits
+- [Activity log](activity-log.md) — the footer **📋 Log** window: live operations + errors, while the app runs
 - [Scheduler](scheduler.md) — cron tasks and skip-when-inactive
 - [Configuration](config.md) — `resman.yaml` and `schedule.yaml`
 - [Mounts](mounts.md) — bind-mounting vaults at host paths; privilege setup; taking changes to effect
@@ -31,6 +32,12 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 - [Remote agent (CLI)](remote-agent.md) — drive resman from a script, cron, or openClaw over SSH
 - [Reference / API](reference/api.md) — REST and Socket.IO surface
 - [Reference / Keyboard](reference/keyboard.md) — keystrokes inside terminals
+
+## Appearance
+
+The top-right **theme switch** cycles three themes: **green ●** (phosphor
+terminal, ported from the garage design system), **dark ◐** (default), and
+**light ○**. Your choice is remembered across reloads.
 
 ## Conventions used in this manual
 
