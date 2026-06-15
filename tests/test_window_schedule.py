@@ -215,3 +215,97 @@ def test_upcoming_lists_future_windows(tmp_path):
     assert up == sorted(up, key=lambda u: u["start"])
     # The very next one is 16:00 today.
     assert up[0]["server_start"] == 16
+
+
+# ----- cld20-style automation config (per-window open/collect + rate) -----
+def test_automation_defaults_off(tmp_path):
+    s = _sched(tmp_path)
+    s.load()
+    assert s.collection_rate == 0
+    assert all(not w["open"] and not w["collect"] for w in s.windows)
+    d = s.to_dict()
+    assert d["collection_rate"] == 0
+    assert d["max_collection_rate"] >= 1
+    assert d["automation"]["open_windows_count"] == 0
+    assert d["automation"]["collect_windows_count"] == 0
+
+
+def test_collection_rate_validates(tmp_path):
+    s = _sched(tmp_path)
+    s.load()
+    with pytest.raises(ScheduleError):
+        s.update(collection_rate=-1)
+    with pytest.raises(ScheduleError):
+        s.update(collection_rate=999)        # above MAX_COLLECTION_RATE
+    with pytest.raises(ScheduleError):
+        s.update(collection_rate="lots")     # not an int
+
+
+def test_per_window_open_collect_persist_and_reload(tmp_path):
+    s = _sched(tmp_path)
+    s.load()
+    s.update(windows=[
+        {"server_start": 0, "open": True, "collect": False},
+        {"server_start": 10, "open": False, "collect": True},
+    ], collection_rate=3)
+    s2 = _sched(tmp_path)
+    s2.load()
+    assert s2.collection_rate == 3
+    by_start = {w["server_start"]: w for w in s2.windows}
+    assert by_start[0]["open"] is True and by_start[0]["collect"] is False
+    assert by_start[10]["open"] is False and by_start[10]["collect"] is True
+
+
+def test_window_marks_accept_truthy_spellings(tmp_path):
+    s = _sched(tmp_path)
+    s.load()
+    s.update(windows=[{"server_start": 0, "open": "true", "collect": 1}])
+    assert s.windows[0]["open"] is True and s.windows[0]["collect"] is True
+
+
+def test_legacy_global_flags_migrate_to_per_window(tmp_path):
+    """An old window_schedule.json (global open_windows_enabled + collection_rate,
+    no per-window marks) upgrades so every window inherits the old behaviour."""
+    import json
+    p = tmp_path / "window_schedule.json"
+    p.write_text(json.dumps({
+        "windows": [{"server_start": 0, "night_window": False},
+                    {"server_start": 12, "night_window": False}],
+        "open_windows_enabled": True,
+        "collection_rate": 2,
+    }), encoding="utf-8")
+    s = WindowSchedule(p, EventBus())
+    s.load()
+    assert all(w["open"] and w["collect"] for w in s.windows)
+    assert s.collection_rate == 2
+
+
+def test_update_emits_window_schedule_updated(tmp_path):
+    bus = EventBus()
+    seen = []
+    bus.subscribe("window_schedule_updated", lambda p: seen.append(p))
+    s = WindowSchedule(tmp_path / "window_schedule.json", bus)
+    s.load()
+    s.update(collection_rate=2)
+    assert seen, "expected a window_schedule_updated event"
+    assert seen[-1]["config"]["collection_rate"] == 2
+
+
+def test_automation_summary_counts_and_next_times(tmp_path):
+    s = _sched(tmp_path)
+    s.load()
+    now = datetime(2026, 6, 12, 12, 30, 0)
+    # nothing ticked → no next times
+    a = s.automation(now)
+    assert a["next_opener"] is None and a["next_sample"] is None
+    assert a["open_windows_count"] == 0 and a["collect_windows_count"] == 0
+    # tick the 15:00 window for open + collect, rate 1
+    s.update(windows=[
+        {"server_start": 0}, {"server_start": 5}, {"server_start": 10},
+        {"server_start": 15, "open": True, "collect": True}, {"server_start": 20},
+    ], collection_rate=1)
+    a = s.automation(now)
+    assert a["open_windows_count"] == 1 and a["collect_windows_count"] == 1
+    assert a["next_opener"] == "2026-06-12T15:00:00"   # the next ticked-open start
+    assert a["next_sample"] is not None
+    assert a["sample_offsets_minutes"] == [295]

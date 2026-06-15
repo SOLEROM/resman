@@ -920,7 +920,7 @@ def put_window_schedule():
     body = request.get_json(force=True, silent=True) or {}
     fields = {k: body[k] for k in
               ("windows", "weekly_anchor", "operator_hour_offset", "window_length_hours",
-               "refresh_interval_minutes", "sync_interval_minutes")
+               "refresh_interval_minutes", "sync_interval_minutes", "collection_rate")
               if k in body}
     try:
         return jsonify(sched.update(**fields))
@@ -945,6 +945,49 @@ def post_window_sync():
     if not sched:
         return jsonify({"error": "window schedule unavailable"}), 503
     return jsonify(sched.sync())
+
+
+# ----- Window usage statistics (cld20-style sample history) -----
+@bp.get("/api/window/stats")
+def get_window_stats():
+    """Recent usage readings + summary + the next opener/sample times. Powers the
+    Windows-tab charts and per-window breakdown."""
+    stats = _ctx().get("window_stats")
+    sched = _ctx().get("window_schedule")
+    if not stats:
+        return jsonify({"samples": [], "summary": {}, "automation": {}})
+    try:
+        limit = int(request.args.get("limit", 500))
+    except (TypeError, ValueError):
+        limit = 500
+    return jsonify({
+        "samples": stats.list(limit=limit, source=request.args.get("source")),
+        "summary": stats.summary(),
+        "automation": sched.automation() if sched else {},
+    })
+
+
+@bp.post("/api/window/sample")
+@_csrf_required
+def post_window_sample():
+    """Take one usage reading on demand (the Windows-tab "Collect now" button).
+    Distinct from the footer ⟳ sync: this stores a sample in the history."""
+    sampler = _ctx().get("window_sampler")
+    if not sampler:
+        return jsonify({"error": "window sampler unavailable"}), 503
+    entry = sampler.collect_now()
+    return jsonify({"sample": entry})
+
+
+@bp.post("/api/window/stats/clear")
+@_csrf_required
+def clear_window_stats():
+    """Clear the stored usage-reading history."""
+    stats = _ctx().get("window_stats")
+    if stats:
+        stats.clear()
+        _activity("window stats cleared", source="window")
+    return jsonify({"ok": True})
 
 
 # ----- Activity log (volatile, footer "Log" window) -----

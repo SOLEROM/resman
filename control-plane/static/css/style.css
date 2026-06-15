@@ -1178,14 +1178,17 @@ button.ghost:hover { color: var(--text-primary); }
   margin: 6px 0;
 }
 .wc-window-row {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 5px 0;
   border-bottom: 1px solid var(--border-light);
 }
-.wc-window-row .wc-start { width: 70px; }
+.wc-window-row .wc-start { width: 64px; }
 .wc-window-row label { margin: 0; }
-.wc-night { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-.wc-night input { width: auto; }
+.wc-mark { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 12px; }
+.wc-mark input { width: auto; }
+.wc-mark-open { color: var(--warning); }
+.wc-mark-collect { color: var(--accent); }
+.wc-marks-hint { margin: 2px 0 8px; }
 .wc-remove { margin-left: auto; }
 .wc-section { margin-top: 16px; }
 .wc-section > strong { display: block; margin-bottom: 6px; }
@@ -1197,6 +1200,57 @@ button.ghost:hover { color: var(--text-primary); }
 .wc-check > span:first-child { color: var(--text-secondary); }
 .wc-log-row { font-size: 12px; padding: 2px 0; }
 .wc-manual-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+
+/* ---------- ⊞ Windows tab (management · automation · statistics) ---------- */
+.windows-layout {
+  flex: 1; min-height: 0; overflow: auto;
+  display: grid; gap: 14px; padding: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+}
+.win-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.win-card-wide { grid-column: 1 / -1; }
+@media (max-width: 900px) { .windows-layout { grid-template-columns: 1fr; } }
+.win-card-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-light);
+}
+.win-card-head .spacer { flex: 1; }
+.win-card .wc-grid { margin-bottom: 10px; }
+.wc-save-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+
+/* range toggle */
+.win-range { display: inline-flex; gap: 4px; }
+.win-range .btn.active {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+
+/* summary line */
+.win-summary { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; font-size: 13px; }
+.win-sum-item { white-space: nowrap; }
+
+/* charts */
+.win-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
+@media (max-width: 700px) { .win-charts { grid-template-columns: 1fr; } }
+.win-chart-title { font-weight: 600; font-size: 12px; margin: 10px 0 6px; color: var(--text-secondary); }
+.win-chart-svg { width: 100%; height: auto; display: block; }
+.win-chart-svg .win-grid { stroke: var(--border); stroke-width: 1; }
+.win-chart-svg .win-axis { fill: var(--text-secondary); font-size: 9px; }
+.win-chart-svg .win-line { fill: none; stroke: var(--ch); stroke-width: 1.6; }
+.win-chart-svg .win-area { fill: var(--ch); opacity: 0.12; stroke: none; }
+.win-chart-svg .win-dots circle { fill: var(--ch); }
+.win-chart-foot { margin-top: 2px; }
+.win-chart-empty {
+  padding: 28px 8px; text-align: center;
+  border: 1px dashed var(--border); border-radius: 6px;
+}
 
 /* Task-trigger "When" window picker */
 .when-select { min-width: 240px; }

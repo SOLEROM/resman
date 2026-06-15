@@ -370,6 +370,22 @@ def _run_claude_canary(timeout: int) -> Optional[str]:
     return state
 
 
+def wakeup(timeout: int = WAKEUP_TIMEOUT) -> str:
+    """Fire ``claude -p "hi"`` once to OPEN/anchor the Claude rolling window — the
+    cld20 "opener". A pure usage GET does NOT open a window; only a prompt does.
+
+    Returns the wakeup state, never raises:
+      ``ok`` | ``limit`` | ``auth`` | ``fail`` (see :func:`classify_wakeup`),
+      ``disabled`` when ``RESMAN_USAGE_WAKEUP=0``, or ``unavailable`` when the
+      ``claude`` CLI can't be found/launched. Honours the same env override as the
+      stale-token recovery so a host that must never spend a token stays silent.
+    """
+    if not _wakeup_enabled():
+        return "disabled"
+    state = _run_claude_canary(timeout)
+    return state if state is not None else "unavailable"
+
+
 def _synthesised_limit(prev: dict) -> dict:
     """An at-limit reading when the usage endpoint gave no session number: record
     a plain 100% session (cld20's behaviour), preserving any weekly number the

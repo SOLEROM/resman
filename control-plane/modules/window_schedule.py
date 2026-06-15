@@ -38,6 +38,18 @@ DEFAULT_WINDOW_STARTS = [0, 5, 10, 15, 20]
 DEFAULT_WINDOW_LENGTH_HOURS = 5
 MAX_WINDOWS = 12
 
+# cld20-style automation, driven in-process by the APScheduler (not system cron).
+# Per-window opt-in (both marks default OFF on each window) so a fresh install
+# never spends a token until the operator ticks a box:
+#   window["open"]    — the *opener*: fire `claude -p "hi"` at this window's start
+#     hour to anchor Claude's rolling 5-hour window to that boundary.
+#   window["collect"] — take usage reads during this window.
+#   collection_rate   — a single management setting: how many reads to take per
+#     *collecting* window (evenly spaced). 0 disables all auto-collection. The
+#     footer ⟳ on-demand sync is unaffected by any of these.
+DEFAULT_COLLECTION_RATE = 0
+MAX_COLLECTION_RATE = 12
+
 # Client-side poll cadences (minutes), surfaced in the ⊞ Windows config and used
 # by the frontend timers. "refresh" redraws the footer bars from cached state
 # (no claude.ai call); "sync" pulls fresh session/weekly limits from claude.ai.
@@ -72,13 +84,17 @@ class WindowSchedule:
         # None (e.g. in tests) the limit figures stay unknown and render "?".
         self._usage_provider = usage_provider
         self.windows: list[dict] = [
-            {"server_start": h, "night_window": False} for h in DEFAULT_WINDOW_STARTS
+            {"server_start": h, "night_window": False, "open": False, "collect": False}
+            for h in DEFAULT_WINDOW_STARTS
         ]
         self.weekly_anchor: dict = {"weekday": 0, "hour": 0}  # Monday 00:00
         self.operator_hour_offset: int = 0
         self.window_length_hours: int = DEFAULT_WINDOW_LENGTH_HOURS
         self.refresh_interval_minutes: int = DEFAULT_REFRESH_INTERVAL_MINUTES
         self.sync_interval_minutes: int = DEFAULT_SYNC_INTERVAL_MINUTES
+        # Single management setting; the per-window "open"/"collect" marks decide
+        # which windows the opener/collector act on (see module constants).
+        self.collection_rate: int = DEFAULT_COLLECTION_RATE
         self.events: deque = deque(maxlen=50)
         # Cached usage-limit readout (populated by sync(); see _usage()).
         self._usage_data: dict = _empty_usage()
@@ -100,14 +116,16 @@ class WindowSchedule:
         if not isinstance(data, dict):
             self._persist()
             return
+        windows = _migrate_window_marks(data)
         try:
             self._apply(
-                windows=data.get("windows"),
+                windows=windows,
                 weekly_anchor=data.get("weekly_anchor"),
                 operator_hour_offset=data.get("operator_hour_offset"),
                 window_length_hours=data.get("window_length_hours"),
                 refresh_interval_minutes=data.get("refresh_interval_minutes"),
                 sync_interval_minutes=data.get("sync_interval_minutes"),
+                collection_rate=data.get("collection_rate"),
             )
         except ScheduleError as exc:
             log.warning("window_schedule.json invalid (%s); using defaults", exc)
@@ -139,11 +157,13 @@ class WindowSchedule:
             "window_length_hours": self.window_length_hours,
             "refresh_interval_minutes": self.refresh_interval_minutes,
             "sync_interval_minutes": self.sync_interval_minutes,
+            "collection_rate": self.collection_rate,
         }
 
     def _apply(self, *, windows=None, weekly_anchor=None,
                operator_hour_offset=None, window_length_hours=None,
-               refresh_interval_minutes=None, sync_interval_minutes=None) -> None:
+               refresh_interval_minutes=None, sync_interval_minutes=None,
+               collection_rate=None) -> None:
         """Validate + assign. Raises ScheduleError on bad input. No persist/emit."""
         if window_length_hours is not None:
             n = _as_int(window_length_hours, "window_length_hours")
@@ -169,6 +189,12 @@ class WindowSchedule:
             if not -12 <= o <= 14:
                 raise ScheduleError("operator_hour_offset must be between -12 and 14")
             self.operator_hour_offset = o
+        if collection_rate is not None:
+            c = _as_int(collection_rate, "collection_rate")
+            if not 0 <= c <= MAX_COLLECTION_RATE:
+                raise ScheduleError(
+                    f"collection_rate must be between 0 and {MAX_COLLECTION_RATE}")
+            self.collection_rate = c
         if weekly_anchor is not None:
             if not isinstance(weekly_anchor, dict):
                 raise ScheduleError("weekly_anchor must be an object")
@@ -188,6 +214,18 @@ class WindowSchedule:
         self._persist()
         self._log_event("window config updated")
         self.bus.emit("window_state_changed", {"source": "schedule"})
+        # Distinct event so the scheduler can re-derive opener/collector jobs
+        # without being entangled with manual-gate window_state_changed traffic.
+        self.bus.emit("window_schedule_updated", {"config": self.config_dict()})
+        # Surface the automation state in the Log window (operator-facing).
+        n_open = sum(1 for w in self.windows if w.get("open"))
+        n_collect = sum(1 for w in self.windows if w.get("collect"))
+        self.bus.emit("activity", {
+            "source": "window", "level": "info",
+            "message": (
+                f"window automation: opener on {n_open} window(s), "
+                f"collection on {n_collect} window(s) @ {self.collection_rate}×"),
+        })
         return self.to_dict()
 
     def sync(self, now: Optional[datetime] = None) -> dict:
@@ -235,6 +273,8 @@ class WindowSchedule:
                     "count": len(ordered),
                     "server_start": w["server_start"],
                     "night": bool(w["night_window"]),
+                    "open": bool(w.get("open")),
+                    "collect": bool(w.get("collect")),
                     "start": start,
                     "end": start + length,
                 })
@@ -308,6 +348,34 @@ class WindowSchedule:
             "hour": hr,
         }
 
+    def automation(self, now: Optional[datetime] = None) -> dict:
+        """Automation summary for the Windows tab: counts of opener/collecting
+        windows plus the next opener fire time and the next scheduled usage read.
+        Derived from the same window instances the footer uses (now carrying each
+        window's per-window ``open``/``collect`` marks), so it stays in lock-step."""
+        now = now or _now_local()
+        insts = self._instances(now)
+        future = [i for i in insts if i["start"] > now]
+        next_open = next((i["start"] for i in future if i["open"]), None)
+        offsets = collection_offset_minutes(self.window_length_hours,
+                                            self.collection_rate)
+        next_samp = None
+        if offsets:
+            cands = [i["start"] + timedelta(minutes=off)
+                     for i in future for off in offsets if i["collect"]
+                     if i["start"] + timedelta(minutes=off) > now]
+            next_samp = min(cands) if cands else None
+        n_open = sum(1 for w in self.windows if w.get("open"))
+        n_collect = sum(1 for w in self.windows if w.get("collect"))
+        return {
+            "open_windows_count": n_open,
+            "collect_windows_count": n_collect,
+            "collection_rate": self.collection_rate,
+            "sample_offsets_minutes": offsets,
+            "next_opener": _iso(next_open),
+            "next_sample": _iso(next_samp),
+        }
+
     def next_night_window_iso(self, now: Optional[datetime] = None) -> Optional[str]:
         """ISO start of the next night window (used to schedule night tasks)."""
         now = now or _now_local()
@@ -328,12 +396,37 @@ class WindowSchedule:
     def to_dict(self) -> dict:
         d = self.config_dict()
         d["status"] = self.status()
+        d["automation"] = self.automation()
         d["log"] = list(self.events)
         d["weekday_names"] = WEEKDAY_NAMES
+        d["max_collection_rate"] = MAX_COLLECTION_RATE
         return d
 
 
 # ----- helpers -----
+# Keep auto-reads strictly inside the window — never exactly at the boundary,
+# which would belong to the next window. cld20 samples ~5 min before close.
+GUARD_MINUTES = 5
+
+
+def collection_offset_minutes(window_length_hours: int, rate: int) -> list[int]:
+    """Minute offsets (from a window's start) at which to take the ``rate`` evenly
+    spaced usage reads. Read *i* lands at fraction ``i/rate`` of the window, with
+    the final read pulled back ``GUARD_MINUTES`` before close (so rate 1 samples
+    ~5 min before the window ends, matching cld20). ``rate <= 0`` → no reads."""
+    if rate <= 0:
+        return []
+    span = max(1, int(window_length_hours) * 60)
+    last = max(1, span - GUARD_MINUTES)
+    out: list[int] = []
+    for i in range(1, rate + 1):
+        off = min(round(i * span / rate), last)
+        off = max(off, 1)
+        if off not in out:
+            out.append(off)
+    return out
+
+
 def _empty_usage() -> dict:
     return {
         "window_limit_pct": None,
@@ -386,6 +479,42 @@ def _as_int(value, field: str) -> int:
         raise ScheduleError(f"{field} must be an integer")
 
 
+def _as_bool(value) -> bool:
+    """Coerce a config value to bool. Accepts real bools and the usual JSON/string
+    truthy/falsey spellings so a hand-edited window_schedule.json stays forgiving."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def _migrate_window_marks(data: dict):
+    """Upgrade an older window_schedule.json to the per-window opener/collect
+    model. The previous schema had a global ``open_windows_enabled`` bool and a
+    global ``collection_rate`` (which collected on *every* window). Preserve that
+    behaviour: if a window lacks the new ``open``/``collect`` marks, seed them
+    from the old global flags so an upgrade is invisible to the operator."""
+    windows = data.get("windows")
+    if not isinstance(windows, list):
+        return windows
+    legacy_open = _as_bool(data.get("open_windows_enabled"))
+    try:
+        legacy_collect = _as_int(data.get("collection_rate"), "collection_rate") > 0
+    except ScheduleError:
+        legacy_collect = False
+    for w in windows:
+        if not isinstance(w, dict):
+            continue
+        if "open" not in w and legacy_open:
+            w["open"] = True
+        if "collect" not in w and legacy_collect:
+            w["collect"] = True
+    return windows
+
+
 def _validate_windows(windows) -> list[dict]:
     if not isinstance(windows, list) or not windows:
         raise ScheduleError("windows must be a non-empty list")
@@ -402,6 +531,11 @@ def _validate_windows(windows) -> list[dict]:
         if start in seen:
             raise ScheduleError("window start hours must be unique")
         seen.add(start)
-        cleaned.append({"server_start": start, "night_window": bool(w.get("night_window"))})
+        cleaned.append({
+            "server_start": start,
+            "night_window": _as_bool(w.get("night_window")),
+            "open": _as_bool(w.get("open")),
+            "collect": _as_bool(w.get("collect")),
+        })
     cleaned.sort(key=lambda w: w["server_start"])
     return cleaned

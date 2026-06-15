@@ -40,6 +40,7 @@
     <button class="tab" data-tab="ops" title="Open terminal sessions for this vault">Ops</button>
     <button class="tab" data-tab="tasks">Tasks</button>
     <button class="tab" data-tab="config">Config</button>
+    <button class="tab" data-tab="windows" title="Window management, automation &amp; usage statistics">⊞ Windows</button>
     <button class="tab" data-tab="help">Help</button>
   </nav>
   <div class="header-vault-actions empty" id="header-vault-actions">
@@ -53,8 +54,6 @@
     </span>
   </div>
   <div class="header-status">
-    <button id="btn-windows" class="btn btn-sm"
-            title="Window management — configure daily/weekly work windows">⊞ Windows</button>
     <span class="conn-pill" id="conn-pill"
           title="Click to see every running tmux + ttyd session and its memory footprint">
       <span class="status-dot" id="conn-dot"></span>
@@ -222,6 +221,18 @@
           <span id="config-status" class="muted"></span>
         </div>
         <textarea id="config-editor" spellcheck="false"></textarea>
+      </section>
+
+      <section id="tab-windows" class="tab-panel">
+        <div class="toolbar">
+          <span class="landing-title">⊞ Windows</span>
+          <span class="muted small">window management · automation · usage statistics</span>
+          <div class="spacer"></div>
+          <button id="btn-windows-refresh" class="btn btn-sm" title="Reload window state &amp; stats">↻</button>
+        </div>
+        <div id="windows-root" class="windows-layout">
+          <p class="muted" style="padding:16px">Loading window management…</p>
+        </div>
       </section>
 
       <section id="tab-help" class="tab-panel">

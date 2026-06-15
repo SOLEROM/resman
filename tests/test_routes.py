@@ -24,6 +24,8 @@ from modules.window_schedule import WindowSchedule
 from modules.obsidian_push import ObsidianPush
 from modules.scheduler import Scheduler
 from modules.activity_log import ActivityLog
+from modules.window_stats import WindowStats
+from modules.window_sampler import WindowSampler
 
 
 def make_test_app(tmp_path: Path):
@@ -71,6 +73,14 @@ def make_test_app(tmp_path: Path):
     )
     scheduler = Scheduler(cm, tm, push, ws.is_window_active, bus=bus)
     activity = ActivityLog(cfg_dir / "activity.log", bus)
+    wstats = WindowStats(cfg_dir / "window_samples.jsonl", bus)
+    # Offline sampler: fake usage read + fake wakeup so no claude.ai/CLI calls.
+    wsampler = WindowSampler(
+        schedule=wsched, stats=wstats, bus=bus,
+        usage_fetch=lambda: {"reason": "ok", "session_pct": 12, "weekly_pct": 34,
+                             "session_resets_at": None, "weekly_resets_at": None},
+        wakeup=lambda: "ok",
+    )
 
     from flask import Flask, render_template
     template_dir = Path(__file__).resolve().parents[1] / "control-plane" / "templates"
@@ -78,7 +88,7 @@ def make_test_app(tmp_path: Path):
     app = Flask("resman-test", template_folder=str(template_dir), static_folder=str(static_dir))
     app.config["RESMAN"] = {
         "config": cm, "tmux": tmux, "vault_registry": reg, "window": ws,
-        "window_schedule": wsched,
+        "window_schedule": wsched, "window_stats": wstats, "window_sampler": wsampler,
         "session_manager": sm, "task_manager": tm, "obsidian_push": push,
         "scheduler": scheduler, "activity": activity, "bus": bus,
         "resman_root": tmp_path / "resman",
@@ -1205,6 +1215,74 @@ def test_window_sync_requires_csrf(tmp_path):
     app, _, _ = make_test_app(tmp_path)
     rv = app.test_client().post("/api/window/sync")
     assert rv.status_code == 403
+
+
+# ----- Window automation config + usage statistics -----
+def test_window_schedule_put_accepts_per_window_marks_and_rate(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    rv = app.test_client().put(
+        "/api/window/schedule",
+        headers={"X-Requested-With": "resman"},
+        json={"windows": [
+            {"server_start": 0, "open": True, "collect": False},
+            {"server_start": 12, "open": False, "collect": True},
+        ], "collection_rate": 3},
+    )
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["collection_rate"] == 3
+    by_start = {w["server_start"]: w for w in body["windows"]}
+    assert by_start[0]["open"] is True and by_start[0]["collect"] is False
+    assert by_start[12]["collect"] is True
+    assert body["automation"]["open_windows_count"] == 1
+    assert body["automation"]["collect_windows_count"] == 1
+    assert ctx["window_schedule"].collection_rate == 3
+
+
+def test_window_schedule_put_rejects_bad_collection_rate(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().put(
+        "/api/window/schedule",
+        headers={"X-Requested-With": "resman"},
+        json={"collection_rate": 999},
+    )
+    assert rv.status_code == 400
+
+
+def test_window_stats_empty_then_collect(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    rv = client.get("/api/window/stats")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["samples"] == []
+    assert "automation" in body
+
+    # Collect-now stores one manual reading (the test sampler uses fake usage).
+    rv = client.post("/api/window/sample", headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 200
+    assert rv.get_json()["sample"]["source"] == "manual"
+
+    rv = client.get("/api/window/stats")
+    samples = rv.get_json()["samples"]
+    assert len(samples) == 1
+    assert samples[0]["session_pct"] == 12  # from the fake usage_fetch
+
+
+def test_window_sample_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().post("/api/window/sample")
+    assert rv.status_code == 403
+
+
+def test_window_stats_clear(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["window_stats"].record(source="auto", session_pct=1, weekly_pct=2)
+    client = app.test_client()
+    assert len(client.get("/api/window/stats").get_json()["samples"]) == 1
+    rv = client.post("/api/window/stats/clear", headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 200
+    assert client.get("/api/window/stats").get_json()["samples"] == []
 
 
 # ----- Activity log -----

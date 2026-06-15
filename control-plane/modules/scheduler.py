@@ -66,10 +66,14 @@ class Scheduler:
         self._cron_state: Dict[str, dict] = {}
         self._registered_jobs: List[str] = []
         self._one_shot_jobs: Dict[str, str] = {}  # task_id -> APScheduler job id
+        # cld20-style opener/collector jobs, derived from the window schedule.
+        self.window_sampler = None
+        self._window_jobs: List[str] = []
         self._started = False
         self.bus.subscribe("config_reloaded", self._on_config_reloaded)
         self.bus.subscribe("task_scheduled", self._on_task_scheduled)
         self.bus.subscribe("task_updated", self._on_task_updated)
+        self.bus.subscribe("window_schedule_updated", self._on_window_schedule_updated)
 
     def start(self) -> None:
         if self._started:
@@ -77,6 +81,7 @@ class Scheduler:
         self._scheduler, self._kind = _make_scheduler()
         self._register_cron_tasks()
         self._register_existing_scheduled_tasks()
+        self._register_window_jobs()
         self._scheduler.add_job(
             self._push_tick, "interval", seconds=self.push_interval_seconds,
             id="obsidian-push", replace_existing=True,
@@ -121,6 +126,48 @@ class Scheduler:
                 kwargs={"entry": dict(entry)},
             )
             self._registered_jobs.append(jid)
+
+    # ----- Window opener / collector jobs (cld20-style) -----
+    def set_window_sampler(self, sampler) -> None:
+        """Attach the WindowSampler; (re)register its jobs if already started."""
+        self.window_sampler = sampler
+        if self._started:
+            self._register_window_jobs()
+
+    def _on_window_schedule_updated(self, _payload: dict) -> None:
+        """The window config changed — re-derive opener/collector jobs so the
+        live schedule and the registered cron jobs never drift."""
+        if self._started:
+            self._register_window_jobs()
+
+    def _register_window_jobs(self) -> None:
+        """Drop the existing window jobs and re-add them from the sampler's
+        projection of the current config. A no-op (after clearing) when the
+        sampler is absent or both automation features are disabled."""
+        if self._scheduler is None:
+            return
+        for jid in list(self._window_jobs):
+            try:
+                self._scheduler.remove_job(jid)
+            except Exception:
+                pass
+        self._window_jobs.clear()
+        if self.window_sampler is None:
+            return
+        try:
+            specs = self.window_sampler.jobs()
+        except Exception:
+            log.exception("window sampler job derivation failed")
+            return
+        for spec in specs:
+            try:
+                trigger = CronTrigger(hour=spec["hour"], minute=spec["minute"])
+                self._scheduler.add_job(
+                    spec["run"], trigger, id=spec["id"], replace_existing=True,
+                )
+                self._window_jobs.append(spec["id"])
+            except Exception:
+                log.exception("failed to register window job %s", spec.get("id"))
 
     def _push_tick(self) -> None:
         try:

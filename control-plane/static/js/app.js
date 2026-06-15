@@ -34,6 +34,10 @@ const state = {
   logOpen: false,
   logFilter: "",
   logUnseenError: false,
+  // ⊞ Windows tab: cached schedule draft + usage-stats payload + chart range.
+  windowSchedule: null,
+  windowStats: null,
+  windowStatsRange: 30,  // days shown in the usage charts (7 | 30 | 90)
 };
 
 const ACTIVITY_LOG_MAX = 2000;
@@ -286,6 +290,7 @@ function showPanel(tabName) {
   if (tabName === "config") loadConfig();
   if (tabName === "tasks") loadTasks();
   if (tabName === "help") loadHelp();
+  if (tabName === "windows") loadWindowsTab();
   if (tabName === "home") loadLanding();
   if (tabName === "wiki" && state.selectedVault) loadWikiTree();
   // "home" and "help" are vault-independent global views — don't pin them as
@@ -1705,51 +1710,15 @@ async function loadWindow() {
   renderWindow();
 }
 
-// The manual window gate (active/between/ended) no longer lives in the footer —
-// the schedule line shows window status there. The gate's state + controls live
-// in the ⊞ Windows modal (renderManualGate). renderWindow just keeps the
-// status-bar class in sync and refreshes the modal section if it's open.
+// The manual window gate (active/between/ended) is not surfaced in the UI — the
+// schedule drives the windows. renderWindow just keeps the footer status-bar
+// class in sync with the gate state so the bar styling stays correct.
 function renderWindow() {
   const w = state.window || {};
   const bar = $("#status-bar");
   if (bar) {
     bar.classList.remove("active", "between", "ended");
     bar.classList.add(w.window_state || "between");
-  }
-  renderManualGate();
-}
-
-function renderManualGate() {
-  const root = $("#wc-manual");
-  if (!root) return;  // modal not open
-  const w = state.window || {};
-  const st = (w.window_state || "between").toUpperCase();
-  let detail = "";
-  if (w.window_state === "active" && w.window_ends_at) {
-    const diffSec = Math.floor((new Date(w.window_ends_at) - new Date()) / 1000);
-    detail = diffSec > 0
-      ? ` · ends in ${fmtCountdown(diffSec)}`
-      : ` · overrun by ${fmtCountdown(-diffSec)}`;
-  }
-  root.innerHTML =
-    `<div class="wc-check"><span>Manual gate</span><span>${esc(st)}${esc(detail)}</span></div>`;
-}
-
-async function windowAction(action) {
-  let payload = { action };
-  if (action === "start") {
-    const d = window.prompt("Window duration in hours (1-12)?", "5");
-    if (!d) return;
-    payload.duration_hours = parseFloat(d);
-  }
-  try {
-    const w = await api("/api/window", { method: "POST", body: JSON.stringify(payload) });
-    state.window = w;
-    renderWindow();
-    renderManualGate();
-    await loadTasks();
-  } catch (err) {
-    alert("Window action failed: " + err.message);
   }
 }
 
@@ -1780,6 +1749,11 @@ async function loadWindowSchedule() {
   }
   renderWindowSchedule();
   renderTriggerWindowOptions();  // keep the task "When" picker in sync
+  // Keep the ⊞ Windows tab's read-only panels live without clobbering the
+  // (possibly half-edited) config inputs in the Management/Configuration cards.
+  if (isWindowsTabActive() && $("#wc-log-body")) {
+    renderWindowLog(state.windowSchedule);
+  }
 }
 
 // The footer shows two meters — the local window (green) and the weekly cycle
@@ -2045,13 +2019,17 @@ function hookModalCloseOnce(fn) {
   obs.observe(backdrop, { attributes: true, attributeFilter: ["hidden"] });
 }
 
-// ----- window management config modal (top-bar ⊞ Windows) -----
-async function openWindowsConfig() {
+// ----- ⊞ Windows tab: management · automation · usage statistics -----
+// Replaces the old top-bar popup. The same #wc-* render helpers drive the
+// Management card; two new cards add automation config + a usage-stats view.
+async function loadWindowsTab() {
+  const root = $("#windows-root");
+  if (!root) return;
   let sched;
   try {
     sched = await api("/api/window/schedule");
   } catch (err) {
-    alert("Could not load window schedule: " + err.message);
+    root.innerHTML = `<p class="trigger-error" style="padding:16px">Could not load window schedule: ${esc(err.message)}</p>`;
     return;
   }
   state.windowSchedule = sched;
@@ -2060,6 +2038,7 @@ async function openWindowsConfig() {
   state.windowDraft = {
     windows: (sched.windows || []).map((w) => ({
       server_start: w.server_start, night_window: !!w.night_window,
+      open: !!w.open, collect: !!w.collect,
     })),
     weekly_anchor: {
       weekday: (sched.weekly_anchor || {}).weekday ?? 0,
@@ -2069,82 +2048,125 @@ async function openWindowsConfig() {
     window_length_hours: sched.window_length_hours ?? 5,
     refresh_interval_minutes: sched.refresh_interval_minutes ?? 1,
     sync_interval_minutes: sched.sync_interval_minutes ?? 10,
+    collection_rate: sched.collection_rate ?? 0,
   };
   const d = state.windowDraft;
+  const maxRate = sched.max_collection_rate ?? 12;
   const dayOpts = names.map((n, i) =>
     `<option value="${i}" ${i === d.weekly_anchor.weekday ? "selected" : ""}>${esc(n)}</option>`
   ).join("");
-  const body = `
-    <div class="wc">
-      <div class="wc-grid">
-        <label for="wc-length">Window length (hours)</label>
-        <input type="number" id="wc-length" min="1" max="24" value="${d.window_length_hours}">
-        <label for="wc-offset">Operator hour offset</label>
-        <input type="number" id="wc-offset" min="-12" max="14" value="${d.operator_hour_offset}">
-        <label for="wc-weekday">Weekly anchor</label>
-        <div class="wc-anchor">
-          <select id="wc-weekday">${dayOpts}</select>
-          <input type="number" id="wc-anchor-hour" min="0" max="23" value="${d.weekly_anchor.hour}"
-                 title="hour (0–23)" style="width:64px">
-          <span class="muted small">day + hour the weekly cycle resets</span>
+  const saveRow = `
+    <div class="wc-save-row">
+      <button type="button" class="btn btn-sm btn-success wc-save">Save configuration</button>
+      <span class="wc-status muted small"></span>
+      <span class="wc-error trigger-error"></span>
+    </div>`;
+  root.innerHTML = `
+    <div class="win-card">
+      <div class="win-card-head"><strong>Settings</strong></div>
+      <div class="wc">
+        <div class="wc-grid">
+          <label for="wc-length">Window length (hours)</label>
+          <div class="wc-anchor">
+            <input type="number" id="wc-length" min="1" max="24" value="${d.window_length_hours}" style="width:72px">
+            <span class="muted small">length of each session window (Claude's is 5h)</span>
+          </div>
+          <label for="wc-offset">Operator hour offset</label>
+          <div class="wc-anchor">
+            <input type="number" id="wc-offset" min="-12" max="14" value="${d.operator_hour_offset}" style="width:72px">
+            <span class="muted small">hours your local time leads the server clock (display only)</span>
+          </div>
+          <label for="wc-weekday">Weekly anchor</label>
+          <div class="wc-anchor">
+            <select id="wc-weekday">${dayOpts}</select>
+            <input type="number" id="wc-anchor-hour" min="0" max="23" value="${d.weekly_anchor.hour}"
+                   title="hour (0–23)" style="width:64px">
+            <span class="muted small">day + hour the weekly cycle resets</span>
+          </div>
+          <label for="wc-collection-rate">Collection rate</label>
+          <div class="wc-anchor">
+            <input type="number" id="wc-collection-rate" min="0" max="${maxRate}" value="${d.collection_rate}" style="width:72px">
+            <span class="muted small">reads per <em>collecting</em> window (0 = off, max ${maxRate}); evenly spaced, last ~5 min before close</span>
+          </div>
+          <label for="wc-refresh">Status refresh (minutes)</label>
+          <div class="wc-anchor">
+            <input type="number" id="wc-refresh" min="1" max="60" value="${d.refresh_interval_minutes}" style="width:80px">
+            <span class="muted small">redraw the footer bars from cached state — no claude.ai call</span>
+          </div>
+          <label for="wc-sync">Limit sync (minutes)</label>
+          <div class="wc-anchor">
+            <input type="number" id="wc-sync" min="1" max="1440" value="${d.sync_interval_minutes}" style="width:80px">
+            <span class="muted small">pull fresh session/weekly limits from claude.ai</span>
+          </div>
         </div>
-        <label for="wc-refresh">Status refresh (minutes)</label>
-        <div class="wc-anchor">
-          <input type="number" id="wc-refresh" min="1" max="60" value="${d.refresh_interval_minutes}"
-                 style="width:80px">
-          <span class="muted small">redraw the footer bars from cached state — no claude.ai call</span>
-        </div>
-        <label for="wc-sync">Limit sync (minutes)</label>
-        <div class="wc-anchor">
-          <input type="number" id="wc-sync" min="1" max="1440" value="${d.sync_interval_minutes}"
-                 style="width:80px">
-          <span class="muted small">pull fresh session/weekly limits from claude.ai</span>
-        </div>
+        ${saveRow}
       </div>
-      <div class="wc-windows-head">
+    </div>
+
+    <div class="win-card">
+      <div class="win-card-head">
         <strong>Daily windows</strong>
+        <div class="spacer"></div>
         <button type="button" class="btn btn-xs" id="wc-add">+ Add window</button>
       </div>
-      <div id="wc-windows"></div>
-      <div class="wc-section">
-        <strong>Checks &amp; status</strong>
-        <div id="wc-checks-body"></div>
-      </div>
-      <div class="wc-section">
-        <strong>Manual gate</strong>
-        <div id="wc-manual"></div>
-        <div class="wc-manual-actions">
-          <button type="button" class="btn btn-xs" data-win="start">Start window now</button>
-          <button type="button" class="btn btn-xs" data-win="end">End window now</button>
-          <button type="button" class="btn btn-xs" data-win="start_weekly">Start weekly</button>
-          <button type="button" class="btn btn-xs" data-win="end_weekly">End weekly</button>
+      <div class="wc">
+        <p class="muted small wc-marks-hint">Tick <strong>open</strong> to have resman open/anchor that window
+          (<code>claude -p "hi"</code> at its start), and <strong>collect</strong> to take usage reads during it.</p>
+        <div id="wc-windows"></div>
+        <div class="wc-section">
+          <strong>Recent window log</strong>
+          <div id="wc-log-body"></div>
         </div>
-        <p class="muted small">Tasks created while the gate is inactive are
-          deferred until a window starts. (The schedule above is informational;
-          this gate is what actually allows work to run.)</p>
+        ${saveRow}
       </div>
-      <div class="wc-section">
-        <strong>Recent window log</strong>
-        <div id="wc-log-body"></div>
+    </div>
+
+    <div class="win-card win-card-wide">
+      <div class="win-card-head">
+        <strong>Usage statistics</strong>
+        <div class="win-range" id="win-range">
+          <button type="button" class="btn btn-xs" data-range="7">7d</button>
+          <button type="button" class="btn btn-xs" data-range="30">30d</button>
+          <button type="button" class="btn btn-xs" data-range="90">90d</button>
+        </div>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-xs" id="wc-collect-now" title="Take one usage reading now and store it">Collect now</button>
+        <button type="button" class="btn btn-xs" id="wc-clear-stats" title="Clear stored readings">Clear</button>
       </div>
-      <div id="wc-error" class="trigger-error"></div>
+      <div id="windows-stats"><p class="muted small" style="padding:8px">Loading statistics…</p></div>
     </div>`;
-  showModal("Window management", body, saveWindowsConfig);
+
   renderWindowRows();
-  renderWindowChecks(sched);
   renderWindowLog(sched);
-  renderManualGate();
-  $$(".wc-manual-actions [data-win]").forEach((b) => b.addEventListener("click", async () => {
-    await windowAction(b.dataset.win);
-  }));
+
   const add = $("#wc-add");
   if (add) add.addEventListener("click", () => {
     const used = new Set(state.windowDraft.windows.map((w) => w.server_start));
     let h = 0;
     while (used.has(h) && h < 23) h++;
-    state.windowDraft.windows.push({ server_start: h, night_window: false });
+    state.windowDraft.windows.push({ server_start: h, night_window: false, open: false, collect: false });
     renderWindowRows();
   });
+  // Both cards carry a Save button; either saves all settings + window marks.
+  $$("#windows-root .wc-save").forEach((b) => b.addEventListener("click", saveWindowsConfig));
+  const rangeBox = $("#win-range");
+  if (rangeBox) rangeBox.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-range]");
+    if (!b) return;
+    state.windowStatsRange = parseInt(b.dataset.range, 10);
+    renderWindowStats();
+  });
+  const collectNow = $("#wc-collect-now");
+  if (collectNow) collectNow.addEventListener("click", collectUsageNow);
+  const clearStats = $("#wc-clear-stats");
+  if (clearStats) clearStats.addEventListener("click", clearWindowStats);
+
+  loadWindowStats();
+}
+
+function isWindowsTabActive() {
+  const p = $("#tab-windows");
+  return !!(p && p.classList.contains("active"));
 }
 
 function renderWindowRows() {
@@ -2154,9 +2176,11 @@ function renderWindowRows() {
   root.innerHTML = draft.windows.map((w, i) => `
     <div class="wc-window-row" data-i="${i}">
       <span class="muted small">#${i + 1}</span>
-      <label for="wc-start-${i}">start hour</label>
+      <label for="wc-start-${i}">start</label>
       <input type="number" id="wc-start-${i}" class="wc-start" data-i="${i}" min="0" max="23" value="${w.server_start}">
-      <label class="wc-night"><input type="checkbox" class="wc-nightbox" data-i="${i}" ${w.night_window ? "checked" : ""}> night 🌙</label>
+      <label class="wc-mark"><input type="checkbox" class="wc-nightbox" data-i="${i}" ${w.night_window ? "checked" : ""}> night 🌙</label>
+      <label class="wc-mark wc-mark-open"><input type="checkbox" class="wc-openbox" data-i="${i}" ${w.open ? "checked" : ""}> open</label>
+      <label class="wc-mark wc-mark-collect"><input type="checkbox" class="wc-collectbox" data-i="${i}" ${w.collect ? "checked" : ""}> collect</label>
       <button type="button" class="btn btn-xs btn-danger wc-remove" data-i="${i}" title="Remove window">×</button>
     </div>`).join("") || `<p class="muted small">No windows — add at least one.</p>`;
   root.querySelectorAll(".wc-start").forEach((el) => el.addEventListener("change", (e) => {
@@ -2165,31 +2189,16 @@ function renderWindowRows() {
   root.querySelectorAll(".wc-nightbox").forEach((el) => el.addEventListener("change", (e) => {
     state.windowDraft.windows[+e.target.dataset.i].night_window = e.target.checked;
   }));
+  root.querySelectorAll(".wc-openbox").forEach((el) => el.addEventListener("change", (e) => {
+    state.windowDraft.windows[+e.target.dataset.i].open = e.target.checked;
+  }));
+  root.querySelectorAll(".wc-collectbox").forEach((el) => el.addEventListener("change", (e) => {
+    state.windowDraft.windows[+e.target.dataset.i].collect = e.target.checked;
+  }));
   root.querySelectorAll(".wc-remove").forEach((el) => el.addEventListener("click", (e) => {
     state.windowDraft.windows.splice(+e.target.dataset.i, 1);
     renderWindowRows();
   }));
-}
-
-function renderWindowChecks(sched) {
-  const root = $("#wc-checks-body");
-  if (!root) return;
-  const st = sched.status || {};
-  const line = (label, inst) => {
-    if (!inst) return `<div class="wc-check"><span>${label}</span><span class="muted">—</span></div>`;
-    const extra = inst.night ? " 🌙" : "";
-    return `<div class="wc-check"><span>${label}</span>
-      <span>Window ${inst.index}/${inst.count} · ${clockOf(inst.start)}–${clockOf(inst.end)}${extra}</span></div>`;
-  };
-  let weekly = "";
-  if (st.weekly) {
-    const pct = Math.round((st.weekly.fraction || 0) * 100);
-    weekly = `<div class="wc-check"><span>Weekly cycle</span>
-      <span>${pct}% · resets in ${fmtCountdown(st.weekly.seconds_remaining)}
-      (${esc(st.weekly.weekday_name)} ${String(st.weekly.hour).padStart(2, "0")}:00)</span></div>`;
-  }
-  root.innerHTML = line("Current", st.current) + line("Next", st.next)
-                 + line("Next night", st.next_night) + weekly;
 }
 
 function renderWindowLog(sched) {
@@ -2203,13 +2212,16 @@ function renderWindowLog(sched) {
 }
 
 async function saveWindowsConfig() {
-  const errEl = $("#wc-error");
-  if (errEl) errEl.textContent = "";
+  // Both cards carry a status/error span; update all of them.
+  const setStatus = (s) => $$("#windows-root .wc-status").forEach((e) => (e.textContent = s));
+  const setError = (s) => $$("#windows-root .wc-error").forEach((e) => (e.textContent = s));
+  setStatus(""); setError("");
   const lengthEl = $("#wc-length"), offsetEl = $("#wc-offset"),
         weekdayEl = $("#wc-weekday"), hourEl = $("#wc-anchor-hour"),
-        refreshEl = $("#wc-refresh"), syncEl = $("#wc-sync");
-  if (!lengthEl || !offsetEl || !weekdayEl || !hourEl || !refreshEl || !syncEl)
-    return false;  // modal gone
+        refreshEl = $("#wc-refresh"), syncEl = $("#wc-sync"),
+        rateEl = $("#wc-collection-rate");
+  if (!lengthEl || !offsetEl || !weekdayEl || !hourEl || !refreshEl || !syncEl ||
+      !rateEl) return false;  // tab re-rendered out from under us
   const draft = state.windowDraft;
   const payload = {
     windows: draft.windows,
@@ -2221,17 +2233,132 @@ async function saveWindowsConfig() {
     window_length_hours: parseInt(lengthEl.value, 10),
     refresh_interval_minutes: parseInt(refreshEl.value, 10),
     sync_interval_minutes: parseInt(syncEl.value, 10),
+    collection_rate: parseInt(rateEl.value, 10),
   };
   try {
-    state.windowSchedule = await api("/api/window/schedule", {
+    const sched = await api("/api/window/schedule", {
       method: "PUT", body: JSON.stringify(payload),
     });
+    state.windowSchedule = sched;
     renderWindowSchedule();
+    renderWindowLog(sched);
     applyWindowTimers();  // re-arm with the new cadences immediately
+    loadWindowStats();    // next-sample may have shifted
+    setStatus("saved");
     return true;
   } catch (err) {
-    if (errEl) errEl.textContent = err.body?.error || err.message;
-    return false;  // keep modal open so the user can fix the input
+    setError(err.body?.error || err.message);
+    return false;
+  }
+}
+
+// ----- ⊞ Windows tab: usage statistics (hand-rolled SVG, no chart lib) -----
+async function loadWindowStats() {
+  try {
+    state.windowStats = await api("/api/window/stats?limit=1000");
+  } catch (err) {
+    const root = $("#windows-stats");
+    if (root) root.innerHTML = `<p class="trigger-error" style="padding:8px">Could not load statistics: ${esc(err.message)}</p>`;
+    return;
+  }
+  renderWindowStats();
+}
+
+function renderWindowStats() {
+  const root = $("#windows-stats");
+  if (!root) return;
+  const data = state.windowStats || {};
+  const all = data.samples || [];
+  const range = state.windowStatsRange || 30;
+  $$("#win-range [data-range]").forEach((b) =>
+    b.classList.toggle("active", parseInt(b.dataset.range, 10) === range));
+  const cutoff = Date.now() / 1000 - range * 86400;
+  const samples = all.filter((s) => (s.ts || 0) >= cutoff);
+  const sessionPts = samples.filter((s) => s.session_pct != null)
+    .map((s) => ({ ts: s.ts, pct: s.session_pct }));
+  // Openers carry no weekly half (cld20) — exclude defensively anyway.
+  const weeklyPts = samples.filter((s) => s.weekly_pct != null && s.source !== "opener")
+    .map((s) => ({ ts: s.ts, pct: s.weekly_pct }));
+
+  const latest = (data.summary || {}).latest;
+  const a = data.automation || {};
+  const sp = latest && latest.session_pct != null ? Math.round(latest.session_pct) + "%" : "?";
+  const wp = latest && latest.weekly_pct != null ? Math.round(latest.weekly_pct) + "%" : "?";
+  const summary = `
+    <div class="win-summary">
+      <span class="win-sum-item">latest · <strong>session ${sp}</strong> · <strong>weekly ${wp}</strong></span>
+      <span class="win-sum-item muted">${(data.summary || {}).count || 0} readings stored</span>
+      ${a.next_opener ? `<span class="win-sum-item muted">next opener ${clockOf(a.next_opener)}</span>` : ""}
+      ${a.next_sample ? `<span class="win-sum-item muted">next sample ${clockOf(a.next_sample)}</span>` : ""}
+    </div>`;
+
+  root.innerHTML = `
+    ${summary}
+    <div class="win-charts">
+      <div class="win-chart">
+        <div class="win-chart-title">Session (5-hour) utilization</div>
+        ${svgLineChart(sessionPts, { color: "var(--success, #3fb950)", label: "session" })}
+      </div>
+      <div class="win-chart">
+        <div class="win-chart-title">Weekly utilization</div>
+        ${svgLineChart(weeklyPts, { color: "var(--accent, #4493f8)", label: "weekly" })}
+      </div>
+    </div>`;
+}
+
+// Minimal line chart: a 0–100 SVG with gridlines, area fill, and points. Scales
+// to container width via viewBox; uniform aspect so dots/text don't distort.
+function svgLineChart(points, opts) {
+  if (!points.length)
+    return `<div class="win-chart-empty muted small">no readings in this range</div>`;
+  const W = 640, H = 150, padL = 26, padR = 8, padT = 10, padB = 6;
+  const xs = points.map((p) => p.ts);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const spanX = (maxX - minX) || 1;
+  const sx = (t) => padL + ((t - minX) / spanX) * (W - padL - padR);
+  const sy = (v) => padT + (1 - Math.max(0, Math.min(100, v)) / 100) * (H - padT - padB);
+  const coords = points.map((p) => [sx(p.ts), sy(p.pct)]);
+  const line = coords.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join("");
+  const lastX = coords[coords.length - 1][0].toFixed(1);
+  const firstX = coords[0][0].toFixed(1);
+  const area = `${line}L${lastX},${sy(0).toFixed(1)}L${firstX},${sy(0).toFixed(1)}Z`;
+  const grid = [0, 50, 100].map((v) => {
+    const y = sy(v).toFixed(1);
+    return `<line class="win-grid" x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"></line>` +
+           `<text class="win-axis" x="2" y="${(+y + 3).toFixed(1)}">${v}</text>`;
+  }).join("");
+  const dots = coords.map(([x, y]) =>
+    `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.1"></circle>`).join("");
+  const last = points[points.length - 1];
+  return `<svg class="win-chart-svg" viewBox="0 0 ${W} ${H}" style="--ch:${opts.color}">
+      ${grid}
+      <path class="win-area" d="${area}"></path>
+      <path class="win-line" d="${line}"></path>
+      <g class="win-dots">${dots}</g>
+    </svg>
+    <div class="win-chart-foot muted small">latest ${Math.round(last.pct)}% · ${points.length} pts</div>`;
+}
+
+async function collectUsageNow() {
+  const btn = $("#wc-collect-now");
+  if (btn) { btn.disabled = true; btn.textContent = "Collecting…"; }
+  try {
+    await api("/api/window/sample", { method: "POST" });
+    await loadWindowStats();
+  } catch (err) {
+    alert("Collect failed: " + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Collect now"; }
+  }
+}
+
+async function clearWindowStats() {
+  if (!window.confirm("Clear all stored usage readings?")) return;
+  try {
+    await api("/api/window/stats/clear", { method: "POST" });
+    await loadWindowStats();
+  } catch (err) {
+    alert("Clear failed: " + err.message);
   }
 }
 
@@ -2727,8 +2854,9 @@ function setupStatusBar() {
   renderThemeSwitch();
   const connPill = $("#conn-pill");
   if (connPill) connPill.addEventListener("click", openSessionsOverview);
-  const btnWindows = $("#btn-windows");
-  if (btnWindows) btnWindows.addEventListener("click", openWindowsConfig);
+  // Window management now lives in its own ⊞ Windows tab (not a top-bar popup).
+  const btnWinRefresh = $("#btn-windows-refresh");
+  if (btnWinRefresh) btnWinRefresh.addEventListener("click", () => loadWindowsTab());
   const btnSync = $("#btn-window-sync");
   if (btnSync) btnSync.addEventListener("click", syncWindowState);
   const btnLog = $("#btn-activity-log");
@@ -2927,6 +3055,7 @@ function setupSocket() {
       if (log.autoscroll !== false) pre.scrollTop = pre.scrollHeight;
     });
     sock.on("window_state_changed", () => { loadWindow(); loadWindowSchedule(); });
+    sock.on("window_sample_added", () => { if (isWindowsTabActive()) loadWindowStats(); });
     sock.on("activity_logged", (e) => onActivityLogged(e));
     sock.on("session_crashed", (p) => {
       alert("Terminal session crashed: " + (p?.message || ""));

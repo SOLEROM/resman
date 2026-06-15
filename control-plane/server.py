@@ -41,6 +41,8 @@ from modules.tmux_manager import TmuxManager
 from modules.vault_registry import VaultRegistry
 from modules.websocket_handlers import attach_socketio
 from modules.window_schedule import WindowSchedule
+from modules.window_stats import WindowStats
+from modules.window_sampler import WindowSampler
 from modules import claude_usage
 from modules.activity_log import ActivityLog, install_logging_bridge
 from modules.window_state import WindowState
@@ -160,6 +162,19 @@ def build_app(
         bus=bus,
     )
 
+    # cld20-style window automation: a durable usage-reading store + the
+    # opener/collector sampler. Both gated by window_schedule config (default
+    # OFF). The scheduler derives the cron jobs from the live schedule.
+    window_stats = WindowStats(config_dir / "window_samples.jsonl", bus)
+    window_sampler = WindowSampler(
+        schedule=window_schedule,
+        stats=window_stats,
+        bus=bus,
+        usage_fetch=claude_usage.fetch_usage,
+        wakeup=claude_usage.wakeup,
+    )
+    scheduler.set_window_sampler(window_sampler)
+
     # Volatile activity log (footer "Log" window). Created last so it captures
     # live operations, not startup replay churn; lives in /tmp and is deleted
     # on exit. install_logging_bridge mirrors WARNING+ from resman loggers.
@@ -186,6 +201,8 @@ def build_app(
         "mount_manager": mount_manager,
         "window": window,
         "window_schedule": window_schedule,
+        "window_stats": window_stats,
+        "window_sampler": window_sampler,
         "session_manager": session_manager,
         "task_manager": task_manager,
         "obsidian_push": obsidian_push,

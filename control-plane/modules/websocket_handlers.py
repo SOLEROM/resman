@@ -20,6 +20,7 @@ EVENT_NAMES = (
     "task_scheduled",
     "cron_skip_warning",
     "activity_logged",
+    "window_sample_added",
 )
 
 

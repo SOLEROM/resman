@@ -95,3 +95,69 @@ def test_cron_status_table():
     rows = sched.cron_status()
     assert rows[0]["name"] == "abc"
     assert rows[0]["skip_count"] == 1
+
+
+# ----- window opener/collector job registration -----
+class FakeAPS:
+    """Records add/remove_job calls so we can assert window-job wiring without
+    spinning up a real APScheduler."""
+    def __init__(self):
+        self.jobs = {}
+    def add_job(self, fn, trigger=None, id=None, replace_existing=False, **kw):
+        self.jobs[id] = (fn, trigger)
+    def remove_job(self, jid):
+        self.jobs.pop(jid, None)
+
+
+def _window_sampler(tmp_path, bus):
+    from modules.window_schedule import WindowSchedule
+    from modules.window_stats import WindowStats
+    from modules.window_sampler import WindowSampler
+    sched = WindowSchedule(tmp_path / "window_schedule.json", bus)
+    sched.load()
+    stats = WindowStats(tmp_path / "window_samples.jsonl", bus)
+    sampler = WindowSampler(schedule=sched, stats=stats, bus=bus,
+                            usage_fetch=lambda: {"reason": "ok"}, wakeup=lambda: "ok")
+    return sched, sampler
+
+
+def _ticked(marks):
+    return [{"server_start": h, **marks} for h in (0, 5, 10, 15, 20)]
+
+
+def test_window_jobs_registered_and_refreshed(tmp_path):
+    bus = EventBus()
+    sched_obj = _make_started(FakeCM([]), bus)
+    wsched, sampler = _window_sampler(tmp_path, bus)
+    sched_obj.set_window_sampler(sampler)
+    # Nothing ticked by default → no window jobs registered.
+    assert not [j for j in sched_obj._scheduler.jobs if j.startswith("window::")]
+
+    # Ticking open+collect on every window emits window_schedule_updated, which
+    # the scheduler observes and re-derives the jobs from.
+    wsched.update(windows=_ticked({"open": True, "collect": True}), collection_rate=2)
+    ids = [j for j in sched_obj._scheduler.jobs if j.startswith("window::")]
+    openers = [j for j in ids if "opener" in j]
+    samples = [j for j in ids if "sample" in j]
+    assert len(openers) == len(wsched.windows)
+    assert len(samples) == 2 * len(wsched.windows)
+
+
+def test_window_jobs_cleared_when_disabled(tmp_path):
+    bus = EventBus()
+    sched_obj = _make_started(FakeCM([]), bus)
+    wsched, sampler = _window_sampler(tmp_path, bus)
+    sched_obj.set_window_sampler(sampler)
+    wsched.update(windows=_ticked({"collect": True}), collection_rate=2)
+    assert any(j.startswith("window::sample") for j in sched_obj._scheduler.jobs)
+    wsched.update(collection_rate=0)
+    assert not any(j.startswith("window::") for j in sched_obj._scheduler.jobs)
+
+
+def _make_started(cm, bus):
+    """A Scheduler with a fake APS injected and marked started, so window-job
+    registration runs without a live scheduler/event loop."""
+    sched = Scheduler(cm, FakeTM(), FakePush(), is_window_active=lambda: True, bus=bus)
+    sched._scheduler = FakeAPS()
+    sched._started = True
+    return sched
