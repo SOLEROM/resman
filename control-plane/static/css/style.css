@@ -140,6 +140,16 @@ html, body {
 .header-tabs .tab.active {
   color: var(--text-primary); border-bottom-color: var(--accent);
 }
+/* Tab icons: monochrome glyphs that inherit the tab colour, so they tint on
+   hover/active and recolour with the theme (same behaviour as ⊞ Windows). The
+   fixed-width box keeps the labels aligned regardless of glyph width. */
+.header-tabs .tab .tab-ico {
+  display: inline-block; width: 1.1em; margin-right: 5px;
+  text-align: center; font-size: 13px; line-height: 1;
+  opacity: .85; font-variant-emoji: text;
+}
+.header-tabs .tab:hover .tab-ico,
+.header-tabs .tab.active .tab-ico { opacity: 1; }
 
 /* Per-vault action buttons live in the header, between the tabs and the
    connection indicator. The whole group is hidden until a vault is
