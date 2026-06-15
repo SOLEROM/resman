@@ -22,7 +22,7 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 - [Sessions](sessions.md) — Ops tab, Claude vs shell, tabs, renaming, Obsidian
 - [Tasks](tasks.md) — operations-first trigger, live logs, scheduling, ALL-vault parent/child, cancel/compaction; sidebar `↘` shortcut for URL ingest
 - [Wiki](wiki.md) — the per-vault Wiki tab, sidebar page tree, read/unread tracking, search, random, clickable `[[wikilinks]]`
-- [Window state](window-state.md) — when work is allowed to run; daily/weekly window schedule (⊞ Windows); footer usage meters + limits
+- [Window state](window-state.md) — when work is allowed to run; the **⊞ Windows** tab (daily-window schedule, per-window open/collect marks, collection rate, usage statistics); openers/collectors automation; footer usage meters + limits
 - [Activity log](activity-log.md) — the footer **📋 Log** window: live operations + errors, while the app runs
 - [Scheduler](scheduler.md) — cron tasks and skip-when-inactive
 - [Configuration](config.md) — `resman.yaml` and `schedule.yaml`

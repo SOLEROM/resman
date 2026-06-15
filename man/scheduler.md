@@ -1,7 +1,7 @@
 # Scheduler
 
 resman ships an APScheduler `GeventScheduler` (cooperative with eventlet) that
-runs three kinds of jobs:
+runs four kinds of jobs:
 
 1. **Recurring cron tasks** defined in `config/schedule.yaml`.
 2. **One-shot scheduled tasks** — anything created from the **Tasks** tab
@@ -10,6 +10,9 @@ runs three kinds of jobs:
 3. **ObsidianPush** — a built-in 60-second loop that writes
    `_resman/status.md` into each vault so the panel's state shows up in
    Obsidian's graph view.
+4. **Window openers / collectors** — `window::*` cron jobs derived from the
+   per-window **open** / **collect** marks in the **⊞ Windows** tab. See
+   [Window state → Openers and collectors](window-state.md).
 
 ## Defining a cron task
 
@@ -78,6 +81,24 @@ Obsidian without having the panel open.
 
 If the vault path is missing or unwritable, the push silently no-ops for that
 vault — never breaks the loop.
+
+## Window openers and collectors
+
+When you save the **⊞ Windows** schedule, resman re-derives a set of
+`window::*` cron jobs from the per-window **open** / **collect** marks (a
+`window_schedule_updated` event triggers the refresh — the old `window::*` jobs
+are removed and the new set registered, so saving is idempotent):
+
+- `window::opener::<i>` — one per **open** window, fires at the window's start
+  and runs `claude -p "hi"` to anchor Claude's rolling window.
+- `window::sample::<i>::<slot>` — `collection_rate` jobs per **collect** window,
+  spaced through the window, each storing a usage reading.
+
+Unlike cron tasks, these are **not** gated on the manual window state — they're
+the mechanism that anchors and samples windows, so they run on their own
+schedule. They never spend tokens on the reads; only the opener's
+`claude -p "hi"` does. Full detail on the
+[Window state](window-state.md) page.
 
 ## Skip-count threshold (open question)
 

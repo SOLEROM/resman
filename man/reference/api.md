@@ -48,8 +48,15 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/window` | Current window state |
-| POST | `/api/window/sync` | `{action: start|end|start_weekly|end_weekly}` |
+| GET | `/api/window` | Current manual-gate state (active / between / ended) |
+| POST | `/api/window` | Set the gate: `{action: start|end|start_weekly|end_weekly}` (CSRF) |
+| POST | `/api/window/sync` | On-demand **usage-limit** refresh (read-only, no tokens) — powers the footer `⟳ sync` |
+| GET | `/api/window/schedule` | Configured windows + marks + live status (current/next/weekly) + log |
+| PUT | `/api/window/schedule` | Update schedule (body keys: `windows` with per-window `open`/`collect`, `weekly_anchor`, `operator_hour_offset`, `window_length_hours`, `refresh_interval_minutes`, `sync_interval_minutes`, `collection_rate`) (CSRF) |
+| GET | `/api/window/next-night` | ISO start of the next night window |
+| GET | `/api/window/stats` | Stored usage readings + summary + automation counts |
+| POST | `/api/window/sample` | Collect-now: take one reading and store it (CSRF, read-only) |
+| POST | `/api/window/stats/clear` | Clear stored readings (CSRF) |
 
 ## Config
 
@@ -83,6 +90,7 @@ Legacy: `file=system.yaml` still accepted as an alias for `resman.yaml`.
 | `task_log_appended` | `{task_id, chunk}` | A line of stdout/stderr from a running task — the Tasks tab uses this for live tailing without polling |
 | `task_scheduled` | `{task_id, scheduled_for}` | A task entered `scheduled` state and the Scheduler should register a one-shot DateTrigger |
 | `window_state_changed` | new state | Window transitions between `active` / `between` / `ended` |
+| `window_sample_added` | sample dict | A usage reading was stored (opener / auto / manual); the ⊞ Windows statistics refresh live |
 | `session_crashed` | `{session_id, vault, message}` | A ttyd process died unexpectedly |
 | `session_error` | `{vault, reason}` | `TmuxManager.create_session()` failed |
 | `child_state_changed` | `{parent_id, child_id, state}` | ALL-vault child completed/failed; parent re-aggregates |
