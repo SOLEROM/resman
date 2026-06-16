@@ -111,6 +111,17 @@ def validate_resman_yaml(data: Any) -> dict:
         normalized = os.path.normpath(sp)
         if normalized in ("/", "/home", "/Users", "/mnt", "/data") or normalized == "":
             raise ConfigError(f"resman.yaml: scan_paths cannot be a root path ({sp})")
+    inbox = data.get("inbox") or {}
+    if not isinstance(inbox, dict):
+        raise ConfigError("resman.yaml: 'inbox' must be a mapping")
+    ignore_pages = inbox.get("ignore_pages") or []
+    if not isinstance(ignore_pages, list):
+        raise ConfigError("resman.yaml: inbox.ignore_pages must be a list")
+    for entry in ignore_pages:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ConfigError(
+                "resman.yaml: inbox.ignore_pages entries must be non-empty strings"
+            )
     return data
 
 
@@ -244,6 +255,17 @@ class ConfigManager:
     @property
     def scan_paths(self) -> list[str]:
         return list(self._system.get("scan_paths") or [])
+
+    @property
+    def inbox(self) -> dict:
+        return self._system.get("inbox", {}) or {}
+
+    @property
+    def inbox_ignore_pages(self) -> list[str]:
+        """Page names hidden from the cross-vault Inbox feed (hub pages like
+        index/hot that get rewritten on every ingest). Matched case-insensitively
+        (ignoring a trailing .md) against each page's name and full wiki path."""
+        return list(self.inbox.get("ignore_pages") or [])
 
     @property
     def cron_tasks(self) -> list[dict]:

@@ -37,6 +37,7 @@
   </div>
   <nav class="header-tabs" id="header-tabs">
     <button class="tab" data-tab="wiki"><span class="tab-ico">☰</span>Wiki</button>
+    <button class="tab" data-tab="inbox" title="Recent wiki pages across all vaults — read and mark them"><span class="tab-ico">📥</span>Inbox<span class="tab-badge" id="inbox-badge" hidden></span></button>
     <button class="tab" data-tab="ops" title="Open terminal sessions for this vault"><span class="tab-ico">❯</span>Ops</button>
     <button class="tab" data-tab="tasks"><span class="tab-ico">✓</span>Tasks</button>
     <button class="tab" data-tab="config"><span class="tab-ico">⚙︎</span>Config</button>
@@ -105,6 +106,23 @@
         </div>
         <div id="landing-grid" class="landing-grid">
           <p class="muted" style="padding:16px">Loading vaults…</p>
+        </div>
+      </section>
+
+      <section id="tab-inbox" class="tab-panel">
+        <div class="toolbar">
+          <span class="landing-title">📥 Inbox</span>
+          <span id="inbox-count" class="muted"></span>
+          <div class="spacer"></div>
+          <button id="btn-inbox-mark-all" class="btn btn-sm"
+                  title="Mark every visible page read">Mark all read</button>
+          <button id="btn-inbox-refresh" class="btn btn-sm"
+                  title="Reload recent pages">↻</button>
+        </div>
+        <div id="inbox-filter" class="inbox-filter" role="group"
+             aria-label="Filter by vault" hidden></div>
+        <div id="inbox-grid" class="inbox-grid">
+          <p class="muted" style="padding:16px">Loading recent pages…</p>
         </div>
       </section>
 

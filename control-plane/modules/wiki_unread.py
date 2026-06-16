@@ -191,6 +191,67 @@ def pick_random_unread(wiki_dir: Path) -> Optional[str]:
     return random.choice(sorted(unread))
 
 
+# ----- recent (inbox feed) -----
+def _normalize_ignore(name: str) -> str:
+    """Lowercase + strip a trailing ``.md`` so ignore entries match regardless
+    of case or extension (``Index.md`` and ``index`` are the same rule)."""
+    n = (name or "").strip().lower()
+    if n.endswith(".md"):
+        n = n[:-3]
+    return n
+
+
+def _is_ignored(rel: str, ignore: set[str]) -> bool:
+    """Is ``rel`` (a wiki-relative ``a/b.md``) hidden from the inbox feed?
+
+    Each ignore entry is matched (case-insensitively, ignoring a trailing
+    ``.md``) against the page's last path segment AND its full relative path —
+    so ``index`` hides every ``index.md`` while ``concepts/scratch`` hides
+    exactly that one page (mirrors the garage inbox-settings rule).
+    """
+    if not ignore:
+        return False
+    r = rel.lower()
+    if r.endswith(".md"):
+        r = r[:-3]
+    last = r.rsplit("/", 1)[-1]
+    return last in ignore or r in ignore
+
+
+def recent_unread(wiki_dir: Path, limit: int = 100,
+                  ignore: Optional[list[str]] = None) -> list[dict]:
+    """Reconcile, then return the newest unread pages (by ctime) with titles.
+
+    Each item is ``{rel, file, title, ctime}`` where ``rel`` is the wiki-relative
+    path (``concepts/gguf.md``), ``file`` the vault-relative path
+    (``wiki/concepts/gguf.md``), and ``ctime`` an epoch float (when the page
+    landed locally — survives rsync, unlike mtime). Newest first. Titles are
+    read only for the capped set (≤ ``limit`` file reads, not the whole vault).
+    ``ignore`` is a list of page names hidden from the feed (see _is_ignored).
+    """
+    if not wiki_dir.is_dir():
+        return []
+    ignore_set = {n for n in (_normalize_ignore(x) for x in (ignore or [])) if n}
+    unread = reconcile(wiki_dir)
+    rows: list[tuple[float, str]] = []
+    for rel in unread:
+        if _is_ignored(rel, ignore_set):
+            continue
+        rows.append((_safe_ctime(wiki_dir / rel), rel))
+    # Newest first; tie-break on path so ordering is stable across calls.
+    rows.sort(key=lambda r: (-r[0], r[1]))
+    out: list[dict] = []
+    for ctime, rel in rows[:max(0, limit)]:
+        page = wiki_dir / rel
+        title = rel.rsplit("/", 1)[-1]
+        try:
+            title = _extract_title(page.read_text(encoding="utf-8", errors="replace"), page)
+        except OSError:
+            pass
+        out.append({"rel": rel, "file": "wiki/" + rel, "title": title, "ctime": ctime})
+    return out
+
+
 # ----- search -----
 def search(wiki_dir: Path, query: str, limit: int = SEARCH_LIMIT) -> list[dict]:
     """Rank wiki pages against a query. Titles weigh 5×, body 1×; all tokens

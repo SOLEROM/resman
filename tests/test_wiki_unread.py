@@ -110,3 +110,48 @@ def test_missing_wiki_dir_is_safe(tmp_path):
     assert wiki_unread.list_unread(missing) == set()
     assert wiki_unread.pick_random_unread(missing) is None
     assert wiki_unread.search(missing, "x") == []
+    assert wiki_unread.recent_unread(missing) == []
+
+
+# ----- recent_unread (inbox feed) -----
+def test_recent_unread_lists_unread_with_titles(wiki):
+    rows = wiki_unread.recent_unread(wiki, limit=10)
+    assert {r["rel"] for r in rows} == {
+        "overview.md", "concepts/gguf.md", "concepts/cmsis.md"}
+    by_rel = {r["rel"]: r for r in rows}
+    # Title is the first markdown heading; file is the vault-relative path.
+    assert by_rel["concepts/gguf.md"]["title"] == "GGUF"
+    assert by_rel["concepts/gguf.md"]["file"] == "wiki/concepts/gguf.md"
+    assert isinstance(by_rel["concepts/gguf.md"]["ctime"], float)
+
+
+def test_recent_unread_excludes_read_pages(wiki):
+    wiki_unread.reconcile(wiki)
+    wiki_unread.mark_read(wiki, "concepts/gguf.md")
+    rels = [r["rel"] for r in wiki_unread.recent_unread(wiki, limit=10)]
+    assert "concepts/gguf.md" not in rels
+    assert "concepts/cmsis.md" in rels
+
+
+def test_recent_unread_respects_limit(wiki):
+    assert len(wiki_unread.recent_unread(wiki, limit=1)) == 1
+
+
+def test_recent_unread_orders_newest_first(wiki):
+    # A page created after the others must sort to the front (ctime desc).
+    for rel in ("overview.md", "concepts/gguf.md", "concepts/cmsis.md"):
+        wiki_unread.mark_read(wiki, rel)
+    time.sleep(0.05)
+    (wiki / "fresh.md").write_text("# Fresh\n\nNewest page.\n")
+    rows = wiki_unread.recent_unread(wiki, limit=10)
+    assert rows[0]["rel"] == "fresh.md"
+
+
+def test_recent_unread_honors_ignore_by_name_and_path(wiki):
+    # By bare name (hides every matching basename, extension-insensitive).
+    rels = [r["rel"] for r in wiki_unread.recent_unread(wiki, ignore=["Overview.md"])]
+    assert "overview.md" not in rels
+    # By full wiki-relative path (hides exactly that page).
+    rels = [r["rel"] for r in wiki_unread.recent_unread(wiki, ignore=["concepts/gguf"])]
+    assert "concepts/gguf.md" not in rels
+    assert "concepts/cmsis.md" in rels

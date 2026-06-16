@@ -38,6 +38,10 @@ const state = {
   windowSchedule: null,
   windowStats: null,
   windowStatsRange: 30,  // days shown in the usage charts (7 | 30 | 90)
+  // 📥 Inbox tab: cross-vault feed of recent unread wiki pages (newest first)
+  // plus the active vault filter (null = all vaults). Global, not per-vault.
+  inbox: [],
+  inboxFilter: null,
 };
 
 const ACTIVITY_LOG_MAX = 2000;
@@ -207,7 +211,10 @@ function renderVaultList() {
   }
 }
 
-function selectVault(name) {
+// opts.wikiFile — open this wiki page instead of the default overview.
+// opts.panel    — force this panel instead of the per-vault remembered one.
+// Both are used by the Inbox to jump straight into a specific page.
+function selectVault(name, opts = {}) {
   state.selectedVault = name;
   // Restore the most recently active session for this vault if we have one
   // remembered; otherwise fall back to whatever live session exists for it.
@@ -225,7 +232,7 @@ function selectVault(name) {
   state.wikiHistory = [];
   state.wikiHistoryIdx = -1;
   loadWikiTree();
-  loadWiki(WIKI_HOME);
+  loadWiki(opts.wikiFile || WIKI_HOME);
   renderTasks();
   renderTriggerForm(name);
   // Default-panel rule, in priority order:
@@ -239,7 +246,9 @@ function selectVault(name) {
   const hasSession = state.sessions.some((s) => s.vault === name);
   const rememberedPanel = state.lastPanelByVault[name];
   let target;
-  if (rememberedPanel === "ops") {
+  if (opts.panel) {
+    target = opts.panel;
+  } else if (rememberedPanel === "ops") {
     target = hasSession ? "ops" : "wiki";
   } else if (rememberedPanel) {
     target = rememberedPanel;
@@ -292,11 +301,13 @@ function showPanel(tabName) {
   if (tabName === "help") loadHelp();
   if (tabName === "windows") loadWindowsTab();
   if (tabName === "home") loadLanding();
+  if (tabName === "inbox") loadInbox();
   if (tabName === "wiki" && state.selectedVault) loadWikiTree();
-  // "home" and "help" are vault-independent global views — don't pin them as
-  // a vault's remembered panel (would dump the user back onto the landing /
-  // help screen the next time they re-select that vault).
-  if (state.selectedVault && tabName !== "help" && tabName !== "home") {
+  // "home", "help" and "inbox" are vault-independent global views — don't pin
+  // them as a vault's remembered panel (would dump the user back onto the
+  // landing / help / inbox screen the next time they re-select that vault).
+  if (state.selectedVault && tabName !== "help" && tabName !== "home" &&
+      tabName !== "inbox") {
     state.lastPanelByVault[state.selectedVault] = tabName;
     saveLastPanelByVault();
   }
@@ -2871,6 +2882,172 @@ function setWizardStatus(text, kind) {
 }
 
 // ----- wiring -----
+// ----- 📥 inbox: cross-vault feed of recent unread wiki pages -----
+// Mirrors the garage inbox:recent feed. "Recent" == "unread": a page stays in
+// the feed until marked read. The feed is global (spans every vault), so it is
+// not tied to state.selectedVault.
+async function loadInbox() {
+  try {
+    const data = await api("/api/inbox/recent");
+    state.inbox = (data && data.pages) || [];
+  } catch (err) {
+    state.inbox = [];
+  }
+  renderInbox();
+  updateInboxBadge();
+}
+
+function updateInboxBadge() {
+  const badge = $("#inbox-badge");
+  if (!badge) return;
+  const n = state.inbox.length;
+  badge.textContent = n > 0 ? String(n) : "";
+  badge.hidden = n === 0;
+}
+
+// Distinct vaults present in the feed, with unread counts, sorted by name.
+// Recomputed as pages drop out so empty vaults disappear from the filter.
+function inboxVaultFacets() {
+  const by = new Map();
+  for (const p of state.inbox) by.set(p.vault, (by.get(p.vault) || 0) + 1);
+  return [...by.entries()]
+    .map(([vault, count]) => ({ vault, count }))
+    .sort((a, b) => a.vault.localeCompare(b.vault));
+}
+
+function renderInbox() {
+  const grid = $("#inbox-grid");
+  if (!grid) return;
+  const countEl = $("#inbox-count");
+  const filterRow = $("#inbox-filter");
+  const markAllBtn = $("#btn-inbox-mark-all");
+
+  // Drop a stale filter once its vault has no unread pages left.
+  const facets = inboxVaultFacets();
+  if (state.inboxFilter && !facets.some((f) => f.vault === state.inboxFilter)) {
+    state.inboxFilter = null;
+  }
+  const visible = state.inboxFilter
+    ? state.inbox.filter((p) => p.vault === state.inboxFilter)
+    : state.inbox;
+
+  if (countEl) {
+    countEl.textContent = state.inbox.length
+      ? state.inbox.length + " unread page" + (state.inbox.length === 1 ? "" : "s")
+      : "";
+  }
+  if (markAllBtn) markAllBtn.disabled = visible.length === 0;
+
+  // Filter chips only matter when more than one vault has unread pages.
+  if (filterRow) {
+    if (facets.length > 1) {
+      const chip = (label, n, active, key) =>
+        `<button type="button" class="inbox-chip${active ? " active" : ""}" ` +
+        `data-vault="${key === null ? "" : esc(key)}" aria-pressed="${active}">` +
+        `${esc(label)} <span class="inbox-chip-count">${n}</span></button>`;
+      filterRow.innerHTML =
+        chip("All", state.inbox.length, state.inboxFilter === null, null) +
+        facets.map((f) =>
+          chip(f.vault, f.count, state.inboxFilter === f.vault, f.vault)).join("");
+      filterRow.hidden = false;
+      filterRow.querySelectorAll(".inbox-chip").forEach((el) => {
+        el.addEventListener("click", () => {
+          state.inboxFilter = el.dataset.vault || null;
+          renderInbox();
+        });
+      });
+    } else {
+      filterRow.innerHTML = "";
+      filterRow.hidden = true;
+    }
+  }
+
+  if (!state.inbox.length) {
+    grid.innerHTML = `<p class="muted" style="padding:16px">No unread pages. ` +
+      `Newly ingested wiki pages show up here, newest first.</p>`;
+    return;
+  }
+
+  grid.innerHTML = visible.map((p) => `
+    <div class="inbox-card" data-vault="${esc(p.vault)}" data-file="${esc(p.file)}">
+      <div class="inbox-card-main">
+        <span class="inbox-card-title">${esc(p.title)}</span>
+        <span class="inbox-card-meta">
+          <span class="inbox-card-vault">${esc(p.vault_label || p.vault)}</span>
+          <span class="muted">${esc(formatAge(p.ctime))}</span>
+        </span>
+      </div>
+      <button type="button" class="inbox-card-dismiss" title="Mark read"
+              aria-label="Mark read">✓</button>
+    </div>`).join("");
+
+  grid.querySelectorAll(".inbox-card").forEach((el) => {
+    const vault = el.dataset.vault;
+    const file = el.dataset.file;
+    el.querySelector(".inbox-card-main")
+      .addEventListener("click", () => openInboxPage(vault, file));
+    el.querySelector(".inbox-card-dismiss").addEventListener("click", (e) => {
+      e.stopPropagation();
+      markInboxRead(vault, file);
+    });
+  });
+}
+
+// Jump into the page's vault + Wiki view. When already on the vault we just
+// load the page; otherwise selectVault opens it directly (no double-load).
+function openInboxPage(vault, file) {
+  if (state.selectedVault === vault) {
+    loadWiki(file);
+    showPanel("wiki");
+  } else {
+    selectVault(vault, { wikiFile: file, panel: "wiki" });
+  }
+}
+
+async function markInboxRead(vault, file) {
+  try {
+    await api("/api/vaults/" + encodeURIComponent(vault) + "/wiki/read", {
+      method: "POST",
+      body: JSON.stringify({ file: file, read: true }),
+    });
+  } catch (err) {
+    // Leave the card in place so the user can retry.
+    return;
+  }
+  // Optimistically drop the page from the feed.
+  state.inbox = state.inbox.filter((p) => !(p.vault === vault && p.file === file));
+  renderInbox();
+  updateInboxBadge();
+  // Keep the wiki sidebar dot in sync if this vault is currently open.
+  if (state.selectedVault === vault) loadWikiTree();
+}
+
+async function markAllInboxRead() {
+  const targets = state.inboxFilter
+    ? state.inbox.filter((p) => p.vault === state.inboxFilter)
+    : state.inbox.slice();
+  if (!targets.length) return;
+  await Promise.allSettled(targets.map((p) =>
+    api("/api/vaults/" + encodeURIComponent(p.vault) + "/wiki/read", {
+      method: "POST",
+      body: JSON.stringify({ file: p.file, read: true }),
+    })));
+  const done = new Set(targets.map((p) => p.vault + "\n" + p.file));
+  state.inbox = state.inbox.filter((p) => !done.has(p.vault + "\n" + p.file));
+  renderInbox();
+  updateInboxBadge();
+  if (state.selectedVault && targets.some((p) => p.vault === state.selectedVault)) {
+    loadWikiTree();
+  }
+}
+
+function setupInbox() {
+  const refresh = $("#btn-inbox-refresh");
+  if (refresh) refresh.addEventListener("click", loadInbox);
+  const markAll = $("#btn-inbox-mark-all");
+  if (markAll) markAll.addEventListener("click", markAllInboxRead);
+}
+
 function setupTabs() {
   $$("#header-tabs .tab").forEach((tab) => {
     tab.addEventListener("click", () => showPanel(tab.dataset.tab));
@@ -3229,8 +3406,10 @@ async function init() {
   setupFilters();
   setupToolbar();
   setupStatusBar();
+  setupInbox();
   setupSocket();
-  await Promise.all([loadVaults(), loadTasks(), loadSessions(), loadWindow(), loadWindowSchedule()]);
+  await Promise.all([loadVaults(), loadTasks(), loadSessions(), loadWindow(),
+                     loadWindowSchedule(), loadInbox()]);
   // Home is the default panel on boot — populate the vault grid now that
   // tasks/sessions are loaded so each card's status dot is accurate.
   loadLanding();

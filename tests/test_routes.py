@@ -1338,3 +1338,97 @@ def test_task_create_writes_activity_log(tmp_path):
     )
     msgs = [e["message"] for e in client.get("/api/logs").get_json()["entries"]]
     assert any("task queued" in m for m in msgs)
+
+
+# ----- Inbox (cross-vault recent unread pages) -----
+def _make_inbox_app(tmp_path, ignore=None):
+    """App with two vaults that each have a wiki/, plus an optional
+    inbox.ignore_pages config. Minimal ctx — the inbox route only needs
+    config + vault_registry (and the per-vault wiki/read route)."""
+    cfg_dir = tmp_path / "config"; cfg_dir.mkdir()
+    alpha = tmp_path / "alpha"; (alpha / "wiki" / "concepts").mkdir(parents=True)
+    (alpha / ".obsidian").mkdir()
+    beta = tmp_path / "beta"; (beta / "wiki").mkdir(parents=True)
+    (beta / ".obsidian").mkdir()
+    (alpha / "wiki" / "overview.md").write_text("# Alpha overview\n")
+    (alpha / "wiki" / "concepts" / "gguf.md").write_text("# GGUF\n")
+    (beta / "wiki" / "intro.md").write_text("# Beta intro\n")
+    inbox_yaml = ""
+    if ignore is not None:
+        inbox_yaml = "inbox:\n  ignore_pages: [" + ", ".join(ignore) + "]\n"
+    (cfg_dir / "resman.yaml").write_text(
+        "app:\n  host: 127.0.0.1\n  port: 5090\n"
+        + inbox_yaml
+        + f"vaults:\n  - name: alpha\n    path: {alpha}\n"
+        f"  - name: beta\n    path: {beta}\n"
+    )
+    bus = get_bus(); bus.clear()
+    cm = ConfigManager(cfg_dir, bus); cm.load()
+    reg = VaultRegistry(cm, bus); reg.reload()
+    from flask import Flask
+    app = Flask("resman-test-inbox")
+    app.config["RESMAN"] = {"config": cm, "vault_registry": reg}
+    from modules.routes import bp
+    app.register_blueprint(bp)
+    return app, cm, reg
+
+
+def test_inbox_recent_aggregates_across_vaults(tmp_path):
+    app, _, _ = _make_inbox_app(tmp_path)
+    rv = app.test_client().get("/api/inbox/recent")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    seen = {(p["vault"], p["rel"]) for p in body["pages"]}
+    assert ("alpha", "overview.md") in seen
+    assert ("alpha", "concepts/gguf.md") in seen
+    assert ("beta", "intro.md") in seen
+    assert body["total"] == 3
+    g = next(p for p in body["pages"] if p["rel"] == "concepts/gguf.md")
+    assert g["file"] == "wiki/concepts/gguf.md"
+    assert g["title"] == "GGUF"
+    assert g["vault_label"] == "alpha"
+    assert g["ctime"]  # non-empty ISO timestamp the SPA's formatAge reads
+
+
+def test_inbox_recent_skips_vault_without_wiki(tmp_path):
+    # make_test_app's single vault has no wiki/ — empty feed, not an error.
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().get("/api/inbox/recent")
+    assert rv.status_code == 200
+    assert rv.get_json() == {"pages": [], "total": 0, "capped": False}
+
+
+def test_inbox_recent_drops_page_after_mark_read(tmp_path):
+    app, _, _ = _make_inbox_app(tmp_path)
+    client = app.test_client()
+    # First load establishes the unread baseline + markers.
+    first = client.get("/api/inbox/recent").get_json()
+    assert ("alpha", "concepts/gguf.md") in {
+        (p["vault"], p["rel"]) for p in first["pages"]}
+    rv = client.post(
+        "/api/vaults/alpha/wiki/read",
+        headers={"X-Requested-With": "resman"},
+        json={"file": "wiki/concepts/gguf.md", "read": True},
+    )
+    assert rv.status_code == 200
+    seen = {(p["vault"], p["rel"])
+            for p in client.get("/api/inbox/recent").get_json()["pages"]}
+    assert ("alpha", "concepts/gguf.md") not in seen
+    assert ("alpha", "overview.md") in seen
+
+
+def test_inbox_recent_honors_ignore_config(tmp_path):
+    app, _, _ = _make_inbox_app(tmp_path, ignore=["overview", "intro"])
+    body = app.test_client().get("/api/inbox/recent").get_json()
+    rels = {p["rel"] for p in body["pages"]}
+    assert "overview.md" not in rels
+    assert "intro.md" not in rels
+    assert "concepts/gguf.md" in rels
+
+
+def test_inbox_recent_limit_caps_and_flags(tmp_path):
+    app, _, _ = _make_inbox_app(tmp_path)
+    body = app.test_client().get("/api/inbox/recent?limit=2").get_json()
+    assert len(body["pages"]) == 2
+    assert body["total"] == 3
+    assert body["capped"] is True

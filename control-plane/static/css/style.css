@@ -1098,6 +1098,86 @@ button.ghost:hover { color: var(--text-primary); }
   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
 }
 
+/* ---------- 📥 Inbox (cross-vault recent unread pages) ---------- */
+/* Unread-count pill riding the Inbox header tab. */
+.header-tabs .tab .tab-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; margin-left: 6px; padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 600; line-height: 1;
+}
+#inbox-count { font-size: 11px; }
+
+.inbox-filter {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 16px 0;
+}
+.inbox-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  color: var(--text-secondary); font-family: inherit; font-size: 11px;
+  cursor: pointer; transition: color .12s, border-color .12s, background .12s;
+}
+.inbox-chip:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.inbox-chip.active {
+  color: var(--accent); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.inbox-chip-count { font-size: 10px; opacity: .8; }
+
+.inbox-grid {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+.inbox-card {
+  position: relative;
+  display: flex; flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 42px 12px 14px;
+  transition: border-color .12s, background .12s, transform .12s;
+}
+.inbox-card:hover {
+  border-color: var(--accent); background: var(--bg-elevated);
+  transform: translateY(-1px);
+}
+.inbox-card-main {
+  display: flex; flex-direction: column; gap: 6px;
+  min-width: 0; cursor: pointer;
+}
+.inbox-card-title {
+  font-size: 13.5px; font-weight: 600; color: var(--text-primary); line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.inbox-card-meta {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; font-size: 11px;
+}
+.inbox-card-vault {
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.inbox-card-dismiss {
+  position: absolute; top: 8px; right: 8px;
+  width: 24px; height: 24px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer; font-size: 12px; line-height: 1;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.inbox-card-dismiss:hover {
+  background: var(--success); border-color: var(--success); color: #0d1117;
+}
+
 /* ---------- Health-check modal ---------- */
 .health-table {
   width: 100%;

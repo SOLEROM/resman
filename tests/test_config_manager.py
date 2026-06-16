@@ -312,3 +312,52 @@ def test_legacy_system_yaml_still_loads(tmp_path):
     cm = ConfigManager(cfg_dir, EventBus())
     cm.load()
     assert cm.get_vault("legacy") is not None
+
+
+def test_inbox_ignore_pages_parsed(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        inbox:
+          ignore_pages: [index, hot, concepts/scratch]
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.inbox_ignore_pages == ["index", "hot", "concepts/scratch"]
+
+
+def test_inbox_ignore_pages_defaults_empty(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.inbox_ignore_pages == []
+
+
+def test_inbox_must_be_mapping(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        inbox: [nope]
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="inbox"):
+        cm.load()
+
+
+def test_inbox_ignore_pages_must_be_strings(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        inbox:
+          ignore_pages: [123]
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="ignore_pages"):
+        cm.load()

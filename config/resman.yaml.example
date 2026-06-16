@@ -21,6 +21,14 @@ window_budget:
   weekly_start: "Monday 09:00"
   weekly_end:   "Sunday 23:00"
 
+# Inbox tab: cross-vault feed of recently-added (unread) wiki pages.
+inbox:
+  # Page names hidden from the feed — handy for hub pages that get rewritten
+  # on every ingest. Matched case-insensitively (and ignoring a trailing
+  # ".md") against each page's name AND its full wiki path: "index" hides
+  # every index.md, while "concepts/scratch" hides exactly that one page.
+  ignore_pages: [index, hot, overview]
+
 # Each vault has its own explicit path — no required common root.
 vaults:
   - name: example-vault

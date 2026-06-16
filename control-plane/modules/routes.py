@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -492,6 +493,75 @@ def vault_wiki_search(name):
     if not wiki_root.is_dir():
         return jsonify({"query": q, "hits": []})
     return jsonify({"query": q, "hits": wiki_unread.search(wiki_root, q)})
+
+
+# ----- Inbox (cross-vault feed of recent unread wiki pages) -----
+INBOX_DEFAULT_LIMIT = 100
+INBOX_MAX_LIMIT = 500
+
+
+def _iso_utc(epoch: float) -> str:
+    """Format an epoch float as a UTC ISO-8601 string the SPA's formatAge reads."""
+    try:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+@bp.get("/api/inbox/recent")
+def inbox_recent():
+    """Cross-vault feed of the newest unread wiki pages, newest first.
+
+    Aggregates recently-added (unread) pages across every registered vault that
+    has a ``wiki/`` — mirroring the garage ``inbox:recent`` feed. Each vault is
+    reconciled first so freshly-ingested pages surface without visiting that
+    vault's Wiki tab. Pages whose name is listed in ``inbox.ignore_pages``
+    (resman.yaml) are hidden. Read-only; no CSRF required.
+
+    Response: ``{pages: [{vault, vault_label, file, rel, title, ctime}], total,
+    capped}`` where ``total`` is the count before the cap and ``capped`` is true
+    when more pages were available than returned.
+    """
+    reg = _ctx()["vault_registry"]
+    cfg = _ctx()["config"]
+    try:
+        limit = int(request.args.get("limit", INBOX_DEFAULT_LIMIT))
+    except (TypeError, ValueError):
+        limit = INBOX_DEFAULT_LIMIT
+    limit = max(1, min(limit, INBOX_MAX_LIMIT))
+    ignore = cfg.inbox_ignore_pages
+
+    collected: list[dict] = []
+    for v in reg.registered:
+        try:
+            wiki_root = Path(v.path).resolve() / "wiki"
+        except (OSError, RuntimeError):
+            continue
+        if not wiki_root.is_dir():
+            continue
+        try:
+            rows = wiki_unread.recent_unread(wiki_root, limit=limit, ignore=ignore)
+        except Exception:
+            # One bad vault must never blank the whole feed.
+            log.exception("inbox recent_unread failed for vault %s", v.name)
+            continue
+        for r in rows:
+            collected.append({
+                "vault": v.name,
+                "vault_label": v.name,
+                "file": r["file"],
+                "rel": r["rel"],
+                "title": r["title"],
+                "ctime": _iso_utc(r["ctime"]),
+                "_ts": r["ctime"],
+            })
+
+    collected.sort(key=lambda p: p["_ts"], reverse=True)
+    total = len(collected)
+    top = collected[:limit]
+    for p in top:
+        p.pop("_ts", None)
+    return jsonify({"pages": top, "total": total, "capped": total > limit})
 
 
 # ----- Help (in-app docs from the repo's man/ tree) -----
