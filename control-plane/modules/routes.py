@@ -874,6 +874,20 @@ def compact_tasks():
     return jsonify(tm.compact())
 
 
+@bp.post("/api/tasks/clean")
+@_csrf_required
+def clean_tasks():
+    """Archive all finished tasks (optionally for one vault) — the queue's
+    'Clean finished' button. Soft delete: events remain in the log."""
+    body = request.get_json(force=True, silent=True) or {}
+    vault = body.get("vault") or None
+    tm = _ctx()["task_manager"]
+    result = tm.clean_terminal(vault=vault)
+    _activity(f"cleaned {result.get('cleaned', 0)} finished task(s)"
+              + (f" for {vault}" if vault else ""), source="task")
+    return jsonify(result)
+
+
 # ----- Window -----
 @bp.get("/api/window")
 def get_window():

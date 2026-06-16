@@ -1098,3 +1098,47 @@ def test_check_limits_propagates_to_all_vault_children(tmp_path):
     assert len(children) == 2
     assert all(c["check_limits"] for c in children)
     assert all(c["usage_before"] and c["usage_after"] for c in children)
+
+
+# ----- clean_terminal (bulk "Clean finished") -----
+
+def test_clean_terminal_archives_only_finished(tmp_path):
+    """clean_terminal archives finished tasks and leaves active ones alone."""
+    fail_runner = {"n": 0}
+    def runner(cmd, cwd, log_file):
+        fail_runner["n"] += 1
+        return 0 if fail_runner["n"] == 1 else 2  # 1st completes, 2nd fails
+    tm, _, _ = make_tm(tmp_path, active=False, runner=runner)
+    done = tm.create_task("a", "alpha", "wiki-lint", {}, "high", force=True)
+    failed = tm.create_task("b", "alpha", "wiki-lint", {}, "high", force=True)
+    pending = tm.create_task("c", "alpha", "wiki-lint", {}, "high")  # window closed → deferred
+    assert done.state == "completed" and failed.state == "failed"
+    assert pending.state == "deferred"
+
+    result = tm.clean_terminal()
+    assert result == {"cleaned": 2}
+    assert tm.get(done.id).state == "archived"
+    assert tm.get(failed.id).state == "archived"
+    assert tm.get(pending.id).state == "deferred"  # untouched
+    # Archived tasks drop out of the default listing.
+    assert {t["id"] for t in tm.list()} == {pending.id}
+
+
+def test_clean_terminal_scoped_to_vault(tmp_path):
+    """A vault argument limits the clean to that vault's finished tasks."""
+    tm, _, _ = make_tm(tmp_path, vaults=("alpha", "beta"))
+    a = tm.create_task("a", "alpha", "wiki-lint", {}, "high")
+    b = tm.create_task("b", "beta", "wiki-lint", {}, "high")
+    assert a.state == "completed" and b.state == "completed"
+
+    result = tm.clean_terminal(vault="alpha")
+    assert result == {"cleaned": 1}
+    assert tm.get(a.id).state == "archived"
+    assert tm.get(b.id).state == "completed"
+
+
+def test_clean_terminal_empty_is_zero(tmp_path):
+    """Nothing finished → cleaned 0, no error."""
+    tm, _, _ = make_tm(tmp_path, active=False)
+    tm.create_task("a", "alpha", "wiki-lint", {}, "high")  # deferred, not finished
+    assert tm.clean_terminal() == {"cleaned": 0}

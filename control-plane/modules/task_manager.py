@@ -660,6 +660,22 @@ class TaskManager:
         self.bus.emit("task_updated", {"task_id": task_id, "state": "archived"})
         return True
 
+    def clean_terminal(self, vault: Optional[str] = None) -> dict:
+        """Archive every finished task (completed/failed/interrupted/cancelled),
+        clearing them from the queue view in one shot. Optionally scope to a
+        single ``vault``. Running/pending/scheduled/deferred tasks are left
+        alone. Like :meth:`archive`, this is a soft delete — the events stay in
+        the JSONL log (compaction snapshots them once old). Returns the count."""
+        cleaned = 0
+        for tid, task in list(self._tasks.items()):
+            if task.state not in ("completed", "failed", "interrupted", "cancelled"):
+                continue
+            if vault and task.vault != vault:
+                continue
+            if self.archive(tid):
+                cleaned += 1
+        return {"cleaned": cleaned}
+
     # ----- Usage-limit sampling ("check limits" toggle) -----
     def _sample_usage(self, task: Task, phase: str) -> None:
         """Take one claude.ai usage reading for `task` and record it as a

@@ -795,6 +795,7 @@ function taskActions(t) {
     if (ATTENDABLE_OPERATIONS.has(t.operation) && t.vault !== "ALL") {
       acts.push("attend");
     }
+    acts.push("delete");
   }
   return acts;
 }
@@ -840,8 +841,9 @@ function taskCardHTML(t) {
   else if (t.updated_at)                               when = esc(formatAge(t.updated_at));
 
   const actions = taskActions(t).map((a) => {
-    const cls = a === "cancel" ? "btn btn-xs btn-danger" : "btn btn-xs";
-    return `<button class="${cls}" data-act="${esc(a)}" data-tid="${tid}">${esc(a)}</button>`;
+    const cls = (a === "cancel" || a === "delete") ? "btn btn-xs btn-danger" : "btn btn-xs";
+    const title = a === "delete" ? ' title="Remove from the queue (kept in the log)"' : "";
+    return `<button class="${cls}"${title} data-act="${esc(a)}" data-tid="${tid}">${esc(a)}</button>`;
   }).join("");
 
   const log = state.taskLogs[t.id] || {};
@@ -934,6 +936,13 @@ async function taskAction(act, tid) {
   }
   if (act === "cancel") {
     await api("/api/tasks/" + encodeURIComponent(tid), { method: "DELETE" });
+    await loadTasks();
+    return;
+  }
+  if (act === "delete") {
+    // Soft delete: archive removes the finished task from the queue but keeps
+    // its events in the log. Recoverable at the data layer, so no confirm.
+    await api("/api/tasks/" + encodeURIComponent(tid) + "/archive", { method: "POST" });
     await loadTasks();
     return;
   }
@@ -1765,6 +1774,25 @@ async function compactTasksLog() {
     await loadTasks();
   } catch (err) {
     alert("Compact failed: " + err.message);
+  }
+}
+
+// ----- clean finished tasks -----
+// Archive every finished task (completed/failed/cancelled/interrupted) so they
+// drop out of the queue. Scoped to the selected vault when one is active, so it
+// clears exactly what the queue is showing.
+async function cleanFinishedTasks() {
+  const vault = state.selectedVault || null;
+  const scope = vault ? `for ${vault}` : "across all vaults";
+  if (!confirm(`Clear all finished tasks (completed, failed, cancelled, interrupted) ${scope}?\nThey're removed from the queue but kept in the log.`)) return;
+  try {
+    const r = await api("/api/tasks/clean", {
+      method: "POST", body: JSON.stringify({ vault }),
+    });
+    await loadTasks();
+    alert("Cleared " + (r.cleaned || 0) + " finished task(s).");
+  } catch (err) {
+    alert("Clean failed: " + (err.body?.error || err.message));
   }
 }
 
@@ -2894,6 +2922,8 @@ function setupToolbar() {
   if (btnObs) btnObs.addEventListener("click", openVaultInObsidian);
   const btnCompact = $("#btn-task-compact");
   if (btnCompact) btnCompact.addEventListener("click", compactTasksLog);
+  const btnClean = $("#btn-task-clean");
+  if (btnClean) btnClean.addEventListener("click", cleanFinishedTasks);
   const btnWikiBack = $("#btn-wiki-back");
   if (btnWikiBack) btnWikiBack.addEventListener("click", () => goWikiHistory(-1));
   const btnWikiFwd = $("#btn-wiki-fwd");
