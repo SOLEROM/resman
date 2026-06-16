@@ -152,46 +152,60 @@
         </div>
 
         <div class="task-trigger" id="task-trigger">
-          <div class="trigger-grid">
-            <label for="t-vault">Vault</label>
-            <div class="trigger-vault">
-              <select id="t-vault"></select>
-              <label class="all-toggle">
-                <input type="checkbox" id="t-all"> all vaults
-              </label>
+          <h2 class="new-task-heading">New task</h2>
+          <div class="new-task-layout">
+            <ul class="kind-list" id="t-op-list" role="radiogroup" aria-label="Operation"></ul>
+
+            <div class="task-detail">
+              <input type="hidden" id="t-op">
+              <h3 class="task-detail-title" id="t-op-title"></h3>
+              <p class="task-detail-summary" id="t-op-summary"></p>
+
+              <div class="task-form">
+                <div class="form-section">
+                  <label for="t-vault">Vault</label>
+                  <div class="trigger-vault">
+                    <select id="t-vault"></select>
+                    <label class="all-toggle">
+                      <input type="checkbox" id="t-all"> all vaults
+                    </label>
+                  </div>
+                </div>
+
+                <div class="form-section">
+                  <div id="t-params-row" class="op-params"></div>
+                </div>
+
+                <div class="form-section form-row">
+                  <div class="form-col">
+                    <label for="t-pri">Priority</label>
+                    <select id="t-pri">
+                      <option value="high" selected>high</option>
+                      <option value="medium">medium</option>
+                      <option value="low">low</option>
+                    </select>
+                  </div>
+                  <div class="form-col">
+                    <label for="t-window">When</label>
+                    <select id="t-window" class="when-select">
+                      <option value="">run now</option>
+                    </select>
+                    <span class="form-help">Pick which window to run in, or “run now”.</span>
+                  </div>
+                </div>
+
+                <div class="trigger-actions">
+                  <span id="t-error" class="trigger-error"></span>
+                  <div class="spacer"></div>
+                  <button id="btn-task-run" class="btn btn-accent">Run task</button>
+                </div>
+              </div>
             </div>
-
-            <label for="t-op">Operation</label>
-            <select id="t-op"></select>
-
-            <label for="t-params-row" class="op-params-label">Parameters</label>
-            <div id="t-params-row" class="op-params"></div>
-
-            <label for="t-pri">Priority</label>
-            <div class="trigger-meta">
-              <select id="t-pri">
-                <option value="high" selected>high</option>
-                <option value="medium">medium</option>
-                <option value="low">low</option>
-              </select>
-            </div>
-
-            <label for="t-window">When</label>
-            <div class="trigger-meta">
-              <select id="t-window" class="when-select">
-                <option value="">run now</option>
-              </select>
-              <span class="muted small">pick which window to run in, or “run now”</span>
-            </div>
-          </div>
-          <div class="trigger-actions">
-            <span id="t-error" class="trigger-error"></span>
-            <div class="spacer"></div>
-            <button id="btn-task-run" class="btn btn-accent">Run task</button>
           </div>
         </div>
 
         <div class="task-queue">
+          <h2 class="task-queue-heading">Task queue</h2>
           <div class="toolbar">
             <select id="task-priority-filter">
               <option value="">all priorities</option>

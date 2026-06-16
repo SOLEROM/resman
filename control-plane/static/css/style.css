@@ -479,61 +479,145 @@ button.ghost:hover { color: var(--text-primary); }
 .task-trigger {
   background: var(--bg-surface);
   border: 1px solid var(--border-light);
-  border-radius: 6px;
-  padding: 14px 18px;
+  border-radius: 8px;
+  padding: 18px 20px 22px;
   margin: 12px;
-  display: flex; flex-direction: column; gap: 10px;
 }
-.trigger-grid {
+.new-task-heading {
+  margin: 0 0 16px;
+  font-size: 18px; font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Two-column picker: operation cards on the left, detail + form on the right
+   (mirrors the garage reference app's "New task" view). */
+.new-task-layout {
   display: grid;
-  grid-template-columns: 100px 1fr;
-  gap: 8px 14px;
-  align-items: center;
+  grid-template-columns: 260px 1fr;
+  gap: 24px;
+  align-items: start;
 }
-.trigger-grid > label {
-  color: var(--text-secondary);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+@media (max-width: 720px) {
+  .new-task-layout { grid-template-columns: 1fr; }
 }
-.trigger-grid select,
-.trigger-grid input[type="text"],
-.trigger-grid input[type="url"],
-.trigger-grid input[type="datetime-local"],
-.trigger-grid textarea {
+
+/* ----- left column: operation cards ----- */
+.kind-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.kind-group-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted); font-weight: 600;
+  padding: 10px 2px 2px;
+}
+.kind-list > li:first-child.kind-group-label { padding-top: 0; }
+.kind-card {
+  display: flex; flex-direction: column; gap: 4px;
+  width: 100%; box-sizing: border-box; text-align: left;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--text-primary); font: inherit; cursor: pointer;
+  position: relative;
+  transition: border-color .12s ease, background .12s ease;
+}
+.kind-card:hover { border-color: var(--accent); background: var(--bg-elevated); }
+.kind-card.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.kind-card.is-selected::before {
+  content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px;
+  width: 3px; background: var(--accent); border-radius: 2px;
+}
+.kind-card-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600;
+}
+.kind-card-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; font-size: 13px; opacity: .85;
+}
+.kind-card-help {
+  color: var(--text-secondary); font-size: 11px; line-height: 1.4;
+}
+
+/* ----- right column: detail + form ----- */
+.task-detail { min-width: 0; }
+.task-detail-title {
+  margin: 0 0 4px; font-size: 17px; font-weight: 600; color: var(--text-primary);
+}
+.task-detail-summary {
+  margin: 0 0 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.4;
+}
+.task-form { display: flex; flex-direction: column; gap: 16px; }
+.form-section { display: flex; flex-direction: column; gap: 6px; }
+.form-row { flex-direction: row; gap: 16px; flex-wrap: wrap; }
+.form-col { display: flex; flex-direction: column; gap: 6px; flex: 1 1 160px; min-width: 0; }
+.form-section > label,
+.form-col > label,
+.op-params .param-row > label {
+  font-size: 12px; color: var(--text-secondary); font-weight: 500;
+}
+.form-help { font-size: 11px; color: var(--text-muted); }
+
+/* Inputs inside the task form. */
+.task-form select,
+.task-form input[type="text"],
+.task-form input[type="url"],
+.task-form textarea {
   width: 100%; box-sizing: border-box;
   background: var(--bg-base); color: var(--text-primary);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: 5px 8px; font: inherit; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 10px; font: inherit; font-size: 13px;
 }
-.trigger-grid textarea { min-height: 60px; resize: vertical; font-family: monospace; }
+.task-form select:focus,
+.task-form input:focus,
+.task-form textarea:focus { outline: none; border-color: var(--accent); }
+.task-form textarea { min-height: 64px; resize: vertical; font-family: monospace; }
+.task-form .when-select { min-width: 0; }
+
 .trigger-vault { display: flex; gap: 12px; align-items: center; }
 .trigger-vault select { flex: 1 1 auto; }
-.all-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
-.trigger-meta { display: flex; gap: 10px; align-items: center; }
-.trigger-meta select { width: 140px; }
-.trigger-meta input[type="datetime-local"] { width: 220px; }
-.trigger-meta .small { font-size: 11px; }
-.op-params { display: flex; flex-direction: column; gap: 6px; }
-.op-params .param-row { display: flex; flex-direction: column; gap: 3px; }
-.op-params .param-row > label { font-size: 11px; color: var(--text-secondary); }
+.all-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
+
+/* Parameter fields rendered per-operation. */
+.op-params { display: flex; flex-direction: column; gap: 12px; }
+.op-params .param-row { display: flex; flex-direction: column; gap: 5px; }
 .op-params .param-row-checkbox > label {
-  display: flex; flex-direction: row; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--text-primary); cursor: pointer;
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-primary); cursor: pointer; font-weight: 400;
 }
-.op-params .param-row-checkbox input[type="checkbox"] { margin: 0; }
-.op-params .op-note { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.op-params .param-row-checkbox input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+.op-params .op-note { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
 .op-params:empty::before {
-  content: "no parameters"; color: var(--text-muted); font-style: italic; font-size: 11px;
+  content: "No parameters for this operation."; color: var(--text-muted); font-style: italic; font-size: 12px;
 }
+
 .trigger-actions {
   display: flex; align-items: center; gap: 12px;
-  padding-top: 6px;
+  margin-top: 4px; padding-top: 16px;
   border-top: 1px solid var(--border-light);
 }
 .trigger-error { color: var(--danger); font-size: 12px; }
 
+/* The redesigned "New task" picker is tall (two-column card list), so the whole
+   Tasks tab scrolls. Without this the queue — flex:1 + min-height:0 under a
+   parent with overflow:hidden — collapses to zero height and disappears. */
+#tab-tasks { overflow-y: auto; }
+.task-trigger { flex: 0 0 auto; }
+
 /* Queue — task cards. One card per task; expandable to reveal the live log. */
-.task-queue { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.task-list { overflow-y: auto; flex: 1; padding: 0 12px 12px; }
+.task-queue { display: flex; flex-direction: column; flex: 0 0 auto; }
+.task-queue-heading {
+  margin: 4px 0 8px; padding: 0 12px;
+  font-size: 18px; font-weight: 600;
+  color: var(--text-primary);
+}
+.task-list { flex: 0 0 auto; padding: 0 12px 12px; }
 .task-card {
   background: var(--bg-surface);
   border: 1px solid var(--border-light);

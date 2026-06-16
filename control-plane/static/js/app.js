@@ -607,20 +607,25 @@ function renderActiveSession() {
 const OPERATIONS = {
   "wiki-lint": {
     label: "Lint wiki", group: "Wiki", params: [],
+    desc: "Scan for orphans, dead links and frontmatter gaps; emit a report.",
   },
   "wiki-update-hot-cache": {
     label: "Update hot cache", group: "Wiki", params: [],
+    desc: "Refresh the wiki's hot-cache index of recently active pages.",
   },
   "wiki-bootstrap": {
     label: "Re-run wiki bootstrap", group: "Wiki", params: [],
+    desc: "Re-run the wiki bootstrap for an existing vault.",
     note: "Non-interactive re-run only; new vaults must use the wizard.",
   },
   "wiki-hint": {
     label: "Generate hint (vault description)", group: "Wiki", params: [],
+    desc: "Write wiki/hint.json — the label, summary and tags on the vault card.",
     note: "Inspects the wiki and writes wiki/hint.json — the label, summary and tags shown on this vault's landing-page card.",
   },
   "wiki-ingest": {
     label: "Ingest a URL", group: "Research",
+    desc: "Fetch a URL and write structured pages into the wiki.",
     params: [
       { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
       { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
@@ -628,6 +633,7 @@ const OPERATIONS = {
   },
   "wiki-ingest-prefix": {
     label: "Ingest URL + prefix", group: "Research",
+    desc: "Ingest a URL and re-frame harmful framing around constructive uses.",
     params: [
       { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
       { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
@@ -636,19 +642,23 @@ const OPERATIONS = {
   },
   "wiki-autoresearch": {
     label: "Autoresearch a topic", group: "Research",
+    desc: "Plan searches, fetch sources, and synthesize new wiki pages on a topic.",
     params: [{ key: "topic", type: "text", required: true, label: "Topic", maxLength: 200, placeholder: "topic to research" }],
   },
   "wiki-canvas": {
     label: "Update canvas (visual map)", group: "Wiki",
+    desc: "Re-organize wiki/canvases/main.canvas around active topics.",
     params: [{ key: "description", type: "text", required: false, label: "Description (optional)", maxLength: 200, placeholder: "leave blank to use plugin defaults" }],
     note: "Runs /claude-obsidian:canvas. Description is optional — leave it blank and the plugin uses its own defaults.",
   },
   "run-prompt": {
     label: "Run a Claude prompt", group: "Custom",
+    desc: "Run an arbitrary Claude prompt or slash-command against the vault.",
     params: [{ key: "prompt", type: "text", required: true, label: "Prompt", maxLength: 200, placeholder: "/your-command or free text" }],
   },
   "run-shell": {
     label: "Run shell command", group: "Custom",
+    desc: "Run a shell command in the vault directory.",
     params: [{ key: "cmd_parts", type: "argv", required: true, label: "Command (one argument per line)", placeholder: "echo\nhello" }],
     confirm: "run-shell executes an arbitrary command in the vault directory. Proceed?",
   },
@@ -928,10 +938,11 @@ function renderTriggerForm(forceVault) {
   }
   vSel.disabled = allChecked;
 
-  if (!oSel.options.length) {
-    oSel.innerHTML = renderOpOptions();
-  }
-  renderOpFields();
+  const list = $("#t-op-list");
+  if (list && !list.children.length) renderOpCards();
+  // Ensure an operation is selected (default to the first). selectOp renders
+  // the detail header/summary + parameter fields for the chosen op.
+  selectOp(oSel.value || Object.keys(OPERATIONS)[0]);
   renderTriggerWindowOptions();
 }
 
@@ -955,17 +966,52 @@ function renderTriggerWindowOptions() {
   if (prev && up.some((w) => w.start === prev)) sel.value = prev;
 }
 
-function renderOpOptions(selected) {
+// Build the left-hand operation picker: garage-style cards grouped by
+// OPERATIONS[].group. Each card carries its op key in data-op; clicking one
+// routes through selectOp (delegated handler wired in bindEvents).
+function renderOpCards() {
+  const list = $("#t-op-list");
+  if (!list) return;
   const groups = {};
   for (const [op, meta] of Object.entries(OPERATIONS)) {
-    (groups[meta.group] ||= []).push([op, meta.label]);
+    (groups[meta.group] ||= []).push(op);
   }
-  return Object.entries(groups).map(([group, ops]) => {
-    const opts = ops.map(([op, label]) =>
-      `<option value="${esc(op)}" ${op === selected ? "selected" : ""}>${esc(label)}</option>`
-    ).join("");
-    return `<optgroup label="${esc(group)}">${opts}</optgroup>`;
+  list.innerHTML = Object.entries(groups).map(([group, ops]) => {
+    const cards = ops.map((op) => {
+      const meta = OPERATIONS[op];
+      return `<li>
+        <button type="button" role="radio" aria-checked="false"
+                class="kind-card" data-op="${esc(op)}">
+          <span class="kind-card-title">
+            <span class="kind-card-icon" aria-hidden="true">${esc(operationIcon(op))}</span>
+            ${esc(meta.label)}
+          </span>
+          <span class="kind-card-help">${esc(meta.desc || "")}</span>
+        </button>
+      </li>`;
+    }).join("");
+    return `<li class="kind-group-label" aria-hidden="true">${esc(group)}</li>${cards}`;
   }).join("");
+}
+
+// Select an operation: highlight its card, fill the detail header/summary, and
+// render its parameter fields. `#t-op` (a hidden input) holds the value the
+// rest of the trigger code reads. `prefillParams` re-populates fields on re-run.
+function selectOp(opKey, prefillParams) {
+  const meta = OPERATIONS[opKey];
+  if (!meta) return;
+  const oSel = $("#t-op");
+  if (oSel) oSel.value = opKey;
+  $$("#t-op-list .kind-card").forEach((btn) => {
+    const on = btn.dataset.op === opKey;
+    btn.classList.toggle("is-selected", on);
+    btn.setAttribute("aria-checked", on ? "true" : "false");
+  });
+  const titleEl = $("#t-op-title");
+  if (titleEl) titleEl.textContent = meta.label;
+  const summaryEl = $("#t-op-summary");
+  if (summaryEl) summaryEl.textContent = meta.desc || "";
+  renderOpFields(prefillParams);
 }
 
 function renderOpFields(prefillParams) {
@@ -1027,7 +1073,6 @@ function prefillTrigger(orig) {
   // pick the right vault/ALL state, and scroll the form into view.
   const allEl = $("#t-all");
   const vSel = $("#t-vault");
-  const oSel = $("#t-op");
   const priSel = $("#t-pri");
   const whenSel = $("#t-window");
   if (orig.vault === "ALL") {
@@ -1037,10 +1082,9 @@ function prefillTrigger(orig) {
     if (allEl) allEl.checked = false;
     if (vSel) { vSel.disabled = false; vSel.value = orig.vault; }
   }
-  if (oSel) oSel.value = orig.operation;
   if (priSel) priSel.value = orig.priority;
   if (whenSel) whenSel.value = "";  // re-run defaults to run-now
-  renderOpFields(orig.params || {});
+  selectOp(orig.operation, orig.params || {});
   const trigger = $("#task-trigger");
   if (trigger) trigger.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -2834,8 +2878,11 @@ function setupToolbar() {
   if (btnRun) btnRun.addEventListener("click", submitTriggerForm);
   const allBox = $("#t-all");
   if (allBox) allBox.addEventListener("change", renderTriggerForm);
-  const opSel = $("#t-op");
-  if (opSel) opSel.addEventListener("change", () => renderOpFields());
+  const opList = $("#t-op-list");
+  if (opList) opList.addEventListener("click", (e) => {
+    const btn = e.target.closest(".kind-card");
+    if (btn && btn.dataset.op) selectOp(btn.dataset.op);
+  });
   $("#config-file").addEventListener("change", loadConfig);
   $("#btn-config-save").addEventListener("click", saveConfig);
   $("#btn-new-vault").addEventListener("click", showNewVaultWizard);
