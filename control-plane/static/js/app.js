@@ -607,25 +607,25 @@ function renderActiveSession() {
 const OPERATIONS = {
   "wiki-lint": {
     label: "Lint wiki", group: "Wiki", params: [],
-    desc: "Scan for orphans, dead links and frontmatter gaps; emit a report.",
+    desc: "Find orphans, dead links and gaps.",
   },
   "wiki-update-hot-cache": {
     label: "Update hot cache", group: "Wiki", params: [],
-    desc: "Refresh the wiki's hot-cache index of recently active pages.",
+    desc: "Refresh the hot-cache index.",
   },
   "wiki-bootstrap": {
     label: "Re-run wiki bootstrap", group: "Wiki", params: [],
-    desc: "Re-run the wiki bootstrap for an existing vault.",
+    desc: "Re-run the wiki bootstrap.",
     note: "Non-interactive re-run only; new vaults must use the wizard.",
   },
   "wiki-hint": {
-    label: "Generate hint (vault description)", group: "Wiki", params: [],
-    desc: "Write wiki/hint.json — the label, summary and tags on the vault card.",
+    label: "Generate hint", group: "Wiki", params: [],
+    desc: "Write the vault card's label & tags.",
     note: "Inspects the wiki and writes wiki/hint.json — the label, summary and tags shown on this vault's landing-page card.",
   },
   "wiki-ingest": {
     label: "Ingest a URL", group: "Research",
-    desc: "Fetch a URL and write structured pages into the wiki.",
+    desc: "Fetch a URL into the wiki.",
     params: [
       { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
       { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
@@ -633,7 +633,7 @@ const OPERATIONS = {
   },
   "wiki-ingest-prefix": {
     label: "Ingest URL + prefix", group: "Research",
-    desc: "Ingest a URL and re-frame harmful framing around constructive uses.",
+    desc: "Ingest a URL, re-framed constructively.",
     params: [
       { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
       { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
@@ -642,23 +642,23 @@ const OPERATIONS = {
   },
   "wiki-autoresearch": {
     label: "Autoresearch a topic", group: "Research",
-    desc: "Plan searches, fetch sources, and synthesize new wiki pages on a topic.",
+    desc: "Research a topic into new pages.",
     params: [{ key: "topic", type: "text", required: true, label: "Topic", maxLength: 200, placeholder: "topic to research" }],
   },
   "wiki-canvas": {
-    label: "Update canvas (visual map)", group: "Wiki",
-    desc: "Re-organize wiki/canvases/main.canvas around active topics.",
+    label: "Update canvas", group: "Wiki",
+    desc: "Re-organize the visual canvas.",
     params: [{ key: "description", type: "text", required: false, label: "Description (optional)", maxLength: 200, placeholder: "leave blank to use plugin defaults" }],
     note: "Runs /claude-obsidian:canvas. Description is optional — leave it blank and the plugin uses its own defaults.",
   },
   "run-prompt": {
     label: "Run a Claude prompt", group: "Custom",
-    desc: "Run an arbitrary Claude prompt or slash-command against the vault.",
+    desc: "Run a Claude prompt or command.",
     params: [{ key: "prompt", type: "text", required: true, label: "Prompt", maxLength: 200, placeholder: "/your-command or free text" }],
   },
   "run-shell": {
     label: "Run shell command", group: "Custom",
-    desc: "Run a shell command in the vault directory.",
+    desc: "Run a shell command in the vault.",
     params: [{ key: "cmd_parts", type: "argv", required: true, label: "Command (one argument per line)", placeholder: "echo\nhello" }],
     confirm: "run-shell executes an arbitrary command in the vault directory. Proceed?",
   },
@@ -990,9 +990,9 @@ function renderTriggerForm(forceVault) {
 
   const list = $("#t-op-list");
   if (list && !list.children.length) renderOpCards();
-  // Ensure an operation is selected (default to the first). selectOp renders
-  // the detail header/summary + parameter fields for the chosen op.
-  selectOp(oSel.value || Object.keys(OPERATIONS)[0]);
+  // Ensure an operation is selected (default to the first card in display
+  // order). selectOp renders the detail header/summary + parameter fields.
+  selectOp(oSel.value || firstOpKey());
   renderTriggerWindowOptions();
 }
 
@@ -1016,17 +1016,37 @@ function renderTriggerWindowOptions() {
   if (prev && up.some((w) => w.start === prev)) sel.value = prev;
 }
 
+// Display order of the operation-picker groups (left column): Research first
+// (the most-used ingest/research ops), then Wiki maintenance, then Custom. Any
+// group not listed here is appended afterwards in insertion order.
+const OP_GROUP_ORDER = ["Research", "Wiki", "Custom"];
+
+// Operations grouped by OPERATIONS[].group, with the groups in OP_GROUP_ORDER
+// (any unlisted group appended in insertion order). Returns [[group, ops], …];
+// the single source of truth for both the picker and the default selection.
+function orderedOpGroups() {
+  const groups = {};
+  for (const [op, meta] of Object.entries(OPERATIONS)) {
+    (groups[meta.group] ||= []).push(op);
+  }
+  const order = OP_GROUP_ORDER.filter((g) => groups[g])
+    .concat(Object.keys(groups).filter((g) => !OP_GROUP_ORDER.includes(g)));
+  return order.map((group) => [group, groups[group]]);
+}
+
+// The op selected by default / on first render: the first card in display order.
+function firstOpKey() {
+  const grouped = orderedOpGroups();
+  return (grouped[0] && grouped[0][1][0]) || Object.keys(OPERATIONS)[0];
+}
+
 // Build the left-hand operation picker: garage-style cards grouped by
 // OPERATIONS[].group. Each card carries its op key in data-op; clicking one
 // routes through selectOp (delegated handler wired in bindEvents).
 function renderOpCards() {
   const list = $("#t-op-list");
   if (!list) return;
-  const groups = {};
-  for (const [op, meta] of Object.entries(OPERATIONS)) {
-    (groups[meta.group] ||= []).push(op);
-  }
-  list.innerHTML = Object.entries(groups).map(([group, ops]) => {
+  list.innerHTML = orderedOpGroups().map(([group, ops]) => {
     const cards = ops.map((op) => {
       const meta = OPERATIONS[op];
       return `<li>

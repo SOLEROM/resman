@@ -484,41 +484,43 @@ button.ghost:hover { color: var(--text-primary); }
   margin: 12px;
 }
 .new-task-heading {
-  margin: 0 0 16px;
+  margin: 0 0 8px;
   font-size: 18px; font-weight: 600;
   color: var(--text-primary);
 }
 
 /* Two-column picker: operation cards on the left, detail + form on the right
-   (mirrors the garage reference app's "New task" view). */
+   (mirrors the garage reference app's "New task" view). The wide column gap
+   gives the form some breathing room away from the card list. */
 .new-task-layout {
   display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 24px;
+  grid-template-columns: 240px 1fr;
+  gap: 44px;
   align-items: start;
 }
 @media (max-width: 720px) {
-  .new-task-layout { grid-template-columns: 1fr; }
+  .new-task-layout { grid-template-columns: 1fr; gap: 16px; }
 }
 
-/* ----- left column: operation cards ----- */
+/* ----- left column: operation cards. Kept compact (single-line help, tight
+   padding) so every operation across all groups is visible at once. ----- */
 .kind-list {
   list-style: none; margin: 0; padding: 0;
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column; gap: 4px;
 }
 .kind-group-label {
   font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--text-muted); font-weight: 600;
-  padding: 10px 2px 2px;
+  padding: 6px 2px 2px;
 }
 .kind-list > li:first-child.kind-group-label { padding-top: 0; }
 .kind-card {
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: 2px;
   width: 100%; box-sizing: border-box; text-align: left;
   background: var(--bg-base);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 9px 11px;
+  border-radius: 7px;
+  padding: 6px 11px;
   color: var(--text-primary); font: inherit; cursor: pointer;
   position: relative;
   transition: border-color .12s ease, background .12s ease;
@@ -530,7 +532,7 @@ button.ghost:hover { color: var(--text-primary); }
   box-shadow: 0 0 0 1px var(--accent) inset;
 }
 .kind-card.is-selected::before {
-  content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px;
+  content: ""; position: absolute; left: -1px; top: 7px; bottom: 7px;
   width: 3px; background: var(--accent); border-radius: 2px;
 }
 .kind-card-title {
@@ -542,7 +544,8 @@ button.ghost:hover { color: var(--text-primary); }
   width: 18px; font-size: 13px; opacity: .85;
 }
 .kind-card-help {
-  color: var(--text-secondary); font-size: 11px; line-height: 1.4;
+  color: var(--text-secondary); font-size: 11px; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* ----- right column: detail + form ----- */
