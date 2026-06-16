@@ -19,7 +19,8 @@ class FakeWindow:
 _DEFAULT_RUNNER = object()  # sentinel — distinct from None ("production streaming")
 
 
-def make_tm(tmp_path: Path, vaults=("alpha",), active=True, runner=_DEFAULT_RUNNER):
+def make_tm(tmp_path: Path, vaults=("alpha",), active=True, runner=_DEFAULT_RUNNER,
+            usage_provider=None):
     log_path = tmp_path / "tasks.jsonl"
     log_dir = tmp_path / "task-logs"
     bus = EventBus()
@@ -41,6 +42,7 @@ def make_tm(tmp_path: Path, vaults=("alpha",), active=True, runner=_DEFAULT_RUNN
         list_vault_names=lambda: list(vaults),
         bus=bus,
         runner=runner,
+        usage_provider=usage_provider,
     )
     tm.replay()
     return tm, win, bus
@@ -1000,3 +1002,99 @@ def test_build_attend_prompt_shell_ops_return_none(tmp_path):
     assert tm.build_attend_prompt(t1) is None
     assert tm.build_attend_prompt(t2) is None
     assert tm.build_attend_prompt(t3) is None
+
+
+# ----- "check limits" usage sampling -----
+
+def _events(tmp_path):
+    return [json.loads(l) for l in
+            (tmp_path / "tasks.jsonl").read_text().strip().splitlines()]
+
+
+def test_check_limits_samples_before_and_after(tmp_path):
+    """A task created with check_limits=True records a usage reading before it
+    starts and after it finishes; both land on the task and in the log."""
+    calls = []
+    def provider():
+        calls.append(1)
+        # Distinct readings so we can tell before/after apart.
+        return {"ok": True, "reason": "ok",
+                "session_pct": 10 * len(calls), "weekly_pct": len(calls)}
+    tm, _, _ = make_tm(tmp_path, usage_provider=provider)
+    t = tm.create_task("lint", "alpha", "wiki-lint", {}, "high", check_limits=True)
+
+    assert len(calls) == 2  # before + after
+    assert t.check_limits is True
+    assert t.usage_before == {"ok": True, "reason": "ok", "session_pct": 10, "weekly_pct": 1}
+    assert t.usage_after == {"ok": True, "reason": "ok", "session_pct": 20, "weekly_pct": 2}
+
+    sampled = [e for e in _events(tmp_path) if e["event"] == "usage_sampled"]
+    phases = [e["phase"] for e in sampled]
+    assert phases == ["before", "after"]
+    # to_dict surfaces the readings for the API/UI.
+    d = t.to_dict()
+    assert d["check_limits"] is True
+    assert d["usage_before"]["session_pct"] == 10
+    assert d["usage_after"]["session_pct"] == 20
+
+
+def test_check_limits_off_does_not_sample(tmp_path):
+    """Without the toggle the provider is never called and no usage_sampled
+    events are written — the default path is untouched."""
+    calls = []
+    tm, _, _ = make_tm(tmp_path, usage_provider=lambda: calls.append(1))
+    t = tm.create_task("lint", "alpha", "wiki-lint", {}, "high")
+    assert calls == []
+    assert t.check_limits is False
+    assert t.usage_before is None and t.usage_after is None
+    assert not [e for e in _events(tmp_path) if e["event"] == "usage_sampled"]
+
+
+def test_check_limits_noop_without_provider(tmp_path):
+    """check_limits=True but no provider wired (e.g. unit context) is a safe
+    no-op: the task still runs, just without readings."""
+    tm, _, _ = make_tm(tmp_path, usage_provider=None)
+    t = tm.create_task("lint", "alpha", "wiki-lint", {}, "high", check_limits=True)
+    assert t.state == "completed"
+    assert t.usage_before is None and t.usage_after is None
+
+
+def test_check_limits_provider_error_is_recorded_not_fatal(tmp_path):
+    """A provider that raises must not break the run; the failure is stored as a
+    classified error reading."""
+    def boom():
+        raise RuntimeError("network down")
+    tm, _, _ = make_tm(tmp_path, usage_provider=boom)
+    t = tm.create_task("lint", "alpha", "wiki-lint", {}, "high", check_limits=True)
+    assert t.state == "completed"
+    assert t.usage_before["ok"] is False
+    assert t.usage_before["reason"] == "sample_error"
+    assert t.usage_after["reason"] == "sample_error"
+
+
+def test_check_limits_survives_replay(tmp_path):
+    """check_limits and both readings are reconstructed from the JSONL on a
+    fresh replay (restart)."""
+    provider = lambda: {"ok": True, "reason": "ok", "session_pct": 5, "weekly_pct": 5}
+    tm, _, _ = make_tm(tmp_path, usage_provider=provider)
+    t = tm.create_task("lint", "alpha", "wiki-lint", {}, "high", check_limits=True)
+    tid = t.id
+
+    tm2, _, _ = make_tm(tmp_path, usage_provider=provider)  # replays existing log
+    rt = tm2.get(tid)
+    assert rt is not None
+    assert rt.check_limits is True
+    assert rt.usage_before == {"ok": True, "reason": "ok", "session_pct": 5, "weekly_pct": 5}
+    assert rt.usage_after == {"ok": True, "reason": "ok", "session_pct": 5, "weekly_pct": 5}
+
+
+def test_check_limits_propagates_to_all_vault_children(tmp_path):
+    """An ALL-vault task with check_limits passes the flag to each child."""
+    provider = lambda: {"ok": True, "reason": "ok", "session_pct": 1, "weekly_pct": 1}
+    tm, _, _ = make_tm(tmp_path, vaults=("alpha", "beta"), usage_provider=provider)
+    parent = tm.create_task("lint", "ALL", "wiki-lint", {}, "high", check_limits=True)
+    assert parent.check_limits is True
+    children = [t for t in tm.list() if t.get("parent_id") == parent.id]
+    assert len(children) == 2
+    assert all(c["check_limits"] for c in children)
+    assert all(c["usage_before"] and c["usage_after"] for c in children)

@@ -768,6 +768,7 @@ def create_task():
             run_now=True,
             scheduled_for=scheduled_for,
             force=bool(body.get("force")),
+            check_limits=bool(body.get("check_limits")),
         )
     except ValueError as exc:
         _activity(f"task rejected: {body.get('operation')} — {exc}",

@@ -134,6 +134,7 @@ def build_app(
         get_vault_path=lambda n: (vault_registry.get(n).path if vault_registry.get(n) else None),
         list_vault_names=vault_registry.all_names,
         bus=bus,
+        usage_provider=claude_usage.fetch_usage,
     )
     replay_summary = task_manager.replay()
 

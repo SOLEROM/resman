@@ -603,6 +603,20 @@ button.ghost:hover { color: var(--text-primary); }
   border-top: 1px solid var(--border-light);
 }
 .trigger-error { color: var(--danger); font-size: 12px; }
+.check-limits-toggle {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text-secondary);
+  white-space: nowrap; cursor: pointer;
+}
+.check-limits-toggle input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+
+/* "check limits" indicator on a task card head + the before/after readings. */
+.task-limit-badge {
+  font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  color: var(--text-secondary);
+  background: var(--bg-base); border: 1px solid var(--border-light);
+  border-radius: 10px; padding: 1px 7px; white-space: nowrap;
+}
 
 /* The redesigned "New task" picker is tall (two-column card list), so the whole
    Tasks tab scrolls. Without this the queue — flex:1 + min-height:0 under a

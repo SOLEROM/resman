@@ -171,6 +171,12 @@ class Task:
     error: Optional[str] = None
     pid: Optional[int] = None
     scheduled_for: Optional[str] = None
+    # Opt-in usage-limit check (the trigger's "check limits" toggle): when set,
+    # a claude.ai usage reading is captured just before the task starts and just
+    # after it finishes. Both readings are stored verbatim (see claude_usage).
+    check_limits: bool = False
+    usage_before: Optional[dict] = None
+    usage_after: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -191,6 +197,9 @@ class Task:
             "error": self.error,
             "pid": self.pid,
             "scheduled_for": self.scheduled_for,
+            "check_limits": self.check_limits,
+            "usage_before": dict(self.usage_before) if self.usage_before else None,
+            "usage_after": dict(self.usage_after) if self.usage_after else None,
         }
 
 
@@ -211,6 +220,7 @@ class TaskManager:
         list_vault_names: Callable[[], List[str]],
         bus: Optional[EventBus] = None,
         runner: Optional[Callable] = None,
+        usage_provider: Optional[Callable[[], dict]] = None,
     ) -> None:
         self.log_path = Path(log_path)
         self.log_dir = Path(log_dir)
@@ -231,6 +241,10 @@ class TaskManager:
         # streaming runner is used; it writes the same log file and additionally
         # emits task_log_appended events on the bus for live tailing.
         self._runner = runner
+        # Reads a classified claude.ai usage dict (claude_usage.fetch_usage).
+        # Used only for tasks created with check_limits=True; None disables the
+        # whole feature (e.g. in unit tests), so sampling becomes a no-op.
+        self._usage_provider = usage_provider
         self._procs: Dict[str, subprocess.Popen] = {}
         self._executor: Optional[Callable[[Task], None]] = None
         self.bus.subscribe("window_activated", self._on_window_activated)
@@ -335,6 +349,7 @@ class TaskManager:
                     state="pending",
                     created_at=event.get("ts", ""),
                     updated_at=event.get("ts", ""),
+                    check_limits=bool(d.get("check_limits", False)),
                 )
             except Exception:
                 return
@@ -386,6 +401,14 @@ class TaskManager:
             for k in ("priority", "params", "name"):
                 if k in data:
                     setattr(task, k, data[k])
+        elif kind == "usage_sampled":
+            # A "check limits" reading taken before/after the run. Stored verbatim
+            # so the UI can show both points (and any delta) on the task.
+            reading = event.get("data") or {}
+            if event.get("phase") == "after":
+                task.usage_after = reading
+            else:
+                task.usage_before = reading
         # child_created / dispatch_started / cron_skipped don't change task state directly
 
     def _append(self, event: dict) -> None:
@@ -413,6 +436,7 @@ class TaskManager:
         run_now: bool = True,
         scheduled_for: Optional[str] = None,
         force: bool = False,
+        check_limits: bool = False,
     ) -> Task:
         if not NAME_RE.match(name or ""):
             raise ValueError("task name must match [a-zA-Z0-9_-]")
@@ -449,11 +473,12 @@ class TaskManager:
         with self._dispatch_lock:
             if vault == "ALL" and parent_id is None:
                 return self._create_parent_all(
-                    name, operation, validated_params, priority, schedule, run_now, force,
+                    name, operation, validated_params, priority, schedule, run_now,
+                    force, check_limits,
                 )
             return self._create_single(
                 name, vault, operation, validated_params, priority, schedule,
-                parent_id, run_now, normalized_scheduled, force,
+                parent_id, run_now, normalized_scheduled, force, check_limits,
             )
 
     def _create_single(
@@ -468,6 +493,7 @@ class TaskManager:
         run_now: bool,
         scheduled_for: Optional[str] = None,
         force: bool = False,
+        check_limits: bool = False,
     ) -> Task:
         tid = f"t-{uuid.uuid4().hex[:12]}"
         ts = _utcnow_iso()
@@ -480,6 +506,8 @@ class TaskManager:
             "schedule": schedule,
             "parent_id": parent_id,
         }
+        if check_limits:
+            data["check_limits"] = True
         if scheduled_for:
             data["scheduled_for"] = scheduled_for
         self._append({"ts": ts, "event": "created", "task_id": tid, "data": data})
@@ -505,7 +533,7 @@ class TaskManager:
             id=tid, name=name, vault=vault, operation=operation, params=params,
             priority=priority, schedule=schedule, parent_id=parent_id,
             state=initial_state, created_at=ts, updated_at=ts,
-            scheduled_for=scheduled_for,
+            scheduled_for=scheduled_for, check_limits=check_limits,
         )
         self._tasks[tid] = task
         self.bus.emit("task_updated", {"task_id": tid, "state": task.state})
@@ -527,6 +555,7 @@ class TaskManager:
         schedule: str,
         run_now: bool,
         force: bool = False,
+        check_limits: bool = False,
     ) -> Task:
         ts = _utcnow_iso()
         parent_id = f"t-{uuid.uuid4().hex[:12]}"
@@ -534,6 +563,8 @@ class TaskManager:
             "name": name, "vault": "ALL", "operation": operation, "params": params,
             "priority": priority, "schedule": schedule, "parent_id": None,
         }
+        if check_limits:
+            data["check_limits"] = True
         self._append({"ts": ts, "event": "created", "task_id": parent_id, "data": data})
         vault_names = self.list_vault_names()
         self._append({
@@ -543,13 +574,13 @@ class TaskManager:
         parent = Task(
             id=parent_id, name=name, vault="ALL", operation=operation, params=params,
             priority=priority, schedule=schedule, state="pending",
-            created_at=ts, updated_at=ts,
+            created_at=ts, updated_at=ts, check_limits=check_limits,
         )
         self._tasks[parent_id] = parent
         for vname in vault_names:
             self._create_single(
                 f"{name}-{vname}", vname, operation, params, priority, schedule,
-                parent_id, run_now, force=force,
+                parent_id, run_now, force=force, check_limits=check_limits,
             )
         self.bus.emit("task_updated", {"task_id": parent_id, "state": parent.state})
         return parent
@@ -629,6 +660,32 @@ class TaskManager:
         self.bus.emit("task_updated", {"task_id": task_id, "state": "archived"})
         return True
 
+    # ----- Usage-limit sampling ("check limits" toggle) -----
+    def _sample_usage(self, task: Task, phase: str) -> None:
+        """Take one claude.ai usage reading for `task` and record it as a
+        ``usage_sampled`` event (phase ``before`` | ``after``). No-op when the
+        manager has no usage provider (unit tests) — so the run path is
+        unaffected for tasks that didn't opt in. Never raises: a failed read is
+        stored as a classified error reading so the UI can show *something*."""
+        if not self._usage_provider:
+            return
+        try:
+            reading = self._usage_provider() or {}
+        except Exception as exc:  # provider must never break task execution
+            log.exception("usage sample (%s) failed for %s", phase, task.id)
+            reading = {"ok": False, "reason": "sample_error", "error": str(exc)}
+        ts = _utcnow_iso()
+        self._append({
+            "ts": ts, "event": "usage_sampled", "task_id": task.id,
+            "phase": phase, "data": reading,
+        })
+        if phase == "after":
+            task.usage_after = reading
+        else:
+            task.usage_before = reading
+        task.updated_at = ts
+        self.bus.emit("task_updated", {"task_id": task.id, "state": task.state})
+
     # ----- Dispatch -----
     def _dispatch(self, task: Task) -> None:
         if task.vault == "ALL":
@@ -645,6 +702,11 @@ class TaskManager:
         self._executor = fn
 
     def _execute(self, task: Task) -> None:
+        # "check limits": read usage just before the run. This blocks the
+        # dispatch greenlet (a claude.ai GET, a few seconds) but not the request
+        # that queued the task — dispatch is already async via set_executor.
+        if task.check_limits:
+            self._sample_usage(task, "before")
         cmd, cwd = self._build_command(task)
         if cmd is None:
             ts = _utcnow_iso()
@@ -988,6 +1050,10 @@ class TaskManager:
         task.pid = None
         self._procs.pop(task.id, None)
         self.bus.emit("task_updated", {"task_id": task.id, "state": task.state})
+        # "check limits": read usage again now the run is done. Paired with the
+        # `before` reading so the UI can show both points and the delta.
+        if task.check_limits:
+            self._sample_usage(task, "after")
         if task.parent_id:
             self._aggregate_parent(task.parent_id)
 

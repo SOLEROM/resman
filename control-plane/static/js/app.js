@@ -722,6 +722,54 @@ function isOverdueScheduled(t) {
     new Date(t.scheduled_for).getTime() <= Date.now();
 }
 
+// Render one claude.ai usage reading (from the "check limits" toggle) as a
+// short "session X% · weekly Y%" string, or a reason when the read didn't yield
+// numbers. `u` is the classified dict from claude_usage.fetch_usage.
+const USAGE_REASON_LABEL = {
+  auth_error: "auth error — token rejected",
+  fetch_error: "fetch error",
+  sample_error: "sample failed",
+  limit_reached: "at usage limit",
+};
+function fmtUsageReading(u) {
+  if (!u) return "—";
+  const s = u.session_pct != null ? Math.round(u.session_pct) + "%" : "?";
+  const w = u.weekly_pct != null ? Math.round(u.weekly_pct) + "%" : "?";
+  if (!u.ok && u.reason !== "limit_reached") {
+    return USAGE_REASON_LABEL[u.reason] || u.reason || "unavailable";
+  }
+  let txt = `session ${s} · weekly ${w}`;
+  if (u.reason === "limit_reached") txt += " · at limit";
+  return txt;
+}
+
+// Delta between two readings, e.g. "session +3% · weekly +1%". Only shown when
+// both readings carry numbers for a field.
+function fmtUsageDelta(before, after) {
+  if (!before || !after) return "";
+  const parts = [];
+  for (const [key, label] of [["session_pct", "session"], ["weekly_pct", "weekly"]]) {
+    const a = before[key], b = after[key];
+    if (typeof a === "number" && typeof b === "number") {
+      const d = Math.round((b - a) * 10) / 10;
+      parts.push(`${label} ${d >= 0 ? "+" : ""}${d}%`);
+    }
+  }
+  return parts.join(" · ");
+}
+
+// The expanded-card "limit before / after" rows, rendered only when the task
+// opted into the check. Shows "pending…" until each reading lands.
+function usageRowsHTML(t) {
+  if (!t.check_limits) return "";
+  const before = t.usage_before ? esc(fmtUsageReading(t.usage_before)) : `<span class="muted">pending…</span>`;
+  const after = t.usage_after ? esc(fmtUsageReading(t.usage_after)) : `<span class="muted">pending…</span>`;
+  const delta = fmtUsageDelta(t.usage_before, t.usage_after);
+  return `<span>limit before</span><span class="v">${before}</span>
+          <span>limit after</span><span class="v">${after}</span>
+          ${delta ? `<span>limit delta</span><span class="v">${esc(delta)}</span>` : ""}`;
+}
+
 // Operations whose execution is "claude -p <prompt>" — those can be reopened
 // in a live Claude REPL via POST /api/tasks/<id>/attend so the user can
 // answer prompts the original non-interactive run couldn't. Shell-based ops
@@ -805,6 +853,7 @@ function taskCardHTML(t) {
          <span>started</span><span class="v">${esc(t.started_at || "—")}</span>
          <span>finished</span><span class="v">${esc(t.finished_at || "—")}</span>
          ${t.scheduled_for ? `<span>scheduled for</span><span class="v ${overdue ? "task-overdue" : ""}">${esc(t.scheduled_for)}</span>` : ""}
+         ${usageRowsHTML(t)}
          ${t.error ? `<span>error</span><span class="v" style="color:var(--danger)">${esc(t.error)}</span>` : ""}
        </div>
        <pre class="task-log-pane" id="log-${tid}" data-tid="${tid}"><span class="task-log-empty">loading log…</span></pre>`
@@ -817,6 +866,7 @@ function taskCardHTML(t) {
       <span class="task-card-vault">${vault}</span>
       <span class="task-card-op">· ${opLabel}</span>
       <span class="task-card-meta">${when ? "· " + when : ""}</span>
+      ${t.check_limits ? `<span class="task-limit-badge" title="Usage limits are checked before and after this task — expand for the readings.">⚖ limits</span>` : ""}
       <span class="task-card-spacer"></span>
       <div class="task-card-actions">
         <button class="btn btn-xs" data-act="toggle-log" data-tid="${tid}">${log.open ? "hide log" : "log"}</button>
@@ -1132,6 +1182,7 @@ async function submitTriggerForm() {
     operation: opKey,
     params,
     priority: $("#t-pri").value,
+    check_limits: !!($("#t-check-limits") && $("#t-check-limits").checked),
   };
   if (scheduled_for) {
     body.scheduled_for = scheduled_for;
