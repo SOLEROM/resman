@@ -41,10 +41,13 @@ window_budget:
   weekly_start: "Monday 09:00"
   weekly_end:   "Sunday 23:00"
 
+categories: [work, hw]            # optional — sidebar group ordering
+
 vaults:
   - name: vla6
     path: /tmp/val6
     tags: [research]
+    category: work            # optional — sidebar group ("/" nests: hw/edge)
     mount: /home/user/val6    # optional — bind-mount onto this host path
 
 scan_paths:
@@ -58,7 +61,17 @@ scan_paths:
 | `name` | yes | Unique identifier matching `[a-zA-Z0-9_-]` |
 | `path` | yes | Absolute path to the vault directory |
 | `tags` | no | List of string labels (display only) |
+| `category` | no | Sidebar group. `/` nests (`hw/edge`, max 3 levels); segments allow letters, numbers, spaces, `. _ -`. Uncategorized vaults sit at the tree root. |
 | `mount` | no | Absolute host path to bind-mount the vault onto at startup. Requires root or a sudoers rule — see [Mounts](mounts.md). |
+
+### Categories
+
+The sidebar groups vaults under collapsible category headers built from each
+vault's `category` value. All groups start expanded; the ⊟/⊞ header button
+collapses or expands everything at once, and the collapsed set is remembered
+per browser. The optional top-level `categories:` list pins group ordering —
+anything not listed sorts alphabetically after it. Address nested groups by
+full path (`hw/edge`).
 
 ### Notes
 

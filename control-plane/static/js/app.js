@@ -14,6 +14,10 @@ const state = {
   ttydAvailable: true,
   window: { state: "between" },
   filter: { search: "", status: "any" },
+  // Sidebar category tree: explicit ordering from resman.yaml `categories:`
+  // plus the set of collapsed category paths (persisted — default expanded).
+  categoryOrder: [],
+  collapsedCats: loadCollapsedCats(),
   // sessionId -> custom display label (set by user via tab click-to-rename).
   // Persisted to localStorage so labels survive reload as long as the
   // session_id does — which it does, since SessionManager keeps sessions
@@ -45,6 +49,18 @@ const state = {
 };
 
 const ACTIVITY_LOG_MAX = 2000;
+
+function loadCollapsedCats() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("resman-collapsed-cats") || "[]"));
+  } catch (_) { return new Set(); }
+}
+function saveCollapsedCats() {
+  try {
+    localStorage.setItem(
+      "resman-collapsed-cats", JSON.stringify([...state.collapsedCats]));
+  } catch (_) {}
+}
 
 function loadTabLabels() {
   try {
@@ -133,10 +149,145 @@ function vaultDotTitle(vault) {
 }
 
 // ----- sidebar render -----
+// Category helpers. A vault's `category` is a slash path ("hw/edge") that
+// places it inside nested collapsible groups. No category = root level.
+function categorySegments(v) {
+  const raw = (v.category || "").trim().replace(/^\/+|\/+$/g, "");
+  if (!raw) return [];
+  return raw.split("/").map((s) => s.trim()).filter(Boolean);
+}
+
+function buildCategoryTree(vaults) {
+  const root = { cats: new Map(), vaults: [] };
+  for (const v of vaults) {
+    let node = root;
+    for (const seg of categorySegments(v)) {
+      if (!node.cats.has(seg)) node.cats.set(seg, { cats: new Map(), vaults: [] });
+      node = node.cats.get(seg);
+    }
+    node.vaults.push(v);
+  }
+  return root;
+}
+
+// Every category path currently in use (derived from the unfiltered list).
+function allCategoryPaths() {
+  const out = new Set();
+  for (const v of state.vaults) {
+    const segs = categorySegments(v);
+    for (let i = 1; i <= segs.length; i++) out.add(segs.slice(0, i).join("/"));
+  }
+  return [...out];
+}
+
+// Explicitly listed categories (resman.yaml `categories:`) sort first, in
+// listed order; the rest alphabetically.
+function sortedCatEntries(node, prefix) {
+  const orderIdx = (name) => {
+    const full = prefix ? `${prefix}/${name}` : name;
+    const i = state.categoryOrder.indexOf(full);
+    return i === -1 ? Infinity : i;
+  };
+  return [...node.cats.entries()].sort((a, b) => {
+    const ia = orderIdx(a[0]);
+    const ib = orderIdx(b[0]);
+    if (ia !== ib) return ia - ib;
+    return a[0].localeCompare(b[0]);
+  });
+}
+
+function countSubtreeVaults(node) {
+  let n = node.vaults.length;
+  for (const child of node.cats.values()) n += countSubtreeVaults(child);
+  return n;
+}
+
+// Worst status in a subtree — shown on the header while a group is
+// collapsed so activity/errors stay visible.
+function subtreeColor(node) {
+  const rank = { red: 3, yellow: 2, green: 1, gray: 0 };
+  let worst = "gray";
+  for (const v of node.vaults) {
+    const c = vaultColor(v);
+    if (rank[c] > rank[worst]) worst = c;
+  }
+  for (const child of node.cats.values()) {
+    const c = subtreeColor(child);
+    if (rank[c] > rank[worst]) worst = c;
+  }
+  return worst;
+}
+
+function vaultRowHtml(v, depth) {
+  const color = vaultColor(v);
+  const tags = (v.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("");
+  const warn = !v.path_exists
+    ? `<span class="vault-warn" data-warn="${esc(v.name)}" title="path not found — click for details">⚠</span>`
+    : (!v.is_obsidian ? `<span class="vault-warn" data-warn="${esc(v.name)}" title="missing .obsidian/ — click for details">?</span>` : "");
+  const sel = v.name === state.selectedVault ? "selected" : "";
+  const meta = [];
+  const sessionsForVault = state.sessions.filter((s) => s.vault === v.name).length;
+  if (sessionsForVault) meta.push(`${sessionsForVault} session${sessionsForVault > 1 ? "s" : ""}`);
+  const tasksForVault = state.tasks.filter((t) => t.vault === v.name);
+  if (tasksForVault.some((t) => t.state === "running")) meta.push("running");
+  return `
+    <div class="vault-row ${sel}" data-vault="${esc(v.name)}" style="--depth:${depth}" title="${esc(vaultDotTitle(v))}">
+      <span class="vault-dot vault-dot-${color}"></span>
+      <div class="vault-info">
+        <div class="vault-name">${esc(v.name)}${warn}</div>
+        <div class="vault-meta">${meta.map(esc).join(" · ")}</div>
+        ${tags ? `<div class="vault-tags">${tags}</div>` : ""}
+      </div>
+      <button class="play" data-action="play" data-vault="${esc(v.name)}" title="Ingest a URL into this vault's wiki">↘</button>
+    </div>`;
+}
+
+// Recursive tree render. While a search/status filter is active every group
+// is forced open (and toggling is disabled) so matches are always visible.
+function renderCatChildren(node, prefix, depth, out, filtering) {
+  for (const [name, child] of sortedCatEntries(node, prefix)) {
+    const fullPath = prefix ? `${prefix}/${name}` : name;
+    const collapsed = !filtering && state.collapsedCats.has(fullPath);
+    const count = countSubtreeVaults(child);
+    const dot = collapsed
+      ? `<span class="vault-dot vault-dot-${subtreeColor(child)} cat-dot"></span>`
+      : "";
+    out.push(`
+      <div class="cat-row ${collapsed ? "collapsed" : ""} ${filtering ? "static" : ""}"
+           data-cat="${esc(fullPath)}" style="--depth:${depth}"
+           title="${esc(fullPath)} — ${count} vault${count === 1 ? "" : "s"}">
+        <span class="cat-chevron">▾</span>
+        <span class="cat-name">${esc(name)}</span>
+        ${dot}
+        <span class="cat-count">${count}</span>
+      </div>`);
+    if (!collapsed) renderCatChildren(child, fullPath, depth + 1, out, filtering);
+  }
+  for (const v of node.vaults) out.push(vaultRowHtml(v, depth));
+}
+
+function updateCatsToggle() {
+  const btn = $("#btn-cats-toggle");
+  if (!btn) return;
+  const paths = allCategoryPaths();
+  const anyCollapsed = paths.some((p) => state.collapsedCats.has(p));
+  btn.textContent = anyCollapsed ? "⊞" : "⊟";
+  btn.title = anyCollapsed ? "Expand all categories" : "Collapse all categories";
+  btn.disabled = paths.length === 0;
+}
+
+function toggleCategory(path) {
+  if (state.collapsedCats.has(path)) state.collapsedCats.delete(path);
+  else state.collapsedCats.add(path);
+  saveCollapsedCats();
+  renderVaultList();
+}
+
 function renderVaultList() {
   const root = $("#vault-list");
   const search = state.filter.search.toLowerCase();
   const status = state.filter.status;
+  const filtering = !!search || status !== "any";
   const filtered = state.vaults.filter((v) => {
     if (search && !v.name.toLowerCase().includes(search)) return false;
     if (status === "session" && !state.sessions.some((s) => s.vault === v.name)) return false;
@@ -144,34 +295,23 @@ function renderVaultList() {
     if (status === "error" && !state.tasks.some((t) => t.vault === v.name && t.state === "failed")) return false;
     return true;
   });
+  updateCatsToggle();
   if (state.vaults.length === 0) {
     root.innerHTML =
       `<div class="muted" style="padding:14px">Add your first vault to get started →</div>`;
     return;
   }
-  root.innerHTML = filtered.map((v) => {
-    const color = vaultColor(v);
-    const tags = (v.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("");
-    const warn = !v.path_exists
-      ? `<span class="vault-warn" data-warn="${esc(v.name)}" title="path not found — click for details">⚠</span>`
-      : (!v.is_obsidian ? `<span class="vault-warn" data-warn="${esc(v.name)}" title="missing .obsidian/ — click for details">?</span>` : "");
-    const sel = v.name === state.selectedVault ? "selected" : "";
-    const meta = [];
-    const sessionsForVault = state.sessions.filter((s) => s.vault === v.name).length;
-    if (sessionsForVault) meta.push(`${sessionsForVault} session${sessionsForVault > 1 ? "s" : ""}`);
-    const tasksForVault = state.tasks.filter((t) => t.vault === v.name);
-    if (tasksForVault.some((t) => t.state === "running")) meta.push("running");
-    return `
-      <div class="vault-row ${sel}" data-vault="${esc(v.name)}" title="${esc(vaultDotTitle(v))}">
-        <span class="vault-dot vault-dot-${color}"></span>
-        <div class="vault-info">
-          <div class="vault-name">${esc(v.name)}${warn}</div>
-          <div class="vault-meta">${meta.map(esc).join(" · ")}</div>
-          ${tags ? `<div class="vault-tags">${tags}</div>` : ""}
-        </div>
-        <button class="play" data-action="play" data-vault="${esc(v.name)}" title="Ingest a URL into this vault's wiki">↘</button>
-      </div>`;
-  }).join("");
+  const out = [];
+  // Tree built from the FILTERED list — groups left empty by a filter
+  // disappear instead of rendering dead headers.
+  renderCatChildren(buildCategoryTree(filtered), "", 0, out, filtering);
+  if (!filtered.length) {
+    out.push(`<div class="muted" style="padding:14px">No vaults match.</div>`);
+  }
+  root.innerHTML = out.join("");
+  root.querySelectorAll(".cat-row:not(.static)").forEach((row) => {
+    row.addEventListener("click", () => toggleCategory(row.dataset.cat));
+  });
   root.querySelectorAll(".vault-row").forEach((row) => {
     row.addEventListener("click", (e) => {
       if (e.target.dataset.action === "play") return;
@@ -2548,6 +2688,8 @@ async function loadVaults() {
   // Optional app.vault_default_root_path — the new-vault wizard uses it as
   // the starting point for the path input and the Browse picker.
   state.vaultDefaultRoot = data.vault_default_root || null;
+  // Explicit category ordering from resman.yaml `categories:` (may be empty).
+  state.categoryOrder = data.categories || [];
   renderVaultList();
   renderTriggerForm();
 }
@@ -2725,6 +2867,12 @@ function showNewVaultWizard() {
   const pathHint = defaultRoot
     ? `— absolute, defaults to <code>${esc(defaultRoot)}</code>`
     : "— absolute, e.g. /data/research/foo";
+  // Offer every category already in use (plus explicitly configured ones)
+  // as datalist suggestions so assignment stays consistent.
+  const knownCategories = [...new Set([
+    ...state.categoryOrder,
+    ...allCategoryPaths(),
+  ])].sort((a, b) => a.localeCompare(b));
   const body = `
     <label>Vault name <span class="muted">— letters, numbers, _ -</span></label>
     <input id="nv-name" autocomplete="off" />
@@ -2733,6 +2881,10 @@ function showNewVaultWizard() {
       <input id="nv-path" placeholder="/path/to/vault" autocomplete="off" value="${esc(pathSeed)}" />
       <button type="button" class="btn btn-sm" id="nv-browse">Browse…</button>
     </div>
+    <label>Category <span class="muted">— optional sidebar group; nest with "/", e.g. hw/edge</span></label>
+    <input id="nv-category" list="nv-category-list" placeholder="work" autocomplete="off" />
+    <datalist id="nv-category-list">${knownCategories.map((c) =>
+      `<option value="${esc(c)}"></option>`).join("")}</datalist>
     <label>Tags <span class="muted">— comma-separated, optional</span></label>
     <input id="nv-tags" placeholder="ai, llm" autocomplete="off" />
     <label style="display:flex;align-items:center;gap:6px;margin-top:14px">
@@ -2760,6 +2912,7 @@ function showNewVaultWizard() {
   showModal("New Vault", body, async () => {
     const name = $("#nv-name").value.trim();
     const path = $("#nv-path").value.trim();
+    const category = $("#nv-category").value.trim();
     const tagsInput = $("#nv-tags").value.trim();
     const scaffold = $("#nv-scaffold").checked;
     const bootstrap = $("#nv-bootstrap").checked;
@@ -2791,7 +2944,7 @@ function showNewVaultWizard() {
     try {
       await api("/api/vaults", {
         method: "POST",
-        body: JSON.stringify({ name, path, tags }),
+        body: JSON.stringify({ name, path, tags, category: category || null }),
       });
     } catch (err) {
       setWizardStatus("Register failed: " + err.message, "error");
@@ -3055,12 +3208,50 @@ function setupTabs() {
 }
 
 function setupFilters() {
-  $("#vault-search").addEventListener("input", (e) => {
+  const bar = $("#vault-filter-bar");
+  const toggle = $("#btn-vault-filter");
+  const search = $("#vault-search");
+  const status = $("#status-filter");
+  // Closing the bar always clears the filters — a hidden filter must never
+  // silently shrink the vault list.
+  const closeFilterBar = () => {
+    bar.hidden = true;
+    toggle.classList.remove("active");
+    const hadFilter = state.filter.search || state.filter.status !== "any";
+    state.filter.search = "";
+    state.filter.status = "any";
+    search.value = "";
+    status.value = "any";
+    if (hadFilter) renderVaultList();
+  };
+  toggle.addEventListener("click", () => {
+    if (bar.hidden) {
+      bar.hidden = false;
+      toggle.classList.add("active");
+      search.focus();
+    } else {
+      closeFilterBar();
+    }
+  });
+  search.addEventListener("input", (e) => {
     state.filter.search = e.target.value;
     renderVaultList();
   });
-  $("#status-filter").addEventListener("change", (e) => {
+  // Esc on an already-empty search closes the bar (a first Esc natively
+  // clears the type=search input).
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !search.value) closeFilterBar();
+  });
+  status.addEventListener("change", (e) => {
     state.filter.status = e.target.value;
+    renderVaultList();
+  });
+  $("#btn-cats-toggle").addEventListener("click", () => {
+    const paths = allCategoryPaths();
+    if (!paths.length) return;
+    const anyCollapsed = paths.some((p) => state.collapsedCats.has(p));
+    state.collapsedCats = anyCollapsed ? new Set() : new Set(paths);
+    saveCollapsedCats();
     renderVaultList();
   });
 }

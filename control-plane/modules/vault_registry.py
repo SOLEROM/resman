@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import List, Optional
 
-from .config_manager import ConfigManager
+from .config_manager import ConfigManager, normalize_category
 from .event_bus import EventBus, get_bus
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ class Vault:
     name: str
     path: str
     tags: List[str] = field(default_factory=list)
+    category: Optional[str] = None  # sidebar group; "/" nests, e.g. "hw/edge"
     mount: Optional[str] = None   # bind-mount target path, if configured
     registered: bool = True
     path_exists: bool = True
@@ -57,10 +58,12 @@ class VaultRegistry:
     def _load_registered(self) -> List[Vault]:
         out: List[Vault] = []
         for entry in self.config.vaults:
+            raw_category = entry.get("category")
             v = Vault(
                 name=entry["name"],
                 path=entry["path"],
                 tags=list(entry.get("tags") or []),
+                category=normalize_category(raw_category) if raw_category else None,
                 mount=entry.get("mount") or None,
                 registered=True,
             )

@@ -361,3 +361,139 @@ def test_inbox_ignore_pages_must_be_strings(cfg_dir):
     cm = ConfigManager(cfg_dir, EventBus())
     with pytest.raises(ConfigError, match="ignore_pages"):
         cm.load()
+
+
+# ----- vault categories -----
+
+def test_vault_category_accepted(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            category: hw/edge
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.vaults[0]["category"] == "hw/edge"
+
+
+def test_vault_category_optional(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert "category" not in cm.vaults[0]
+
+
+def test_vault_category_rejects_non_string(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            category: [not, a, string]
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="category"):
+        cm.load()
+
+
+def test_vault_category_rejects_empty_string(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            category: "  "
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="category"):
+        cm.load()
+
+
+def test_vault_category_rejects_bad_segment_chars(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            category: "hw/ed|ge"
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="invalid segment"):
+        cm.load()
+
+
+def test_vault_category_rejects_too_deep(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+            category: a/b/c/d
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="nesting depth"):
+        cm.load()
+
+
+def test_categories_list_parsed_and_normalized(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        categories: [work, " hw/edge/ ", garage]
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.categories == ["work", "hw/edge", "garage"]
+
+
+def test_categories_defaults_empty(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.categories == []
+
+
+def test_categories_rejects_non_list(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        categories: work
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="'categories' must be a list"):
+        cm.load()
+
+
+def test_categories_rejects_bad_entry(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        categories: ["ok", 42]
+        vaults: []
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="'categories' entry"):
+        cm.load()
+
+
+def test_add_vault_with_category(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    cm.add_vault("b", "/tmp/b", category=" /hw/edge/ ")
+    assert cm.get_vault("b")["category"] == "hw/edge"
+    assert "category: hw/edge" in (cfg_dir / "resman.yaml").read_text()
+
+
+def test_add_vault_with_invalid_category_raises(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    with pytest.raises(ConfigError, match="invalid segment"):
+        cm.add_vault("b", "/tmp/b", category="a|b")
+    assert cm.get_vault("b") is None
+
+
+def test_add_vault_without_category_omits_key(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    cm.add_vault("b", "/tmp/b")
+    assert "category" not in cm.get_vault("b")

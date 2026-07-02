@@ -29,11 +29,20 @@ inbox:
   # every index.md, while "concepts/scratch" hides exactly that one page.
   ignore_pages: [index, hot, overview]
 
+# Optional: explicit ordering for the sidebar category tree. Categories used
+# by vaults but not listed here are appended alphabetically. Nested
+# categories are addressed by their full slash path ("hw/edge").
+# categories: [work, hw, hw/edge, garage]
+
 # Each vault has its own explicit path — no required common root.
 vaults:
   - name: example-vault
     path: /tmp/example-vault
     tags: [example]
+    # Optional: sidebar category group. Slash nests ("hw/edge", max 3
+    # levels); segments may use letters, numbers, spaces, . _ -
+    # Vaults without a category sit at the root of the sidebar tree.
+    # category: garage
     # Optional: bind-mount this vault's directory onto a host path so it is
     # accessible at a convenient location without symlinks.
     # Requires root or a passwordless sudoers entry — see man/mounts.md.

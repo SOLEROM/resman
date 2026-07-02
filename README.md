@@ -64,7 +64,7 @@ resman/
 ├── man/                      # operator manual — rendered live in the Help tab
 ├── deploy/systemd/           # systemd unit + installer
 ├── docs/                     # design spec, remote-agent + plugin reference
-├── tests/                    # pytest suite (81 tests, ~1.5s)
+├── tests/                    # pytest suite (417 tests, ~25s)
 ├── run.sh                    # launcher
 └── deps.sh                   # dependency installer
 ```
@@ -79,7 +79,8 @@ The suite covers:
 - EventBus pub/sub semantics
 - ConfigManager: validation, atomic writes, EventBus emission, cron string
   validation
-- VaultRegistry: path validation, .obsidian detection, scan_paths discovery
+- VaultRegistry: path validation, .obsidian detection, scan_paths discovery,
+  category surfacing
 - WindowState: persistence, corruption recovery, transitions, overrun
 - TaskManager: JSONL replay, crash recovery (interrupted state), bad-line
   skipping, partial-last-line truncation, ALL-vault parent/child, window

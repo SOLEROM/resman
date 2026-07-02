@@ -128,6 +128,10 @@ def list_vaults():
     return jsonify({
         "vaults": _ctx()["vault_registry"].to_list(),
         "vault_default_root": default_root or None,
+        # Optional explicit sidebar ordering for category groups (top-level
+        # `categories:` in resman.yaml). Unlisted categories sort after
+        # these, alphabetically.
+        "categories": cm.categories,
     })
 
 
@@ -150,6 +154,7 @@ def landing():
             "name": v.name,
             "path": v.path,
             "tags": list(v.tags or []),
+            "category": v.category,
             "path_exists": v.path_exists,
             "is_obsidian": v.is_obsidian,
             "mount": v.mount,
@@ -171,11 +176,12 @@ def register_vault():
     name = (body.get("name") or "").strip()
     path = (body.get("path") or "").strip()
     tags = body.get("tags") or []
+    category = (body.get("category") or "").strip() or None
     if not name or not path:
         return jsonify({"error": "name and path required"}), 400
     cm = _ctx()["config"]
     try:
-        cm.add_vault(name, path, tags=tags)
+        cm.add_vault(name, path, tags=tags, category=category)
     except ConfigError as exc:
         _activity(f"vault register failed: {name} — {exc}", level="warn", source="vault")
         return jsonify({"error": str(exc)}), 400

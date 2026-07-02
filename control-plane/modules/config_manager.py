@@ -37,6 +37,9 @@ log = logging.getLogger(__name__)
 
 MAX_CONFIG_BYTES = 1024 * 1024  # 1 MB
 VAULT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+# One category path segment ("hw" in "hw/edge"). Slash separates nesting levels.
+CATEGORY_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9 _.\-]+$")
+MAX_CATEGORY_DEPTH = 3
 
 
 class ConfigError(ValueError):
@@ -51,6 +54,32 @@ def _validate_cron_string(expr: str) -> None:
         CronTrigger.from_crontab(expr)
     except Exception as exc:
         raise ConfigError(f"invalid cron expression {expr!r}: {exc}") from exc
+
+
+def normalize_category(value: str) -> str:
+    """Trim whitespace and stray slashes: ' /hw/edge/ ' -> 'hw/edge'."""
+    return "/".join(
+        s.strip() for s in value.strip().strip("/").split("/") if s.strip()
+    )
+
+
+def _validate_category(value: Any, where: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"resman.yaml: {where} must be a non-empty string")
+    segments = [s.strip() for s in value.strip().strip("/").split("/")]
+    if not any(segments):
+        raise ConfigError(f"resman.yaml: {where} must be a non-empty string")
+    if len(segments) > MAX_CATEGORY_DEPTH:
+        raise ConfigError(
+            f"resman.yaml: {where} exceeds max nesting depth "
+            f"{MAX_CATEGORY_DEPTH} (got {value!r})"
+        )
+    for seg in segments:
+        if not seg or not CATEGORY_SEGMENT_RE.match(seg):
+            raise ConfigError(
+                f"resman.yaml: {where} has invalid segment {seg!r} — "
+                f"use letters, numbers, spaces, . _ - (nest with '/')"
+            )
 
 
 def validate_resman_yaml(data: Any) -> dict:
@@ -76,6 +105,9 @@ def validate_resman_yaml(data: Any) -> dict:
         seen.add(name)
         if not path or not isinstance(path, str):
             raise ConfigError(f"resman.yaml: vault {name!r} missing 'path'")
+        category = entry.get("category")
+        if category is not None:
+            _validate_category(category, f"vault {name!r} category")
         mount = entry.get("mount")
         if mount is not None:
             if not isinstance(mount, str) or not mount:
@@ -101,6 +133,11 @@ def validate_resman_yaml(data: Any) -> dict:
                 f"resman.yaml: app.vault_default_root_path must be an absolute path "
                 f"(got {default_root!r})"
             )
+    categories = data.get("categories") or []
+    if not isinstance(categories, list):
+        raise ConfigError("resman.yaml: 'categories' must be a list")
+    for entry in categories:
+        _validate_category(entry, "'categories' entry")
     scan_paths = data.get("scan_paths") or []
     if not isinstance(scan_paths, list):
         raise ConfigError("resman.yaml: 'scan_paths' must be a list")
@@ -257,6 +294,14 @@ class ConfigManager:
         return list(self._system.get("scan_paths") or [])
 
     @property
+    def categories(self) -> list[str]:
+        """Optional explicit ordering for sidebar category groups.
+
+        Categories used by vaults but absent from this list are appended
+        alphabetically by the frontend."""
+        return [normalize_category(c) for c in (self._system.get("categories") or [])]
+
+    @property
     def inbox(self) -> dict:
         return self._system.get("inbox", {}) or {}
 
@@ -291,12 +336,21 @@ class ConfigManager:
             self.schedule_path, "schedule.yaml", content, validate_schedule_yaml,
         )
 
-    def add_vault(self, name: str, path: str, tags: list[str] | None = None) -> None:
+    def add_vault(
+        self,
+        name: str,
+        path: str,
+        tags: list[str] | None = None,
+        category: str | None = None,
+    ) -> None:
         if not VAULT_NAME_RE.match(name or ""):
             raise ConfigError(f"vault name {name!r} must match [a-zA-Z0-9_-]")
         if self.get_vault(name) is not None:
             raise ConfigError(f"vault {name!r} already registered")
         new = {"name": name, "path": path, "tags": list(tags or [])}
+        if category is not None and str(category).strip():
+            _validate_category(category, f"vault {name!r} category")
+            new["category"] = normalize_category(category)
         data = dict(self._system)
         vaults = list(self.vaults)
         vaults.append(new)

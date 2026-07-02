@@ -89,3 +89,30 @@ def test_reload_on_config_event(tmp_path):
     )
     # Subscriber should have re-derived
     assert reg.get("beta") is not None
+
+
+def test_category_surfaced_on_vault(tmp_path):
+    p = make_vault(tmp_path / "vaults", "alpha")
+    write_system(
+        tmp_path / "config",
+        f"vaults:\n  - name: alpha\n    path: {p}\n    category: hw/edge\n",
+    )
+    cm = ConfigManager(tmp_path / "config", EventBus())
+    cm.load()
+    reg = VaultRegistry(cm)
+    reg.reload()
+    v = reg.get("alpha")
+    assert v.category == "hw/edge"
+    assert v.to_dict()["category"] == "hw/edge"
+
+
+def test_category_defaults_to_none(tmp_path):
+    p = make_vault(tmp_path / "vaults", "alpha")
+    write_system(tmp_path / "config", f"vaults:\n  - name: alpha\n    path: {p}\n")
+    cm = ConfigManager(tmp_path / "config", EventBus())
+    cm.load()
+    reg = VaultRegistry(cm)
+    reg.reload()
+    v = reg.get("alpha")
+    assert v.category is None
+    assert v.to_dict()["category"] is None

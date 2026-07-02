@@ -74,10 +74,22 @@
     <aside class="sidebar">
       <div class="sidebar-header">
         <span>Vaults</span>
-        <button class="btn btn-xs" id="btn-refresh" title="Refresh vaults">↻</button>
+        <div class="sidebar-tools" role="group" aria-label="Vault list controls">
+          <button class="icon-btn" id="btn-vault-filter"
+                  title="Search &amp; filter vaults" aria-label="Search and filter vaults">⌕</button>
+          <button class="icon-btn" id="btn-cats-toggle"
+                  title="Collapse all categories" aria-label="Expand or collapse all categories">⊟</button>
+          <button class="icon-btn" id="btn-new-vault"
+                  title="New vault" aria-label="New vault">+</button>
+          <button class="icon-btn" id="btn-refresh"
+                  title="Refresh vaults" aria-label="Refresh vaults">↻</button>
+        </div>
       </div>
-      <div class="filter-bar">
-        <input id="vault-search" type="text" placeholder="Search vaults..." />
+      <!-- Collapsed by default — the ⌕ toolbar button reveals it. Closing it
+           clears any active search/status filter so a hidden filter can never
+           silently shrink the vault list. -->
+      <div class="filter-bar" id="vault-filter-bar" hidden>
+        <input id="vault-search" type="search" placeholder="Search vaults..." />
         <select id="status-filter">
           <option value="any">any status</option>
           <option value="session">active session</option>
@@ -89,9 +101,6 @@
       <div id="discovered-section" class="discovered" hidden>
         <div class="divider">Unregistered</div>
         <div id="discovered-list"></div>
-      </div>
-      <div class="sidebar-footer">
-        <button id="btn-new-vault" class="btn btn-sm" style="flex:1">+ New Vault</button>
       </div>
     </aside>
 

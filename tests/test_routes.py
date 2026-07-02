@@ -1432,3 +1432,57 @@ def test_inbox_recent_limit_caps_and_flags(tmp_path):
     assert len(body["pages"]) == 2
     assert body["total"] == 3
     assert body["capped"] is True
+
+
+def test_list_vaults_surfaces_categories(tmp_path):
+    """GET /api/vaults must return each vault's category plus the top-level
+    `categories:` ordering list so the sidebar can build its group tree."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    vault = tmp_path / "alpha"; vault.mkdir(); (vault / ".obsidian").mkdir()
+    (cfg_dir / "resman.yaml").write_text(
+        "categories: [work, hw/edge]\n"
+        f"vaults:\n  - name: alpha\n    path: {vault}\n    category: hw/edge\n"
+    )
+    bus = get_bus(); bus.clear()
+    cm = ConfigManager(cfg_dir, bus); cm.load()
+    reg = VaultRegistry(cm, bus); reg.reload()
+    from flask import Flask
+    app = Flask("resman-test-categories")
+    app.config["RESMAN"] = {"config": cm, "vault_registry": reg}
+    from modules.routes import bp
+    app.register_blueprint(bp)
+    rv = app.test_client().get("/api/vaults")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["categories"] == ["work", "hw/edge"]
+    alpha = next(v for v in body["vaults"] if v["name"] == "alpha")
+    assert alpha["category"] == "hw/edge"
+
+
+def test_register_vault_with_category(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    target = tmp_path / "beta"
+    target.mkdir(); (target / ".obsidian").mkdir()
+    rv = app.test_client().post(
+        "/api/vaults",
+        json={"name": "beta", "path": str(target), "category": "work/hw"},
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 200
+    assert ctx["config"].get_vault("beta")["category"] == "work/hw"
+    reg_vault = ctx["vault_registry"].get("beta")
+    assert reg_vault is not None and reg_vault.category == "work/hw"
+
+
+def test_register_vault_rejects_bad_category(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    target = tmp_path / "beta"
+    target.mkdir(); (target / ".obsidian").mkdir()
+    rv = app.test_client().post(
+        "/api/vaults",
+        json={"name": "beta", "path": str(target), "category": "a|b"},
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 400
+    assert ctx["config"].get_vault("beta") is None
