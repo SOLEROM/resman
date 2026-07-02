@@ -16,7 +16,7 @@ planning iterations preserved in git history.
 | # | File | Concern |
 |---|------|---------|
 | 01 | [01-architecture.md](01-architecture.md) | System overview, component map, directory layout, technology stack and mandatory constraints |
-| 02 | [02-configuration.md](02-configuration.md) | resman.yaml / schedule.yaml / budget.json schemas; atomic writes; live editing via YAML editor |
+| 02 | [02-configuration.md](02-configuration.md) | resman.yaml / schedule.yaml / budget.json schemas; atomic writes; live editing via the Config tab (settings form + raw YAML) |
 | 03 | [03-vault-registry.md](03-vault-registry.md) | Vault loading, .obsidian/ validation, scan_paths discovery, health check modal |
 | 04 | [04-terminal-sessions.md](04-terminal-sessions.md) | ttyd-based sessions, SessionManager, port registry, SessionMonitor greenlet, reconcile on restart |
 | 05 | [05-obsidian-push.md](05-obsidian-push.md) | _resman/status.md push into vault graph view, cadence, pre-implementation validation checklist |

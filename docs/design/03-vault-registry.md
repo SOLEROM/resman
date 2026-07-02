@@ -5,9 +5,11 @@
 `vault_registry.py` owns the authoritative in-memory list of vaults. On startup it
 loads vaults from `resman.yaml`, validates each path, and optionally scans `scan_paths`
 directories for unregistered vaults. It re-derives its state from `config_manager`
-on every `config_reloaded` EventBus event, so vault changes made via the YAML editor
-take effect without a server restart. The registry is the single point of truth for
-vault status data consumed by the sidebar, status dots, and ObsidianPush.
+on every `config_reloaded` EventBus event, so vault changes made via the Config tab
+(form or YAML) take effect without a server restart. The registry is the single point
+of truth for vault status data consumed by the sidebar, status dots, and ObsidianPush.
+Each `Vault` also carries the normalized `category` from its config entry (or `None`),
+which the sidebar uses to build its collapsible group tree.
 
 ## Vault Loading and Validation
 
@@ -23,7 +25,7 @@ On startup (and on `config_reloaded`):
 ## Vault Discovery (scan_paths)
 
 - Unregistered vaults appear in the sidebar below a divider
-- Each has a `[+ Register]` button that opens a form (name, tags, confirm path) and appends to `resman.yaml`
+- Each has a `[+ Register]` button that opens a form (name, tags, optional category, confirm path) and appends to `resman.yaml`
 - If `scan_paths` is empty or absent, the divider does not appear
 - Scan depth is capped at 2 levels; paths resolving to filesystem roots are rejected
 

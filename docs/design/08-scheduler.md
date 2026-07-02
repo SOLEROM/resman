@@ -46,7 +46,7 @@ callbacks as eventlet greenlets, avoiding this entirely.
 At schedule.yaml load time, each cron string is validated with `CronTrigger.from_crontab()`.
 If validation fails:
 - Server startup: log error in startup report; show browser banner; scheduler does not start
-- YAML editor save: return HTTP 400 with the parse error surfaced inline; file is not written
+- Config-tab save (settings form or YAML editor): return HTTP 400 with the parse error surfaced inline; file is not written
 
 APScheduler must never receive an invalid cron trigger string.
 

@@ -19,8 +19,8 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Server health: config, tmux, ttyd, scheduler, task replay status |
-| GET | `/api/vaults` | List all registered vaults with status (registered + discovered). Also returns `vault_default_root` — the optional `app.vault_default_root_path` from resman.yaml, or `null` — so the New Vault wizard can pre-fill its path input and seed the Browse picker without a second round-trip |
-| POST | `/api/vaults` | Register a vault in `resman.yaml` (name, path, tags). Does not create the directory |
+| GET | `/api/vaults` | List all registered vaults with status (registered + discovered). Each vault carries its `category` (or `null`); the response also includes `categories` — the top-level ordering list from resman.yaml — so the sidebar can build its group tree, and `vault_default_root` — the optional `app.vault_default_root_path`, or `null` — so the New Vault wizard can pre-fill its path input and seed the Browse picker without a second round-trip |
+| POST | `/api/vaults` | Register a vault in `resman.yaml` (name, path, tags, optional category — validated + normalized). Does not create the directory |
 | POST | `/api/vaults/scaffold` | Run `tools/new-vault.sh` to create the directory tree (path, `.obsidian/`, `inbox/`, `_resman/`, README, gitignore). Body: `{name, path}` |
 | GET | `/api/vaults/{name}/health` | Vault health check: path, .obsidian/, wiki home (`wiki/overview.md`), last session, last completed task, tags |
 | GET | `/api/vaults/{name}/wiki` | Read raw markdown of a wiki page produced by the Claude wiki plugin. Defaults to `wiki/overview.md`; the three canonical pages exposed in the toolbar are `wiki/hot.md`, `wiki/index.md`, `wiki/overview.md`. Other pages reachable via `?file=wiki/<page>.md`. Path-traversal blocked. Used by the **Wiki** tab |
@@ -46,6 +46,8 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | GET | `/api/cron` | List cron tasks with `last_fired_at`, `skip_count` |
 | GET | `/api/config/yaml?file=…` | Read raw YAML for `resman.yaml` or `schedule.yaml`; returns extra fields for resman.yaml: `resman_path`, `resman_display_path` (tildified, e.g. `~/.resman.yaml`), `using_user_override` (bool). Accepts legacy `file=system.yaml` alias |
 | POST | `/api/config/yaml` | Save resman.yaml or schedule.yaml (body: `{file, content}`); accepts legacy `file=system.yaml` alias |
+| GET | `/api/config/structured` | Parsed config for the Config-tab settings form: `{resman, schedule}` documents plus the metadata the form's controls need — `operations` (valid cron operations from `task_manager.OPERATIONS`), `vault_names`, and the same `resman_path` / `resman_display_path` / `using_user_override` fields as the raw endpoint |
+| POST | `/api/config/structured` | Save one file from a parsed document (body: `{file, data}`). Validated with the same rules as the raw editor, then dumped via `yaml.safe_dump` and written atomically (comments are dropped — the form warns about this). 400 on validation failure without writing |
 | GET | `/api/help/tree` | Walk the `man/` directory tree (root: `<repo>/man` or `app.man_path`) and return nested `.md` files. Used by the **Help** tab. Returns `{root, missing, tree:[…]}` |
 | GET | `/api/help/page?file=…` | Read one help page; default `index.md`. Only `.md` files served. Path-traversal blocked |
 

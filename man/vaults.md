@@ -19,12 +19,18 @@ vaults:
   - name: vla6
     path: /tmp/val6
     tags: [research]
+    category: work        # optional — sidebar group ("/" nests: hw/edge)
 ```
 
 `name` must match `[a-zA-Z0-9_-]+`. `path` must be absolute. `tags` is free-form.
+`category` places the vault in the sidebar's collapsible group tree — see
+[Categories in config.md](config.md) for the rules and ordering. You can also
+edit vault entries in the **Config** tab's settings form (Vaults section)
+instead of touching YAML by hand.
 
-You can also register a vault via the **+ New Vault** button in the sidebar —
-it walks you through picking a directory, optionally scaffolding `.obsidian/`,
+You can also register a vault via the **+** button in the sidebar toolbar —
+it walks you through picking a directory (with an optional Category field
+that autocompletes from categories already in use), optionally scaffolding `.obsidian/`,
 and (optionally) bootstrapping a Claude session. If `app.vault_default_root_path`
 is set in `resman.yaml`, the wizard pre-fills the path input with that root
 and starts the Browse picker there, so adding a vault that lives under the
@@ -47,6 +53,17 @@ scan_paths:
 resman walks each path up to two levels deep looking for `.obsidian/`
 directories. Discovered-but-unregistered vaults appear in the **Unregistered**
 section of the sidebar; click one to register it.
+
+## The sidebar
+
+Vaults are grouped under collapsible **category** headers (from each vault's
+`category:` in config); uncategorized vaults sit at the root. Click a header
+to collapse or expand a group — the collapsed set is remembered per browser,
+and a collapsed group shows one aggregated dot with its subtree's worst
+status so failures stay visible. The toolbar next to the VAULTS label has
+four buttons: `⌕` opens the search + status filter bar (closing it clears
+the filters), `⊟`/`⊞` collapses or expands all groups, `+` opens the New
+Vault wizard, `↻` refreshes.
 
 ## Vault dot — what does the colour mean?
 
@@ -82,5 +99,6 @@ away.
 
 ## Removing a vault
 
-Delete it from `resman.yaml` and reload. resman never deletes vault
-directories or files — removal is purely a config change.
+Delete its card in the **Config** tab's Vaults section (× on the card, then
+**Save**), or delete the entry from `resman.yaml` directly. resman never
+deletes vault directories or files — removal is purely a config change.

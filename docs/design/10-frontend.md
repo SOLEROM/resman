@@ -20,13 +20,14 @@ window status bar at the bottom.
 ┌─────────────────────────────────────────────────────────────────────┐
 │ ⚗ resman — Research Vault Manager   Wiki  Tasks  Config  Help  ● connected ☾ │   ← header bar
 ├────────────────────┬────────────────────────────────────────────────┤
-│ VAULTS         ↻  │ vla6                  ✎  + Shell  + Claude  …  │   ← terminal toolbar
-│ [search/filter]    ├────────────────────────────────────────────────┤
-│ ● ai-agents  [↘]  │ vla6·claude·08:25 ×                             │   ← per-vault tab strip
-│ ○ llm-bench  [↘]  ├────────────────────────────────────────────────┤
+│ VAULTS  ⌕ ⊟ + ↻  │ vla6                  ✎  + Shell  + Claude  …  │   ← sidebar toolbar / header
+│ [filter bar]       ├────────────────────────────────────────────────┤   ← on-demand (⌕ toggles)
+│ ▾ WORK        (2) │ vla6·claude·08:25 ×                             │   ← per-vault tab strip
+│   ● ai-agents [↘] ├────────────────────────────────────────────────┤
+│   ○ llm-bench [↘] │                                                  │
+│ ▸ HW          (3) │  ttyd iframe  OR  Markdown / Tasks / Config      │
+│ ○ freeVault   [↘] │                                                  │
 │ ─ unregistered    │                                                  │
-│   found-vault     │  ttyd iframe  OR  Markdown / Tasks / Config      │
-│ [+ New Vault]     │                                                  │
 ├────────────────────┼────────────────────────────────────────────────┤
 │ Window: ● ACTIVE  ends in 3h 12m                  [ sync ▼ ]  ☾    │
 └─────────────────────────────────────────────────────────────────────┘
@@ -75,11 +76,33 @@ and never overlaps terminal content.
 
 ## Left Sidebar
 
-**Filter bar (top of sidebar):**
+**Toolbar (header row, right of the VAULTS label):** four icon buttons —
+`⌕` toggles the filter bar, `⊟`/`⊞` collapses / expands every category
+group at once (glyph reflects state), `+` opens the New Vault wizard,
+`↻` refreshes vaults + sessions + tasks. The old full-width search row,
+status dropdown, and `[+ New Vault]` footer were folded into this toolbar
+to reclaim vertical space.
+
+**Filter bar (on demand):**
+- Hidden until `⌕` is clicked; the search input is auto-focused on open
 - Search field: filters vault list by name (client-side, instant)
-- Tag filter: multi-select chips; shows vaults matching any selected tag
 - Status filter: dropdown — any / active session / has tasks / has error
-- Present in Phase 1; a sidebar with 20+ gray dots is unusable without it
+- Closing the bar (`⌕` again, or Esc in an empty search field) **clears
+  both filters** — a hidden filter must never silently shrink the vault list
+
+**Category tree:**
+- Vaults group under collapsible headers built from each vault's `category`
+  (slash-nested, e.g. `hw/edge`); uncategorized vaults sit at the tree root
+  after the groups
+- Group order follows the top-level `categories:` list from resman.yaml;
+  unlisted categories sort alphabetically after it
+- All groups start expanded; the collapsed set persists per browser in
+  `localStorage` (`resman-collapsed-cats`)
+- Group row: chevron, uppercase name, vault-count badge — plus, only while
+  collapsed, one aggregated status dot showing the subtree's worst status
+  (red > yellow > green > gray) so failures stay visible
+- While a filter is active, groups are force-expanded and non-toggleable,
+  and groups left empty by the filter disappear
 
 **Vault list:**
 - Each row: status dot, vault name, tags (dimmed), `[↘]` button
@@ -92,12 +115,11 @@ and never overlaps terminal content.
 - Each has a `[+ Register]` button
 - Divider absent if `scan_paths` is empty or not configured
 
-**Footer:**
-- `[+ New Vault]` — opens the **two-step creation wizard** (see below)
-- No `[⚙ Config]` button — Config is reachable from the header tabs
+There is no sidebar footer — the `+` toolbar icon opens the **two-step
+creation wizard** (see below), and Config is reachable from the header tabs.
 
 **Empty state** (zero registered vaults):
-- Sidebar shows: "Add your first vault to get started →" with arrow toward `[+ New Vault]`
+- Sidebar shows: "Add your first vault to get started →" pointing at the `+` toolbar icon
 
 ## Vault Status Dot — Priority Rule
 
@@ -154,7 +176,31 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 - See `06-task-management.md` for the live-log streaming, log size cap, and cancel-running semantics.
 
 **Config tab:**
-- Live YAML editors for `resman.yaml` and `schedule.yaml` (Option J pattern)
+- Two modes, toggled top-right and persisted in `localStorage`
+  (`resman-config-mode`):
+- **Form** (default) — a VS Code-style settings editor covering both files
+  at once. Left nav lists the sections (Application, Window budget, Inbox,
+  Categories, Vaults, Scan paths, Schedule) with per-section counts; a
+  toolbar search box filters settings across both files ("N settings
+  found"), hiding empty sections. Every setting renders as label +
+  `yaml.key` + description + typed control (`CFG_SECTIONS` schema in
+  `app.js`); string lists get add/remove editors (↑↓ reorder where order
+  matters, i.e. `categories`); vaults and cron tasks render as collapsible
+  cards with expand/collapse-all, add/delete, live header summaries, a
+  category datalist, and dropdowns fed by `GET /api/config/structured`
+  metadata (operations, vault names). Changed rows/cards get a blue
+  modified bar and their nav section a dot; **Save** is disabled until
+  something changed and then posts only the dirty file(s) to
+  `POST /api/config/structured`. Cleared optional fields are pruned
+  client-side (empty strings / lists / mappings dropped) so they leave the
+  YAML instead of being written as `""`. Unknown keys survive: the form
+  round-trips the loaded document and only touches managed fields. On
+  `config_reloaded` the form refetches — but never while local edits are
+  unsaved
+- **YAML** — the original raw editors for `resman.yaml` / `schedule.yaml`
+  (Option J pattern), kept as the comment-preserving fallback (form saves
+  go through `yaml.safe_dump`, which drops comments; the form shows a note
+  saying so)
 
 **Help tab:**
 - Two-pane layout: a file-tree sidebar on the left (the `man/` directory at the repo root), markdown content on the right.
@@ -216,6 +262,8 @@ without leaving the browser.
 ## Key Decisions
 
 - **Vanilla JS + CDN** — no build step; no npm; dark terminal aesthetic
+- **Sidebar category tree** — grouping lives in config (`category` per vault), not in browser state; only the collapsed set is client-local. Closing the filter bar clears the filters so hidden state can't shrink the list
+- **Config form over raw YAML** — a schema-driven settings editor (`CFG_SECTIONS`) with the raw editor one toggle away; parsed documents travel over `/api/config/structured` so the no-build frontend never needs a YAML parser
 - **ttyd iframes** — xterm.js is not loaded by the SPA; ttyd serves its own xterm.js internally
 - **Tab switching via display:none** — iframes persist their WebSocket connections; toggling visibility is instant and reconnection-free
 - **Filter bar in Phase 1** — sidebar is unusable at scale without it; not deferred to later phases

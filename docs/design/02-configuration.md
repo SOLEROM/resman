@@ -39,14 +39,24 @@ window_budget:
   weekly_start: "Monday 09:00"
   weekly_end:   "Sunday 23:00"
 
+categories: [work, hw, hw/edge]  # optional; sidebar group ordering
+
 vaults:
   - name: ai-agents-research
     path: /data/research/ai-agents-research
     tags: [ai, agents]
+    category: hw/edge          # optional; sidebar group ("/" nests, max 3 levels)
+    mount: /home/user/ai-agents  # optional; bind-mount target (see mounts)
 
 scan_paths:                    # optional; remove to disable vault discovery
   - /data/research
 ```
+
+Per-vault `category` places the vault in the sidebar's collapsible group
+tree; `/` nests (`hw/edge`), depth is capped at 3, and segments must match
+`[a-zA-Z0-9 _.\-]+`. Values are normalized on load (stray slashes and
+whitespace stripped). The optional top-level `categories:` list pins group
+ordering — categories in use but not listed sort alphabetically after it.
 
 > The legacy `readme:` per-vault override was removed when the Docs tab was
 > renamed to **Wiki**. Wiki content is now read from `<vault>/wiki/overview.md`
@@ -98,7 +108,8 @@ Written exclusively by the server in response to UI actions. Never edited manual
 ## Key Decisions
 
 - **Atomic writes** — all YAML saves use `.tmp` → `os.replace()` pattern; partial writes cannot corrupt live config
-- **Validation before commit** — YAML must parse, result must be a dict, required vault fields must be present (`name`, `path`), cron strings must parse via `CronTrigger.from_crontab()`, file size must be ≤ 1 MB; any failure returns HTTP 400 without writing the file
+- **Validation before commit** — YAML must parse, result must be a dict, required vault fields must be present (`name`, `path`), `category` / `categories` entries must satisfy the depth + charset rules, cron strings must parse via `CronTrigger.from_crontab()`, file size must be ≤ 1 MB; any failure returns HTTP 400 without writing the file
+- **Structured saves** — the Config tab's settings form edits parsed documents, not raw text. `save_resman_data()` / `save_schedule_data()` validate the dict with the same rules, then `yaml.safe_dump(sort_keys=False)` and reuse the atomic text-save path (so `config_reloaded` still fires). Comments do not survive a form save; the raw YAML editor remains the comment-preserving path. Keys the form does not render are preserved — the frontend round-trips the loaded document and only mutates managed fields
 - **EventBus on save** — `config_manager.py` emits `config_reloaded` after successful write; subscribers (`VaultRegistry`, `Scheduler`) re-derive state via the `get_vault(name)` accessor — they do not cache the raw config dict
 - **budget.json write order** — always write file first, then update in-memory state; never the reverse
 - **budget.json startup resilience** — missing → create with `window_state: between`; invalid JSON → reset to `between`; never crash

@@ -58,10 +58,10 @@ resman/
 ```
 Browser
   └── resman SPA (Flask serves static)
-       ├── Vault sidebar — status dots, session launcher
+       ├── Vault sidebar — category tree, status dots, session launcher
        ├── ttyd iframe  — per-vault terminal (WebSocket direct to ttyd)
        ├── Task panel   — JSONL-backed task queue
-       └── Config panel — live YAML editors
+       └── Config panel — settings form (default) + raw YAML editors
 
 Flask + eventlet (port 5090)
   ├── EventBus          — internal pub/sub; decouples WindowState ↔ TaskManager

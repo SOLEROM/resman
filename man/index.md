@@ -18,14 +18,14 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 ## Where to start
 
 - [Getting started](getting-started.md) — first-run setup, deps, launching
-- [Vaults](vaults.md) — registering, discovering, scaffolding, health
+- [Vaults](vaults.md) — registering, discovering, scaffolding, health; sidebar category tree + filters
 - [Sessions](sessions.md) — Ops tab, Claude vs shell, tabs, renaming, Obsidian
 - [Tasks](tasks.md) — operations-first trigger, live logs, scheduling, ALL-vault parent/child, cancel/compaction; sidebar `↘` shortcut for URL ingest
 - [Wiki](wiki.md) — the per-vault Wiki tab, sidebar page tree, read/unread tracking, search, random, clickable `[[wikilinks]]`
 - [Window state](window-state.md) — when work is allowed to run; the **⊞ Windows** tab (daily-window schedule, per-window open/collect marks, collection rate, usage statistics); openers/collectors automation; footer usage meters + limits
 - [Activity log](activity-log.md) — the footer **📋 Log** window: live operations + errors, while the app runs
 - [Scheduler](scheduler.md) — cron tasks and skip-when-inactive
-- [Configuration](config.md) — `resman.yaml` and `schedule.yaml`
+- [Configuration](config.md) — `resman.yaml` and `schedule.yaml`; the Config tab's settings form + raw YAML modes; categories
 - [Mounts](mounts.md) — bind-mounting vaults at host paths; privilege setup; taking changes to effect
 - [LAN / `--public`](lan-access.md) — exposing the panel on the local network
 - [Troubleshooting](troubleshooting.md) — common issues
