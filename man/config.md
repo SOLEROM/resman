@@ -13,9 +13,20 @@ resman reads two YAML files at startup:
 | `config/resman.yaml` or `~/.resman.yaml` | App settings, vaults, scan paths, window budget |
 | `config/schedule.yaml` | Cron tasks |
 
-Both are editable live via the **Config** tab. Saves are atomic
-(`tempfile.NamedTemporaryFile` + `os.replace`) so a crash mid-write never
-corrupts the file.
+Both are editable live via the **Config** tab, which has two modes:
+
+- **Form** (default) — a searchable, VS Code-style settings editor. Sections
+  sit in a left nav (Application, Window budget, Inbox, Categories, Vaults,
+  Scan paths, Schedule); every setting has a typed input with an inline
+  description, lists get add/remove/reorder controls, and vaults / cron tasks
+  are collapsible cards with expand/collapse-all (⊞/⊟). Changed settings show
+  a blue modified marker and **Save** writes only the files you touched.
+  Form saves rewrite the YAML, so comments are dropped.
+- **YAML** — the raw file editor. Use it for comment-preserving edits or
+  anything the form doesn't cover; unknown keys are preserved by both modes.
+
+Saves are atomic (`tempfile.NamedTemporaryFile` + `os.replace`) so a crash
+mid-write never corrupts the file.
 
 If `~/.resman.yaml` exists, resman uses it in preference to `config/resman.yaml`,
 and all config saves write back to the user file. This allows per-user configuration

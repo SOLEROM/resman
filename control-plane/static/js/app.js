@@ -436,7 +436,7 @@ function showPanel(tabName) {
   $$("#header-tabs .tab").forEach((t) => {
     t.classList.toggle("active", t.dataset.tab === tabName);
   });
-  if (tabName === "config") loadConfig();
+  if (tabName === "config") loadConfigTab();
   if (tabName === "tasks") loadTasks();
   if (tabName === "help") loadHelp();
   if (tabName === "windows") loadWindowsTab();
@@ -1962,7 +1962,616 @@ function showCronSkipBanner(payload) {
 }
 
 // ----- config -----
-async function loadConfig() {
+// Two modes. "Form" (default) renders a VS Code-style settings editor from
+// CFG_SECTIONS below: search, section nav, typed controls, modified markers,
+// and card editors for vaults / cron tasks. "YAML" keeps the raw file editor
+// — form saves go through yaml.safe_dump on the server, so comments only
+// survive when edits are made in YAML mode.
+const CFG_MODE_KEY = "resman-config-mode";
+
+const cfgState = {
+  mode: localStorage.getItem(CFG_MODE_KEY) === "yaml" ? "yaml" : "form",
+  loaded: null,   // {resman, schedule} snapshot as fetched — dirty-diff baseline
+  working: null,  // deep clone the form edits mutate; loaded stays pristine
+  meta: { operations: [], vaultNames: [], display: "", override: false },
+  openCards: new Set(),  // expanded card keys: "vault:2", "cron:0"
+  search: "",
+};
+
+const CFG_SECTIONS = [
+  {
+    id: "app", title: "Application", file: "resman", kind: "fields",
+    desc: "Server and launch-command settings. host/port are read at startup " +
+      "(a change needs a restart); the --public / --host / --port CLI flags override the file.",
+    fields: [
+      { path: "app.host", label: "Host", type: "text", ph: "127.0.0.1",
+        desc: "Bind address for the web server." },
+      { path: "app.port", label: "Port", type: "number", ph: "5090",
+        desc: "HTTP port for the web UI and API." },
+      { path: "app.tmux_socket", label: "Tmux socket", type: "text", ph: "resman",
+        desc: "Isolated tmux socket name. Never point this at your personal tmux server — killing resman would kill those sessions too." },
+      { path: "app.tmux_prefix", label: "Tmux session prefix", type: "text", ph: "rsm-",
+        desc: "Prefix for resman-owned tmux session names." },
+      { path: "app.scrollback_limit", label: "Scrollback limit", type: "number", ph: "10000",
+        desc: "tmux history-limit applied to each session." },
+      { path: "app.claude_cmd", label: "Claude command", type: "text", ph: "claude",
+        desc: "Shell command used to launch Claude in vault terminals." },
+      { path: "app.obsidian_cmd", label: "Obsidian command", type: "text",
+        ph: "flatpak run md.obsidian.Obsidian",
+        desc: "Shell command used to launch Obsidian." },
+      { path: "app.ttyd_port_base", label: "ttyd port base", type: "number", ph: "7680",
+        desc: "Low end of the port range ttyd terminals bind into." },
+      { path: "app.ttyd_port_max", label: "ttyd port max", type: "number", ph: "7999",
+        desc: "High end of the ttyd port range." },
+      { path: "app.man_path", label: "Manual path", type: "text", ph: "(repo man/ directory)",
+        desc: "Optional override for the Help-tab manual tree. Leave empty to serve the repo's man/ directory." },
+      { path: "app.vault_default_root_path", label: "Default vault root", type: "text",
+        ph: "(start blank)",
+        desc: "Optional absolute path pre-filled in the New Vault wizard and Browse picker. Leave empty to start blank." },
+    ],
+  },
+  {
+    id: "window", title: "Window budget", file: "resman", kind: "fields",
+    desc: "Weekly automation window — scheduled tasks only fire while it is active.",
+    fields: [
+      { path: "window_budget.weekly_start", label: "Weekly start", type: "text",
+        ph: "Monday 09:00", desc: 'When the window opens. Format: "Monday 09:00".' },
+      { path: "window_budget.weekly_end", label: "Weekly end", type: "text",
+        ph: "Sunday 23:00", desc: 'When the window closes. Format: "Sunday 23:00".' },
+    ],
+  },
+  {
+    id: "inbox", title: "Inbox", file: "resman", kind: "fields",
+    fields: [
+      { path: "inbox.ignore_pages", label: "Ignored pages", type: "list", addPh: "page name…",
+        desc: "Page names hidden from the Inbox feed — handy for hub pages rewritten on every ingest. Matched case-insensitively against each page's name and full wiki path." },
+    ],
+  },
+  {
+    id: "categories", title: "Categories", file: "resman", kind: "fields",
+    desc: "Explicit ordering for the sidebar category groups. Categories in use but not " +
+      "listed here sort alphabetically after these. Address nested groups by full path (hw/edge).",
+    fields: [
+      { path: "categories", label: "Category order", type: "list", ordered: true,
+        addPh: "category (hw/edge)…", desc: "Top-to-bottom sidebar order — reorder with ↑ ↓." },
+    ],
+  },
+  {
+    id: "vaults", title: "Vaults", file: "resman", kind: "vault",
+    desc: "Registered vaults. Removing an entry only unregisters it from resman — no files are touched.",
+  },
+  {
+    id: "scan", title: "Scan paths", file: "resman", kind: "fields",
+    fields: [
+      { path: "scan_paths", label: "Scan paths", type: "list", addPh: "/absolute/path",
+        desc: "Absolute directories walked (max 2 levels deep) for unregistered vaults — folders containing .obsidian/." },
+    ],
+  },
+  {
+    id: "schedule", title: "Schedule", file: "schedule", kind: "cron",
+    desc: "Cron tasks (schedule.yaml). Standard 5-field cron syntax; vault ALL fans out to every registered vault.",
+  },
+];
+
+function cfgGet(obj, path) {
+  return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+// value === undefined deletes the leaf key (so cleared optional fields
+// disappear from the YAML instead of being written as empty strings).
+function cfgSet(obj, path, value) {
+  const keys = path.split(".");
+  let o = obj;
+  for (const k of keys.slice(0, -1)) {
+    if (typeof o[k] !== "object" || o[k] === null) o[k] = {};
+    o = o[k];
+  }
+  const last = keys[keys.length - 1];
+  if (value === undefined) delete o[last];
+  else o[last] = value;
+}
+
+function cfgClone(v) { return JSON.parse(JSON.stringify(v)); }
+
+// Pre-save cleanup: trim strings, drop empty strings / arrays / mappings so
+// half-filled optional fields never reach the validator as "".
+function cfgPrune(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(cfgPrune)
+      .filter((v) => v !== undefined && v !== "" &&
+        !(typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0));
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      const pv = cfgPrune(v);
+      if (pv === undefined || pv === "") continue;
+      if (Array.isArray(pv) && pv.length === 0) continue;
+      if (typeof pv === "object" && !Array.isArray(pv) && Object.keys(pv).length === 0) continue;
+      out[k] = pv;
+    }
+    return out;
+  }
+  if (typeof value === "string") return value.trim();
+  return value;
+}
+
+function cfgDirtyFile(key) {
+  if (!cfgState.working || !cfgState.loaded) return false;
+  return JSON.stringify(cfgState.working[key]) !== JSON.stringify(cfgState.loaded[key]);
+}
+
+function cfgAnyDirty() { return cfgDirtyFile("resman") || cfgDirtyFile("schedule"); }
+
+function applyCfgMode() {
+  const form = cfgState.mode === "form";
+  $("#cfg-layout").hidden = !form;
+  $("#config-editor").hidden = form;
+  $("#config-file").hidden = form;
+  $("#cfg-search").hidden = !form;
+  $("#cfg-search-count").hidden = !form;
+  $("#btn-cfg-form").classList.toggle("active", form);
+  $("#btn-cfg-yaml").classList.toggle("active", !form);
+  if (!form) $("#btn-config-save").disabled = false;
+}
+
+function setCfgMode(mode) {
+  cfgState.mode = mode;
+  localStorage.setItem(CFG_MODE_KEY, mode);
+  loadConfigTab();
+}
+
+async function loadConfigTab() {
+  applyCfgMode();
+  if (cfgState.mode === "yaml") return loadConfigYaml();
+  // Never clobber in-progress edits with a refetch.
+  if (cfgState.working && cfgAnyDirty()) { renderCfgForm(); return; }
+  return loadConfigForm();
+}
+
+async function loadConfigForm() {
+  const data = await api("/api/config/structured");
+  cfgState.meta = {
+    operations: data.operations || [],
+    vaultNames: data.vault_names || [],
+    display: data.resman_display_path || "resman.yaml",
+    override: !!data.using_user_override,
+  };
+  cfgState.loaded = { resman: data.resman || {}, schedule: data.schedule || {} };
+  cfgState.working = cfgClone(cfgState.loaded);
+  renderCfgForm();
+}
+
+function renderCfgForm() {
+  renderCfgContent();
+  applyCfgFilter();
+  updateCfgDirty();
+}
+
+function cfgKnownCategories() {
+  const fromDoc = (cfgState.working?.resman?.categories || []);
+  const fromVaults = (cfgState.working?.resman?.vaults || [])
+    .map((v) => v.category).filter(Boolean);
+  return [...new Set([...fromDoc, ...state.categoryOrder, ...allCategoryPaths(), ...fromVaults])]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function cfgScalarRowHtml(sec, f) {
+  const val = cfgGet(cfgState.working[sec.file], f.path);
+  const search = `${sec.title} ${f.label} ${f.path} ${f.desc || ""}`.toLowerCase();
+  const input =
+    `<input class="cfg-input" type="${f.type === "number" ? "number" : "text"}"` +
+    ` data-file="${sec.file}" data-path="${esc(f.path)}"` +
+    ` value="${esc(val ?? "")}" placeholder="${esc(f.ph || "")}">`;
+  return `<div class="cfg-row" data-file="${sec.file}" data-path="${esc(f.path)}" data-search="${esc(search)}">
+      <div class="cfg-row-head"><span class="cfg-label">${esc(f.label)}</span><code class="cfg-key">${esc(f.path)}</code></div>
+      ${f.desc ? `<div class="cfg-desc">${esc(f.desc)}</div>` : ""}
+      ${input}
+    </div>`;
+}
+
+function cfgListRowHtml(sec, f) {
+  const arr = cfgGet(cfgState.working[sec.file], f.path) || [];
+  const search = `${sec.title} ${f.label} ${f.path} ${f.desc || ""} ${arr.join(" ")}`.toLowerCase();
+  const rows = arr.map((v, i) => {
+    const move = f.ordered
+      ? `<button class="btn btn-xs" data-act="list-up" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
+         <button class="btn btn-xs" data-act="list-down" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Move down" ${i === arr.length - 1 ? "disabled" : ""}>↓</button>`
+      : "";
+    return `<div class="cfg-list-item">
+        <input data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" value="${esc(v)}">
+        ${move}
+        <button class="btn btn-xs" data-act="list-del" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Remove">×</button>
+      </div>`;
+  }).join("");
+  return `<div class="cfg-row" data-file="${sec.file}" data-path="${esc(f.path)}" data-search="${esc(search)}">
+      <div class="cfg-row-head"><span class="cfg-label">${esc(f.label)}</span><code class="cfg-key">${esc(f.path)}</code></div>
+      ${f.desc ? `<div class="cfg-desc">${esc(f.desc)}</div>` : ""}
+      <div class="cfg-list">
+        ${rows}
+        <div class="cfg-list-add">
+          <input data-add-list="${esc(f.path)}" data-file="${sec.file}" placeholder="${esc(f.addPh || "add…")}">
+          <button class="btn btn-xs" data-act="list-add" data-file="${sec.file}" data-list="${esc(f.path)}">+ Add</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function cfgFieldHtml(kind, name, label, value, extra = "") {
+  return `<label class="cfg-field"><span>${esc(label)}</span>
+      <input data-${kind}="${esc(name)}" value="${esc(value ?? "")}" ${extra}></label>`;
+}
+
+function cfgSelectHtml(kind, name, label, value, options) {
+  const opts = [...new Set([...(value ? [value] : []), ...options])]
+    .map((o) => `<option value="${esc(o)}" ${o === value ? "selected" : ""}>${esc(o)}</option>`)
+    .join("");
+  return `<label class="cfg-field"><span>${esc(label)}</span>
+      <select data-${kind}="${esc(name)}">${opts}</select></label>`;
+}
+
+function cfgVaultCardHtml(v, i) {
+  const open = cfgState.openCards.has(`vault:${i}`);
+  const sub = [v.path, v.category].filter(Boolean).join(" · ");
+  const search = `vaults vault ${v.name || ""} ${v.path || ""} ${v.category || ""} ${(v.tags || []).join(" ")}`.toLowerCase();
+  return `<div class="cfg-card ${open ? "open" : ""}" data-kind="vault" data-idx="${i}" data-search="${esc(search)}">
+      <div class="cfg-card-head">
+        <span class="cfg-card-chev">▾</span>
+        <span class="cfg-card-title">${esc(v.name || "(unnamed)")}</span>
+        <span class="cfg-card-sub">${esc(sub)}</span>
+        <button class="btn btn-xs cfg-card-del" data-act="vault-del" data-idx="${i}" title="Remove this vault entry (unregisters only — files stay)">×</button>
+      </div>
+      <div class="cfg-card-body" ${open ? "" : "hidden"}>
+        ${cfgFieldHtml("vfield", "name", "Name", v.name, 'placeholder="letters, numbers, _ -"')}
+        ${cfgFieldHtml("vfield", "path", "Path", v.path, 'placeholder="/absolute/path/to/vault"')}
+        ${cfgFieldHtml("vfield", "category", "Category", v.category, 'list="cfg-cat-list" placeholder="sidebar group — \'/\' nests (hw/edge)"')}
+        ${cfgFieldHtml("vfield", "tags", "Tags", (v.tags || []).join(", "), 'placeholder="comma, separated"')}
+        ${cfgFieldHtml("vfield", "mount", "Mount", v.mount, 'placeholder="optional bind-mount host path"')}
+      </div>
+    </div>`;
+}
+
+function cfgCronCardHtml(t, i) {
+  const open = cfgState.openCards.has(`cron:${i}`);
+  const sub = [t.cron, t.vault, t.operation].filter(Boolean).join(" · ");
+  const search = `schedule cron ${t.name || ""} ${t.cron || ""} ${t.vault || ""} ${t.operation || ""} ${t.priority || ""}`.toLowerCase();
+  const vaults = ["ALL", ...cfgState.meta.vaultNames];
+  return `<div class="cfg-card ${open ? "open" : ""}" data-kind="cron" data-idx="${i}" data-search="${esc(search)}">
+      <div class="cfg-card-head">
+        <span class="cfg-card-chev">▾</span>
+        <span class="cfg-card-title">${esc(t.name || "(unnamed)")}</span>
+        <span class="cfg-card-sub">${esc(sub)}</span>
+        <button class="btn btn-xs cfg-card-del" data-act="cron-del" data-idx="${i}" title="Remove this cron task">×</button>
+      </div>
+      <div class="cfg-card-body" ${open ? "" : "hidden"}>
+        ${cfgFieldHtml("cfield", "name", "Name", t.name, 'placeholder="letters, numbers, _ -"')}
+        ${cfgFieldHtml("cfield", "cron", "Cron", t.cron, 'placeholder="0 23 * * *  (min hour day month weekday)"')}
+        ${cfgSelectHtml("cfield", "vault", "Vault", t.vault, vaults)}
+        ${cfgSelectHtml("cfield", "operation", "Operation", t.operation, cfgState.meta.operations)}
+        ${cfgSelectHtml("cfield", "priority", "Priority", t.priority, ["high", "medium", "low"])}
+      </div>
+    </div>`;
+}
+
+function cfgCardsSectionHtml(sec) {
+  const isVault = sec.kind === "vault";
+  const arr = isVault
+    ? (cfgState.working.resman.vaults || [])
+    : (cfgState.working.schedule.cron_tasks || []);
+  const cards = arr.map((item, i) =>
+    isVault ? cfgVaultCardHtml(item, i) : cfgCronCardHtml(item, i)).join("");
+  return `${cards}
+    <button class="btn btn-sm cfg-add-card" data-act="${isVault ? "vault-add" : "cron-add"}">
+      + Add ${isVault ? "vault" : "cron task"}</button>`;
+}
+
+function renderCfgContent() {
+  const noteFile = cfgState.meta.override
+    ? `<b>${esc(cfgState.meta.display)}</b> (user override)`
+    : `<b>${esc(cfgState.meta.display)}</b>`;
+  const sections = CFG_SECTIONS.map((sec) => {
+    let tools = "";
+    if (sec.kind !== "fields") {
+      tools = `<button class="icon-btn" data-act="cards-expand" data-kind="${sec.kind}" title="Expand all">⊞</button>
+        <button class="icon-btn" data-act="cards-collapse" data-kind="${sec.kind}" title="Collapse all">⊟</button>`;
+    }
+    const body = sec.kind === "fields"
+      ? sec.fields.map((f) =>
+          f.type === "list" ? cfgListRowHtml(sec, f) : cfgScalarRowHtml(sec, f)).join("")
+      : cfgCardsSectionHtml(sec);
+    return `<section class="cfg-section" data-sec="${sec.id}">
+        <div class="cfg-sec-head"><h3>${esc(sec.title)}</h3>${tools}</div>
+        ${sec.desc ? `<div class="cfg-sec-desc">${esc(sec.desc)}</div>` : ""}
+        <div class="cfg-rows">${body}</div>
+      </section>`;
+  }).join("");
+  const cats = cfgKnownCategories()
+    .map((c) => `<option value="${esc(c)}"></option>`).join("");
+  $("#cfg-content").innerHTML = `
+    <div class="cfg-note">Editing ${noteFile} + schedule.yaml. Form saves rewrite the files
+      (comments are dropped) — switch to YAML mode for comment-preserving edits.</div>
+    <datalist id="cfg-cat-list">${cats}</datalist>
+    ${sections}`;
+}
+
+function renderCfgNav(counts, filtering) {
+  $("#cfg-nav").innerHTML = CFG_SECTIONS.map((sec) => {
+    const n = counts[sec.id] ?? 0;
+    if (filtering && n === 0) return "";
+    return `<button class="cfg-nav-item" data-sec="${sec.id}">
+        <span class="cfg-nav-dot"></span>${esc(sec.title)}
+        <span class="cfg-nav-count">${n}</span>
+      </button>`;
+  }).join("");
+  updateCfgNavActive();
+}
+
+function applyCfgFilter() {
+  const q = cfgState.search.trim().toLowerCase();
+  const counts = {};
+  let total = 0;
+  $$("#cfg-content .cfg-section").forEach((secEl) => {
+    let visible = 0;
+    secEl.querySelectorAll(".cfg-row, .cfg-card").forEach((el) => {
+      const show = !q || (el.dataset.search || "").includes(q);
+      el.hidden = !show;
+      if (show) visible += 1;
+    });
+    counts[secEl.dataset.sec] = visible;
+    secEl.hidden = !!q && visible === 0;
+    total += visible;
+  });
+  $("#cfg-search-count").textContent =
+    q ? `${total} setting${total === 1 ? "" : "s"} found` : "";
+  renderCfgNav(counts, !!q);
+}
+
+// VS Code-style modified markers: a row/card is flagged when its working
+// value differs from the loaded snapshot; nav items get a dot per section.
+function updateCfgDirty() {
+  if (!cfgState.working) return;
+  const dirtySecs = new Set();
+  $$("#cfg-content .cfg-row[data-path]").forEach((row) => {
+    const file = row.dataset.file;
+    const mod = JSON.stringify(cfgGet(cfgState.working[file], row.dataset.path)) !==
+      JSON.stringify(cfgGet(cfgState.loaded[file], row.dataset.path));
+    row.classList.toggle("modified", mod);
+    if (mod) dirtySecs.add(row.closest(".cfg-section").dataset.sec);
+  });
+  $$("#cfg-content .cfg-card").forEach((card) => {
+    const isVault = card.dataset.kind === "vault";
+    const i = Number(card.dataset.idx);
+    const w = isVault ? (cfgState.working.resman.vaults || []) : (cfgState.working.schedule.cron_tasks || []);
+    const l = isVault ? (cfgState.loaded.resman.vaults || []) : (cfgState.loaded.schedule.cron_tasks || []);
+    const mod = JSON.stringify(w[i]) !== JSON.stringify(l[i]);
+    card.classList.toggle("modified", mod);
+    if (mod) dirtySecs.add(card.closest(".cfg-section").dataset.sec);
+  });
+  // Deletions shift indices past the compare above — catch them wholesale.
+  if (JSON.stringify(cfgState.working.resman.vaults || []) !==
+      JSON.stringify(cfgState.loaded.resman.vaults || [])) dirtySecs.add("vaults");
+  if (JSON.stringify(cfgState.working.schedule.cron_tasks || []) !==
+      JSON.stringify(cfgState.loaded.schedule.cron_tasks || [])) dirtySecs.add("schedule");
+  const dirty = cfgAnyDirty();
+  if (cfgState.mode === "form") {
+    $("#btn-config-save").disabled = !dirty;
+    $("#config-status").textContent = dirty ? "unsaved changes" : "";
+  }
+  $$("#cfg-nav .cfg-nav-item").forEach((b) =>
+    b.classList.toggle("dirty", dirtySecs.has(b.dataset.sec)));
+}
+
+function updateCfgNavActive(activeId) {
+  if (!activeId) {
+    const content = $("#cfg-content");
+    const top = content.scrollTop + 60;
+    $$("#cfg-content .cfg-section").forEach((secEl) => {
+      if (!secEl.hidden && secEl.offsetTop <= top) activeId = secEl.dataset.sec;
+    });
+  }
+  $$("#cfg-nav .cfg-nav-item").forEach((b) =>
+    b.classList.toggle("active", b.dataset.sec === activeId));
+}
+
+function rerenderCfg(focusSel) {
+  const content = $("#cfg-content");
+  const top = content.scrollTop;
+  renderCfgForm();
+  content.scrollTop = top;
+  if (focusSel) {
+    const el = content.querySelector(focusSel);
+    if (el) el.focus();
+  }
+}
+
+// Reindex open-card keys of one kind after a removal at `removed`.
+function cfgShiftOpenCards(kind, removed) {
+  const next = new Set();
+  cfgState.openCards.forEach((key) => {
+    const [k, idx] = key.split(":");
+    if (k !== kind) { next.add(key); return; }
+    const i = Number(idx);
+    if (i === removed) return;
+    next.add(`${k}:${i > removed ? i - 1 : i}`);
+  });
+  cfgState.openCards = next;
+}
+
+function cfgUpdateCardHead(card) {
+  const isVault = card.dataset.kind === "vault";
+  const i = Number(card.dataset.idx);
+  const item = isVault
+    ? (cfgState.working.resman.vaults || [])[i]
+    : (cfgState.working.schedule.cron_tasks || [])[i];
+  if (!item) return;
+  card.querySelector(".cfg-card-title").textContent = item.name || "(unnamed)";
+  card.querySelector(".cfg-card-sub").textContent = isVault
+    ? [item.path, item.category].filter(Boolean).join(" · ")
+    : [item.cron, item.vault, item.operation].filter(Boolean).join(" · ");
+}
+
+function onCfgInput(e) {
+  const t = e.target;
+  if (t.dataset.addList !== undefined && t.dataset.addList !== "") return;
+  const file = t.dataset.file;
+  if (t.dataset.path) {
+    let v;
+    if (t.type === "number") {
+      v = t.value === "" ? undefined : Number(t.value);
+      if (Number.isNaN(v)) v = undefined;
+    } else {
+      v = t.value.trim() === "" ? undefined : t.value;
+    }
+    cfgSet(cfgState.working[file], t.dataset.path, v);
+  } else if (t.dataset.list) {
+    const arr = cfgGet(cfgState.working[file], t.dataset.list) || [];
+    arr[Number(t.dataset.idx)] = t.value;
+    cfgSet(cfgState.working[file], t.dataset.list, arr);
+  } else if (t.dataset.vfield) {
+    const card = t.closest(".cfg-card");
+    const v = (cfgState.working.resman.vaults || [])[Number(card.dataset.idx)];
+    if (!v) return;
+    const field = t.dataset.vfield;
+    if (field === "tags") {
+      const tags = t.value.split(",").map((s) => s.trim()).filter(Boolean);
+      if (tags.length) v.tags = tags; else delete v.tags;
+    } else if (field === "category" || field === "mount") {
+      if (t.value.trim()) v[field] = t.value.trim(); else delete v[field];
+    } else {
+      v[field] = t.value;
+    }
+    cfgUpdateCardHead(card);
+  } else if (t.dataset.cfield) {
+    const card = t.closest(".cfg-card");
+    const item = (cfgState.working.schedule.cron_tasks || [])[Number(card.dataset.idx)];
+    if (!item) return;
+    item[t.dataset.cfield] = t.value;
+    cfgUpdateCardHead(card);
+  } else {
+    return;
+  }
+  updateCfgDirty();
+}
+
+function onCfgClick(e) {
+  const btn = e.target.closest("[data-act]");
+  if (btn) {
+    const act = btn.dataset.act;
+    const file = btn.dataset.file;
+    const listPath = btn.dataset.list;
+    const idx = Number(btn.dataset.idx);
+    if (act === "list-del" || act === "list-up" || act === "list-down") {
+      const arr = cfgGet(cfgState.working[file], listPath) || [];
+      if (act === "list-del") arr.splice(idx, 1);
+      if (act === "list-up" && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+      if (act === "list-down" && idx < arr.length - 1) [arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]];
+      cfgSet(cfgState.working[file], listPath, arr);
+      rerenderCfg();
+    } else if (act === "list-add") {
+      const input = btn.parentElement.querySelector("input[data-add-list]");
+      const val = (input?.value || "").trim();
+      if (!val) return;
+      const arr = cfgGet(cfgState.working[file], listPath) || [];
+      arr.push(val);
+      cfgSet(cfgState.working[file], listPath, arr);
+      rerenderCfg(`input[data-add-list="${CSS.escape(listPath)}"]`);
+    } else if (act === "vault-add") {
+      const arr = (cfgState.working.resman.vaults ||= []);
+      arr.push({ name: "", path: cfgGet(cfgState.working.resman, "app.vault_default_root_path") || "" });
+      cfgState.openCards.add(`vault:${arr.length - 1}`);
+      rerenderCfg(`.cfg-card[data-kind="vault"][data-idx="${arr.length - 1}"] input[data-vfield="name"]`);
+    } else if (act === "vault-del") {
+      (cfgState.working.resman.vaults || []).splice(idx, 1);
+      cfgShiftOpenCards("vault", idx);
+      rerenderCfg();
+    } else if (act === "cron-add") {
+      const arr = (cfgState.working.schedule.cron_tasks ||= []);
+      arr.push({ name: "", cron: "0 9 * * 1", vault: "ALL",
+        operation: cfgState.meta.operations[0] || "wiki-lint", priority: "medium" });
+      cfgState.openCards.add(`cron:${arr.length - 1}`);
+      rerenderCfg(`.cfg-card[data-kind="cron"][data-idx="${arr.length - 1}"] input[data-cfield="name"]`);
+    } else if (act === "cron-del") {
+      (cfgState.working.schedule.cron_tasks || []).splice(idx, 1);
+      cfgShiftOpenCards("cron", idx);
+      rerenderCfg();
+    } else if (act === "cards-expand" || act === "cards-collapse") {
+      const kind = btn.dataset.kind;
+      const arr = kind === "vault"
+        ? (cfgState.working.resman.vaults || [])
+        : (cfgState.working.schedule.cron_tasks || []);
+      arr.forEach((_, i) => {
+        if (act === "cards-expand") cfgState.openCards.add(`${kind}:${i}`);
+        else cfgState.openCards.delete(`${kind}:${i}`);
+      });
+      rerenderCfg();
+    }
+    return;
+  }
+  const head = e.target.closest(".cfg-card-head");
+  if (head) {
+    const card = head.closest(".cfg-card");
+    const key = `${card.dataset.kind}:${card.dataset.idx}`;
+    const open = !cfgState.openCards.has(key);
+    if (open) cfgState.openCards.add(key); else cfgState.openCards.delete(key);
+    card.classList.toggle("open", open);
+    card.querySelector(".cfg-card-body").hidden = !open;
+  }
+}
+
+async function saveConfigForm() {
+  const status = $("#config-status");
+  const files = [];
+  if (cfgDirtyFile("resman")) files.push(["resman.yaml", "resman"]);
+  if (cfgDirtyFile("schedule")) files.push(["schedule.yaml", "schedule"]);
+  for (const [fname, key] of files) {
+    try {
+      await api("/api/config/structured", {
+        method: "POST",
+        body: JSON.stringify({ file: fname, data: cfgPrune(cfgState.working[key]) }),
+      });
+    } catch (err) {
+      status.textContent = `error in ${fname}: ${err.message}`;
+      return;
+    }
+  }
+  await loadConfigForm();
+  await loadVaults();
+  status.textContent = "saved";
+}
+
+function setupConfigTab() {
+  $("#config-file").addEventListener("change", loadConfigYaml);
+  $("#btn-config-save").addEventListener("click", () =>
+    cfgState.mode === "form" ? saveConfigForm() : saveConfigYaml());
+  $("#btn-cfg-form").addEventListener("click", () => setCfgMode("form"));
+  $("#btn-cfg-yaml").addEventListener("click", () => setCfgMode("yaml"));
+  $("#cfg-search").addEventListener("input", (e) => {
+    cfgState.search = e.target.value;
+    applyCfgFilter();
+    updateCfgDirty(); // filter rebuilt the nav — restore its dirty dots
+  });
+  const content = $("#cfg-content");
+  content.addEventListener("input", onCfgInput);
+  content.addEventListener("click", onCfgClick);
+  content.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.dataset?.addList) {
+      e.preventDefault();
+      e.target.parentElement.querySelector('[data-act="list-add"]')?.click();
+    }
+  });
+  content.addEventListener("scroll", () => updateCfgNavActive());
+  $("#cfg-nav").addEventListener("click", (e) => {
+    const item = e.target.closest(".cfg-nav-item");
+    if (!item) return;
+    const secEl = content.querySelector(`.cfg-section[data-sec="${item.dataset.sec}"]`);
+    if (secEl) secEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    updateCfgNavActive(item.dataset.sec);
+  });
+}
+
+// ----- config: raw YAML mode -----
+async function loadConfigYaml() {
   const sel = $("#config-file");
   const file = sel.value;
   const data = await api("/api/config/yaml?file=" + encodeURIComponent(file));
@@ -1981,7 +2590,7 @@ async function loadConfig() {
   }
 }
 
-async function saveConfig() {
+async function saveConfigYaml() {
   try {
     await api("/api/config/yaml", {
       method: "POST",
@@ -1992,6 +2601,9 @@ async function saveConfig() {
     });
     $("#config-status").textContent = "saved";
     await loadVaults();
+    // YAML edits change the structured snapshot too — drop any stale form state.
+    cfgState.loaded = null;
+    cfgState.working = null;
   } catch (err) {
     $("#config-status").textContent = "error: " + err.message;
   }
@@ -3352,8 +3964,7 @@ function setupToolbar() {
     const btn = e.target.closest(".kind-card");
     if (btn && btn.dataset.op) selectOp(btn.dataset.op);
   });
-  $("#config-file").addEventListener("change", loadConfig);
-  $("#btn-config-save").addEventListener("click", saveConfig);
+  setupConfigTab();
   $("#btn-new-vault").addEventListener("click", showNewVaultWizard);
   const refresh = $("#btn-refresh");
   if (refresh) refresh.addEventListener("click",
@@ -3581,6 +4192,10 @@ function setupSocket() {
       loadVaults();
       // A vault may have been added/removed — refresh the grid if it's open.
       if (isHomeActive()) loadLanding();
+      // Keep the settings form in sync with saves made elsewhere, but never
+      // clobber in-progress edits.
+      if (cfgState.mode === "form" && cfgState.working && !cfgAnyDirty() &&
+          $("#tab-config").classList.contains("active")) loadConfigForm();
     });
     sock.on("cron_skip_warning", (p) => {
       console.warn("cron skip warning", p);

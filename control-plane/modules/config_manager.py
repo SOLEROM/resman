@@ -336,6 +336,17 @@ class ConfigManager:
             self.schedule_path, "schedule.yaml", content, validate_schedule_yaml,
         )
 
+    # Structured saves (Config-tab form). The document is dumped with
+    # safe_dump, so YAML comments do not survive — same trade-off add_vault
+    # already makes. The raw-YAML editor remains for comment-preserving edits.
+    def save_resman_data(self, data: dict) -> dict:
+        validate_resman_yaml(data)
+        return self.save_resman_yaml(yaml.safe_dump(data, sort_keys=False))
+
+    def save_schedule_data(self, data: dict) -> dict:
+        validate_schedule_yaml(data)
+        return self.save_schedule_yaml(yaml.safe_dump(data, sort_keys=False))
+
     def add_vault(
         self,
         name: str,

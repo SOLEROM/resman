@@ -1179,3 +1179,49 @@ def save_yaml():
         return jsonify({"error": str(exc)}), 400
     _activity(f"config saved: {fname}", source="config")
     return jsonify({"ok": True})
+
+
+@bp.get("/api/config/structured")
+def get_config_structured():
+    """Parsed config documents for the Config-tab settings form.
+
+    Returns both files at once plus the metadata the form needs to build
+    its controls (valid operations for cron entries, vault names)."""
+    cm = _ctx()["config"]
+    from .task_manager import OPERATIONS
+
+    body = {
+        "resman": cm.system,
+        "schedule": cm.schedule,
+        "operations": list(OPERATIONS),
+        "vault_names": [v.get("name") for v in cm.vaults if v.get("name")],
+    }
+    body.update(_resman_meta(cm))
+    return jsonify(body)
+
+
+@bp.post("/api/config/structured")
+@_csrf_required
+def save_config_structured():
+    """Save one config file from a parsed document (settings-form save).
+
+    The document is validated with the same rules as the raw editor, then
+    dumped to YAML and written atomically. Comments are not preserved."""
+    body = request.get_json(force=True, silent=True) or {}
+    fname = body.get("file")
+    data = body.get("data")
+    if fname not in _YAML_FILES:
+        return jsonify({"error": "unknown file"}), 400
+    if not isinstance(data, dict):
+        return jsonify({"error": "data must be a mapping"}), 400
+    cm = _ctx()["config"]
+    try:
+        if fname in _RESMAN_ALIASES:
+            cm.save_resman_data(data)
+        else:
+            cm.save_schedule_data(data)
+    except ConfigError as exc:
+        _activity(f"config save failed: {fname} — {exc}", level="warn", source="config")
+        return jsonify({"error": str(exc)}), 400
+    _activity(f"config saved: {fname}", source="config")
+    return jsonify({"ok": True})

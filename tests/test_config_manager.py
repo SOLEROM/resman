@@ -497,3 +497,56 @@ def test_add_vault_without_category_omits_key(cfg_dir):
     cm.load()
     cm.add_vault("b", "/tmp/b")
     assert "category" not in cm.get_vault("b")
+
+
+# ----- structured saves (Config-tab settings form) -----
+
+def test_save_resman_data_writes_yaml_and_updates_state(cfg_dir):
+    write(cfg_dir / "resman.yaml", """
+        vaults:
+          - name: alpha
+            path: /tmp/alpha
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    cm.save_resman_data({
+        "app": {"port": 5091},
+        "categories": ["work"],
+        "vaults": [{"name": "alpha", "path": "/tmp/alpha", "category": "work"}],
+    })
+    assert cm.app["port"] == 5091
+    assert cm.get_vault("alpha")["category"] == "work"
+    import yaml
+    on_disk = yaml.safe_load((cfg_dir / "resman.yaml").read_text())
+    assert on_disk["categories"] == ["work"]
+
+
+def test_save_resman_data_rejects_invalid_without_writing(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    before = (cfg_dir / "resman.yaml").read_text()
+    with pytest.raises(ConfigError):
+        cm.save_resman_data({"vaults": [{"name": "x"}]})  # missing path
+    assert (cfg_dir / "resman.yaml").read_text() == before
+
+
+def test_save_schedule_data_round_trip(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    cm.save_schedule_data({"cron_tasks": [{
+        "name": "nightly", "cron": "0 23 * * *", "vault": "ALL",
+        "operation": "wiki-lint", "priority": "low"}]})
+    assert cm.cron_tasks[0]["name"] == "nightly"
+
+
+def test_save_schedule_data_rejects_bad_cron(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    with pytest.raises(ConfigError):
+        cm.save_schedule_data({"cron_tasks": [{
+            "name": "x", "cron": "not-cron", "vault": "ALL",
+            "operation": "wiki-lint", "priority": "low"}]})
+    assert not cm.schedule_path.exists()

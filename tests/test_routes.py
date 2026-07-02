@@ -1486,3 +1486,93 @@ def test_register_vault_rejects_bad_category(tmp_path):
     )
     assert rv.status_code == 400
     assert ctx["config"].get_vault("beta") is None
+
+
+# ----- structured config (Config-tab settings form) -----
+
+def test_config_structured_get(tmp_path):
+    """GET returns both parsed docs plus the metadata the form needs
+    (operations for cron entries, vault names, live-file path)."""
+    app, ctx, _ = make_test_app(tmp_path)
+    rv = app.test_client().get("/api/config/structured")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["resman"]["vaults"][0]["name"] == "alpha"
+    assert body["schedule"] == {"cron_tasks": []}
+    assert "wiki-lint" in body["operations"]
+    assert body["vault_names"] == ["alpha"]
+    assert "resman_display_path" in body
+
+
+def test_config_structured_save_resman(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    cm = ctx["config"]
+    import copy
+    data = copy.deepcopy(cm.system)
+    data["categories"] = ["work"]
+    data["vaults"][0]["category"] = "work"
+    rv = app.test_client().post(
+        "/api/config/structured",
+        json={"file": "resman.yaml", "data": data},
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 200
+    assert cm.categories == ["work"]
+    assert cm.get_vault("alpha")["category"] == "work"
+    # config_reloaded must have re-derived the registry
+    assert ctx["vault_registry"].get("alpha").category == "work"
+
+
+def test_config_structured_save_rejects_invalid(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    rv = app.test_client().post(
+        "/api/config/structured",
+        json={"file": "resman.yaml", "data": {"vaults": [{"name": "x"}]}},
+        headers={"X-Requested-With": "resman"},
+    )
+    assert rv.status_code == 400
+    assert "path" in rv.get_json()["error"]
+    # in-memory config untouched
+    assert ctx["config"].get_vault("alpha") is not None
+
+
+def test_config_structured_save_schedule_and_bad_cron(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    good = {"cron_tasks": [{"name": "n", "cron": "0 9 * * 1", "vault": "ALL",
+                            "operation": "wiki-lint", "priority": "medium"}]}
+    rv = client.post("/api/config/structured",
+                     json={"file": "schedule.yaml", "data": good},
+                     headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 200
+    assert ctx["config"].cron_tasks[0]["name"] == "n"
+    bad = {"cron_tasks": [{"name": "n", "cron": "bad", "vault": "ALL",
+                           "operation": "wiki-lint", "priority": "medium"}]}
+    rv = client.post("/api/config/structured",
+                     json={"file": "schedule.yaml", "data": bad},
+                     headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 400
+    # first (valid) save still in effect
+    assert ctx["config"].cron_tasks[0]["cron"] == "0 9 * * 1"
+
+
+def test_config_structured_save_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    rv = app.test_client().post(
+        "/api/config/structured",
+        json={"file": "resman.yaml", "data": {}},
+    )
+    assert rv.status_code == 403
+
+
+def test_config_structured_rejects_unknown_file_and_bad_data(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    rv = client.post("/api/config/structured",
+                     json={"file": "evil.yaml", "data": {}},
+                     headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 400
+    rv = client.post("/api/config/structured",
+                     json={"file": "resman.yaml", "data": "not-a-mapping"},
+                     headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 400
