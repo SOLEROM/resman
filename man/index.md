@@ -35,9 +35,13 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 
 ## Appearance
 
-The top-right **theme switch** cycles three themes: **green ●** (phosphor
-terminal, ported from the garage design system), **dark ◐** (default), and
-**light ○**. Your choice is remembered across reloads.
+The UI is skinned as **Visual Studio Code** (codeGui VS Code kit): activity
+bar on the left, vault tree in the sidebar, editor-style tabs, and a status
+bar with the usage meters. The top-right **theme switch** offers three
+themes: **dark** (VS Code Dark Modern, default), **light** (Light Modern),
+and **hc** (Dark High Contrast). Your choice is remembered across reloads;
+new terminal sessions pick up the matching terminal palette (terminals
+opened before a theme switch keep their old colors until recreated).
 
 ## Conventions used in this manual
 

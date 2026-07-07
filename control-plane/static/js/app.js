@@ -91,6 +91,45 @@ function saveLastPanelByVault() {
   } catch (_) {}
 }
 
+// ----- sidebar geometry + visibility (persisted) -----
+// Bounds must match --sidebar-min-w / --sidebar-max-w in style.css. The floor
+// keeps the "Vaults" title readable at the narrowest drag.
+const SIDEBAR_MIN_W = 150;
+const SIDEBAR_MAX_W = 500;
+const SIDEBAR_DEFAULT_W = 300;
+
+function loadSidebarWidth() {
+  const v = parseInt(localStorage.getItem("resman-sidebar-w"), 10);
+  return Number.isFinite(v)
+    ? Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, v))
+    : SIDEBAR_DEFAULT_W;
+}
+function applySidebarWidth(px) {
+  const w = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, Math.round(px)));
+  document.documentElement.style.setProperty("--sidebar-w", w + "px");
+  return w;
+}
+function saveSidebarWidth(px) {
+  try { localStorage.setItem("resman-sidebar-w", String(Math.round(px))); } catch (_) {}
+}
+
+// Easy-read mode: the vault tree can be hidden so content spans the full width.
+// Clicking the footer "resman" item toggles it; clicking any activity icon
+// brings it back.
+function setSidebarHidden(hidden) {
+  const sidebar = $(".sidebar");
+  if (sidebar) sidebar.classList.toggle("collapsed", hidden);
+  try { localStorage.setItem("resman-sidebar-hidden", hidden ? "1" : "0"); } catch (_) {}
+}
+function toggleSidebar() {
+  const sidebar = $(".sidebar");
+  if (sidebar) setSidebarHidden(!sidebar.classList.contains("collapsed"));
+}
+function revealSidebar() {
+  const sidebar = $(".sidebar");
+  if (sidebar && sidebar.classList.contains("collapsed")) setSidebarHidden(false);
+}
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -127,6 +166,16 @@ async function apiText(path) {
   const res = await fetch(path);
   return await res.text();
 }
+
+// ----- kit class maps (VS Code chrome, see codeGui PORTING.md) -----
+// resman status colors → .tree-dot modifier classes.
+const DOT_CLASS = { red: "stopped", yellow: "warn", green: "running", blue: "info", gray: "idle" };
+// task state → .pill modifier classes.
+const PILL_CLASS = {
+  running: "running", completed: "ok", failed: "error", interrupted: "error",
+  pending: "neutral", scheduled: "neutral", deferred: "neutral",
+  cancelled: "neutral", archived: "neutral",
+};
 
 // ----- vault dot color (priority rule) -----
 function vaultColor(vault) {
@@ -218,27 +267,26 @@ function subtreeColor(node) {
   return worst;
 }
 
+// Single-line VS Code tree row: dot, name, warn icon, session-count badge,
+// hover-revealed ingest action. Session/task detail lives in the tooltip.
 function vaultRowHtml(v, depth) {
   const color = vaultColor(v);
-  const tags = (v.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("");
   const warn = !v.path_exists
-    ? `<span class="vault-warn" data-warn="${esc(v.name)}" title="path not found — click for details">⚠</span>`
-    : (!v.is_obsidian ? `<span class="vault-warn" data-warn="${esc(v.name)}" title="missing .obsidian/ — click for details">?</span>` : "");
+    ? `<span class="codicon codicon-warning vault-warn" data-warn="${esc(v.name)}" title="path not found — click for details"></span>`
+    : (!v.is_obsidian ? `<span class="codicon codicon-question vault-warn" data-warn="${esc(v.name)}" title="missing .obsidian/ — click for details"></span>` : "");
   const sel = v.name === state.selectedVault ? "selected" : "";
-  const meta = [];
   const sessionsForVault = state.sessions.filter((s) => s.vault === v.name).length;
-  if (sessionsForVault) meta.push(`${sessionsForVault} session${sessionsForVault > 1 ? "s" : ""}`);
-  const tasksForVault = state.tasks.filter((t) => t.vault === v.name);
-  if (tasksForVault.some((t) => t.state === "running")) meta.push("running");
+  const badge = sessionsForVault
+    ? `<span class="tree-tag" title="${sessionsForVault} live session${sessionsForVault > 1 ? "s" : ""}">${sessionsForVault}</span>`
+    : "";
   return `
-    <div class="vault-row ${sel}" data-vault="${esc(v.name)}" style="--depth:${depth}" title="${esc(vaultDotTitle(v))}">
-      <span class="vault-dot vault-dot-${color}"></span>
-      <div class="vault-info">
-        <div class="vault-name">${esc(v.name)}${warn}</div>
-        <div class="vault-meta">${meta.map(esc).join(" · ")}</div>
-        ${tags ? `<div class="vault-tags">${tags}</div>` : ""}
-      </div>
-      <button class="play" data-action="play" data-vault="${esc(v.name)}" title="Ingest a URL into this vault's wiki">↘</button>
+    <div class="tree-row vault-row ${sel}" data-vault="${esc(v.name)}" style="--depth:${depth}" title="${esc(vaultDotTitle(v))}">
+      <span class="tree-twisty"></span>
+      <span class="tree-dot ${DOT_CLASS[color] || "idle"}"></span>
+      <span class="tree-label">${esc(v.name)}</span>
+      ${warn}
+      ${badge}
+      <button class="icon-btn play" data-action="play" data-vault="${esc(v.name)}" title="Ingest a URL into this vault's wiki"><span class="codicon codicon-cloud-download"></span></button>
     </div>`;
 }
 
@@ -250,16 +298,16 @@ function renderCatChildren(node, prefix, depth, out, filtering) {
     const collapsed = !filtering && state.collapsedCats.has(fullPath);
     const count = countSubtreeVaults(child);
     const dot = collapsed
-      ? `<span class="vault-dot vault-dot-${subtreeColor(child)} cat-dot"></span>`
+      ? `<span class="tree-dot ${DOT_CLASS[subtreeColor(child)] || "idle"} cat-dot"></span>`
       : "";
     out.push(`
-      <div class="cat-row ${collapsed ? "collapsed" : ""} ${filtering ? "static" : ""}"
+      <div class="tree-row cat-row ${collapsed ? "collapsed" : ""} ${filtering ? "static" : ""}"
            data-cat="${esc(fullPath)}" style="--depth:${depth}"
            title="${esc(fullPath)} — ${count} vault${count === 1 ? "" : "s"}">
-        <span class="cat-chevron">▾</span>
-        <span class="cat-name">${esc(name)}</span>
+        <span class="tree-twisty"><span class="codicon codicon-chevron-down cat-chevron"></span></span>
+        <span class="tree-label cat-name">${esc(name)}</span>
         ${dot}
-        <span class="cat-count">${count}</span>
+        <span class="tree-tag cat-count">${count}</span>
       </div>`);
     if (!collapsed) renderCatChildren(child, fullPath, depth + 1, out, filtering);
   }
@@ -271,7 +319,7 @@ function updateCatsToggle() {
   if (!btn) return;
   const paths = allCategoryPaths();
   const anyCollapsed = paths.some((p) => state.collapsedCats.has(p));
-  btn.textContent = anyCollapsed ? "⊞" : "⊟";
+  btn.innerHTML = `<span class="codicon ${anyCollapsed ? "codicon-expand-all" : "codicon-collapse-all"}"></span>`;
   btn.title = anyCollapsed ? "Expand all categories" : "Collapse all categories";
   btn.disabled = paths.length === 0;
 }
@@ -314,11 +362,12 @@ function renderVaultList() {
   });
   root.querySelectorAll(".vault-row").forEach((row) => {
     row.addEventListener("click", (e) => {
-      if (e.target.dataset.action === "play") return;
+      if (e.target.closest('[data-action="play"]')) return;
       // Clicking the warn icon opens the health modal — don't also select.
-      if (e.target.dataset.warn) {
+      const warnEl = e.target.closest("[data-warn]");
+      if (warnEl) {
         e.stopPropagation();
-        showVaultHealth(e.target.dataset.warn);
+        showVaultHealth(warnEl.dataset.warn);
         return;
       }
       selectVault(row.dataset.vault);
@@ -334,10 +383,11 @@ function renderVaultList() {
   if (state.discovered.length) {
     $("#discovered-section").hidden = false;
     $("#discovered-list").innerHTML = state.discovered.map((v) => `
-      <div class="vault-row">
-        <span class="vault-dot vault-dot-gray"></span>
-        <span class="name">${esc(v.name)}</span>
-        <button class="play" data-discover="${esc(v.path)}|${esc(v.name)}">+ Register</button>
+      <div class="tree-row">
+        <span class="tree-twisty"></span>
+        <span class="tree-dot idle"></span>
+        <span class="tree-label">${esc(v.name)}</span>
+        <button class="btn secondary play" data-discover="${esc(v.path)}|${esc(v.name)}">Register</button>
       </div>
     `).join("");
     $$("#discovered-list .play").forEach((btn) => {
@@ -429,13 +479,39 @@ function renderVaultContext() {
 // hopping between vaults restores each one's own last-seen panel. Help is
 // vault-independent so we don't persist it (avoid surprising the user with
 // a Help landing when they re-select a vault).
+// Activity-bar views: codicon + label for each panel, shown on the single
+// editor-style tab in the tab strip (the VS Code chrome's .tabstrip).
+const VIEW_META = {
+  home:    { icon: "codicon-home",          label: "Home" },
+  wiki:    { icon: "codicon-book",          label: "Wiki" },
+  inbox:   { icon: "codicon-inbox",         label: "Inbox" },
+  ops:     { icon: "codicon-terminal",      label: "Ops" },
+  tasks:   { icon: "codicon-checklist",     label: "Tasks" },
+  config:  { icon: "codicon-settings-gear", label: "Config" },
+  windows: { icon: "codicon-window",        label: "Windows" },
+  help:    { icon: "codicon-question",      label: "Help" },
+};
+
+function updateActiveViewTab(tabName) {
+  const meta = VIEW_META[tabName];
+  if (!meta) return;
+  const icon = $("#active-view-icon");
+  const label = $("#active-view-label");
+  if (icon) icon.className = `codicon ${meta.icon}`;
+  if (label) {
+    const vaultScoped = ["wiki", "ops"].includes(tabName) && state.selectedVault;
+    label.textContent = vaultScoped ? `${meta.label}: ${state.selectedVault}` : meta.label;
+  }
+}
+
 function showPanel(tabName) {
   $$(".tab-panel").forEach((p) => p.classList.remove("active"));
   const panel = $("#tab-" + tabName);
   if (panel) panel.classList.add("active");
-  $$("#header-tabs .tab").forEach((t) => {
+  $$("#header-tabs .activity-item").forEach((t) => {
     t.classList.toggle("active", t.dataset.tab === tabName);
   });
+  updateActiveViewTab(tabName);
   if (tabName === "config") loadConfigTab();
   if (tabName === "tasks") loadTasks();
   if (tabName === "help") loadHelp();
@@ -502,15 +578,15 @@ function landingCardHTML(v) {
   const color = vaultColor({ name: v.name });
   const tags = (hint.tags && hint.tags.length) ? hint.tags : (v.tags || []);
   const shown = tags.slice(0, 8);
-  const tagsHTML = shown.map((t) => `<span class="tag">${esc(t)}</span>`).join("") +
+  const tagsHTML = shown.map((t) => `<span class="tree-tag">${esc(t)}</span>`).join("") +
     (tags.length > shown.length
-      ? `<span class="tag tag-more">+${tags.length - shown.length}</span>` : "");
+      ? `<span class="tree-tag">+${tags.length - shown.length}</span>` : "");
   const summary = (hint.summary && hint.summary.trim())
     ? esc(hint.summary)
     : `<span class="muted">No description yet — run the wiki bootstrap to generate one.</span>`;
   const warn = !v.path_exists
-    ? `<span class="vault-warn" title="path not found">⚠</span>`
-    : (!v.is_obsidian ? `<span class="vault-warn" title="missing .obsidian/">?</span>` : "");
+    ? `<span class="codicon codicon-warning vault-warn" title="path not found"></span>`
+    : (!v.is_obsidian ? `<span class="codicon codicon-question vault-warn" title="missing .obsidian/"></span>` : "");
   const foot = [];
   if (hint.updatedBy) foot.push(`<span class="lc-by">${esc(hint.updatedBy)}</span>`);
   if (hint.updatedAt) {
@@ -518,17 +594,17 @@ function landingCardHTML(v) {
     if (rel) foot.push(`<span class="lc-when" title="${esc(hint.updatedAt)}">${esc(rel)}</span>`);
   }
   return `
-    <article class="vault-card" data-vault="${esc(v.name)}" role="button" tabindex="0"
+    <article class="card vault-card" data-vault="${esc(v.name)}" role="button" tabindex="0"
              title="Open ${esc(v.name)} wiki">
-      <header class="lc-head">
-        <span class="vault-dot vault-dot-${color}" title="${esc(vaultDotTitle({ name: v.name }))}"></span>
-        <h3 class="lc-title">${esc(title)}</h3>
+      <header class="card-head lc-head">
+        <span class="tree-dot ${DOT_CLASS[color] || "idle"}" title="${esc(vaultDotTitle({ name: v.name }))}"></span>
+        <h3 class="card-name lc-title">${esc(title)}</h3>
         ${warn}
       </header>
       ${showId ? `<div class="lc-id">${esc(v.name)}</div>` : ""}
-      <p class="lc-summary">${summary}</p>
+      <p class="card-desc lc-summary">${summary}</p>
       ${tagsHTML ? `<div class="lc-tags">${tagsHTML}</div>` : ""}
-      ${foot.length ? `<footer class="lc-foot">${foot.join('<span class="lc-sep">·</span>')}</footer>` : ""}
+      ${foot.length ? `<footer class="card-foot lc-foot">${foot.join('<span class="lc-sep">·</span>')}</footer>` : ""}
     </article>`;
 }
 
@@ -587,9 +663,11 @@ async function spawnSession(vaultName, type) {
     return;
   }
   try {
+    // theme picks the xterm palette ttyd applies at creation — sessions
+    // spawned before a theme switch keep their old palette (known limit).
     const s = await api("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ vault: vaultName, type }),
+      body: JSON.stringify({ vault: vaultName, type, theme: currentTheme() }),
     });
     state.sessions.push(s);
     state.activeSessionId = s.id;
@@ -648,15 +726,17 @@ function renderSessions() {
   }
   tabs.innerHTML = sessions.map((s) => {
     const isActive = s.id === state.activeSessionId;
-    return `<span class="term-tab ${isActive ? "active" : ""}" data-sid="${esc(s.id)}" title="Click to switch · use the ✎ button to rename">
+    return `<span class="term-tab ${isActive ? "active" : ""}" data-sid="${esc(s.id)}" title="Click to switch · use the rename button in the title bar">
+      <span class="codicon codicon-terminal"></span>
       <span class="term-tab-label">${esc(tabLabelFor(s))}</span>
-      <span class="x" data-kill="${esc(s.id)}" title="Close">×</span>
+      <button class="term-tab-close" data-kill="${esc(s.id)}" title="Close"><span class="codicon codicon-close"></span></button>
     </span>`;
   }).join("");
   $$(".term-tab").forEach((el) => {
     el.addEventListener("click", (e) => {
-      if (e.target.dataset.kill) {
-        killSession(e.target.dataset.kill);
+      const kill = e.target.closest("[data-kill]");
+      if (kill) {
+        killSession(kill.dataset.kill);
         return;
       }
       const sid = el.dataset.sid;
@@ -828,31 +908,33 @@ async function loadTasks() {
   if (isHomeActive()) renderLanding();
 }
 
+// Both icon helpers return a codicon class; render as
+// `<span class="codicon ${...}"></span>`.
 function operationIcon(op) {
-  if (op === "wiki-ingest")        return "↘";
-  if (op === "wiki-ingest-prefix") return "⇲";
-  if (op === "wiki-lint")          return "✓";
-  if (op === "wiki-update-hot-cache") return "⟳";
-  if (op === "wiki-bootstrap")     return "★";
-  if (op === "wiki-hint")          return "ℹ";
-  if (op === "wiki-autoresearch")  return "🔎";
-  if (op === "wiki-canvas")        return "▦";
-  if (op === "run-prompt")         return "›";
-  if (op === "run-shell")          return "$";
-  return "•";
+  if (op === "wiki-ingest")        return "codicon-cloud-download";
+  if (op === "wiki-ingest-prefix") return "codicon-arrow-swap";
+  if (op === "wiki-lint")          return "codicon-checklist";
+  if (op === "wiki-update-hot-cache") return "codicon-sync";
+  if (op === "wiki-bootstrap")     return "codicon-rocket";
+  if (op === "wiki-hint")          return "codicon-info";
+  if (op === "wiki-autoresearch")  return "codicon-search";
+  if (op === "wiki-canvas")        return "codicon-layout";
+  if (op === "run-prompt")         return "codicon-zap";
+  if (op === "run-shell")          return "codicon-terminal";
+  return "codicon-circle-small";
 }
 
 function taskStateIcon(s) {
-  if (s === "running")      return "▶";
-  if (s === "pending")      return "⌛";
-  if (s === "scheduled")    return "⏰";
-  if (s === "deferred")     return "⏸";
-  if (s === "completed")    return "✓";
-  if (s === "failed")       return "✗";
-  if (s === "cancelled")    return "⊘";
-  if (s === "interrupted")  return "⚠";
-  if (s === "archived")     return "·";
-  return "•";
+  if (s === "running")      return "codicon-sync codicon-modifier-spin";
+  if (s === "pending")      return "codicon-clock";
+  if (s === "scheduled")    return "codicon-calendar";
+  if (s === "deferred")     return "codicon-debug-pause";
+  if (s === "completed")    return "codicon-check";
+  if (s === "failed")       return "codicon-error";
+  if (s === "cancelled")    return "codicon-circle-slash";
+  if (s === "interrupted")  return "codicon-warning";
+  if (s === "archived")     return "codicon-archive";
+  return "codicon-circle-small";
 }
 
 function formatAge(iso) {
@@ -992,7 +1074,7 @@ function taskCardHTML(t) {
   else if (t.updated_at)                               when = esc(formatAge(t.updated_at));
 
   const actions = taskActions(t).map((a) => {
-    const cls = (a === "cancel" || a === "delete") ? "btn btn-xs btn-danger" : "btn btn-xs";
+    const cls = (a === "cancel" || a === "delete") ? "btn danger btn-xs" : "btn secondary btn-xs";
     const title = a === "delete" ? ' title="Remove from the queue (kept in the log)"' : "";
     return `<button class="${cls}"${title} data-act="${esc(a)}" data-tid="${tid}">${esc(a)}</button>`;
   }).join("");
@@ -1009,20 +1091,20 @@ function taskCardHTML(t) {
          ${usageRowsHTML(t)}
          ${t.error ? `<span>error</span><span class="v" style="color:var(--danger)">${esc(t.error)}</span>` : ""}
        </div>
-       <pre class="task-log-pane" id="log-${tid}" data-tid="${tid}"><span class="task-log-empty">loading log…</span></pre>`
+       <pre class="task-log task-log-pane" id="log-${tid}" data-tid="${tid}"><span class="task-log-empty">loading log…</span></pre>`
     : "";
 
   return `<div class="task-card state-${esc(t.state)} ${expanded}" data-tid="${tid}">
     <div class="task-card-head" data-tid="${tid}">
-      <span class="task-card-icon">${esc(icon)}</span>
-      <span class="state-pill state-${esc(t.state)}">${esc(t.state)}</span>
+      <span class="task-card-icon codicon ${icon}"></span>
+      <span class="pill ${PILL_CLASS[t.state] || "neutral"}">${esc(t.state)}</span>
       <span class="task-card-vault">${vault}</span>
       <span class="task-card-op">· ${opLabel}</span>
       <span class="task-card-meta">${when ? "· " + when : ""}</span>
-      ${t.check_limits ? `<span class="task-limit-badge" title="Usage limits are checked before and after this task — expand for the readings.">⚖ limits</span>` : ""}
+      ${t.check_limits ? `<span class="pill neutral task-limit-badge" title="Usage limits are checked before and after this task — expand for the readings."><span class="codicon codicon-law"></span>limits</span>` : ""}
       <span class="task-card-spacer"></span>
       <div class="task-card-actions">
-        <button class="btn btn-xs" data-act="toggle-log" data-tid="${tid}">${log.open ? "hide log" : "log"}</button>
+        <button class="btn secondary btn-xs" data-act="toggle-log" data-tid="${tid}">${log.open ? "hide log" : "log"}</button>
         ${actions}
       </div>
     </div>
@@ -1111,6 +1193,7 @@ async function taskAction(act, tid) {
     try {
       const sess = await api("/api/tasks/" + encodeURIComponent(tid) + "/attend", {
         method: "POST",
+        body: JSON.stringify({ theme: currentTheme() }),
       });
       state.sessions.push(sess);
       state.activeSessionId = sess.id;
@@ -1211,9 +1294,9 @@ function renderOpCards() {
       const meta = OPERATIONS[op];
       return `<li>
         <button type="button" role="radio" aria-checked="false"
-                class="kind-card" data-op="${esc(op)}">
+                class="card kind-card" data-op="${esc(op)}">
           <span class="kind-card-title">
-            <span class="kind-card-icon" aria-hidden="true">${esc(operationIcon(op))}</span>
+            <span class="kind-card-icon codicon ${operationIcon(op)}" aria-hidden="true"></span>
             ${esc(meta.label)}
           </span>
           <span class="kind-card-help">${esc(meta.desc || "")}</span>
@@ -1234,7 +1317,7 @@ function selectOp(opKey, prefillParams) {
   if (oSel) oSel.value = opKey;
   $$("#t-op-list .kind-card").forEach((btn) => {
     const on = btn.dataset.op === opKey;
-    btn.classList.toggle("is-selected", on);
+    btn.classList.toggle("selected", on);
     btn.setAttribute("aria-checked", on ? "true" : "false");
   });
   const titleEl = $("#t-op-title");
@@ -1665,9 +1748,10 @@ function updateReadToggle() {
   }
   btn.hidden = false;
   const unread = state.wikiUnread.has(state.wikiFile);
-  btn.textContent = unread ? "Mark read ✓" : "Mark unread";
+  btn.textContent = unread ? "Mark read" : "Mark unread";
   btn.title = unread ? "Mark this page as read" : "Mark this page as unread";
-  btn.classList.toggle("btn-accent", unread);
+  // Unread pages get the primary (accent) button so the action stands out.
+  btn.classList.toggle("secondary", !unread);
 }
 
 async function toggleReadCurrent() {
@@ -1874,14 +1958,14 @@ async function showVaultHealth(vaultName) {
   try {
     const h = await api("/api/vaults/" + encodeURIComponent(vaultName) + "/health");
     const row = (label, value, kind) => {
-      const cls = kind === "ok" ? "health-ok"
-        : kind === "fail" ? "health-fail"
-        : "health-empty";
+      const cls = kind === "ok" ? "ok"
+        : kind === "fail" ? "fail"
+        : "muted";
       return `<tr><td>${esc(label)}</td><td class="${cls}">${esc(value)}</td></tr>`;
     };
     const yn = (b) => b ? "✓" : "✗";
     const body = `
-      <table class="health-table"><tbody>
+      <table class="data-table health-table"><tbody>
         ${row("Vault path", h.path, h.path_exists ? "ok" : "fail")}
         ${row("Path exists on disk", yn(h.path_exists), h.path_exists ? "ok" : "fail")}
         ${row(".obsidian/ present", yn(h.obsidian_dir), h.obsidian_dir ? "ok" : "fail")}
@@ -2164,9 +2248,9 @@ function cfgScalarRowHtml(sec, f) {
     `<input class="cfg-input" type="${f.type === "number" ? "number" : "text"}"` +
     ` data-file="${sec.file}" data-path="${esc(f.path)}"` +
     ` value="${esc(val ?? "")}" placeholder="${esc(f.ph || "")}">`;
-  return `<div class="cfg-row" data-file="${sec.file}" data-path="${esc(f.path)}" data-search="${esc(search)}">
-      <div class="cfg-row-head"><span class="cfg-label">${esc(f.label)}</span><code class="cfg-key">${esc(f.path)}</code></div>
-      ${f.desc ? `<div class="cfg-desc">${esc(f.desc)}</div>` : ""}
+  return `<div class="setting-row cfg-row" data-file="${sec.file}" data-path="${esc(f.path)}" data-search="${esc(search)}">
+      <div class="cfg-row-head"><span class="setting-title cfg-label">${esc(f.label)}</span><code class="cfg-key">${esc(f.path)}</code></div>
+      ${f.desc ? `<div class="setting-desc cfg-desc">${esc(f.desc)}</div>` : ""}
       ${input}
     </div>`;
 }
@@ -2176,23 +2260,23 @@ function cfgListRowHtml(sec, f) {
   const search = `${sec.title} ${f.label} ${f.path} ${f.desc || ""} ${arr.join(" ")}`.toLowerCase();
   const rows = arr.map((v, i) => {
     const move = f.ordered
-      ? `<button class="btn btn-xs" data-act="list-up" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
-         <button class="btn btn-xs" data-act="list-down" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Move down" ${i === arr.length - 1 ? "disabled" : ""}>↓</button>`
+      ? `<button class="icon-btn" data-act="list-up" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Move up" ${i === 0 ? "disabled" : ""}><span class="codicon codicon-arrow-up"></span></button>
+         <button class="icon-btn" data-act="list-down" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Move down" ${i === arr.length - 1 ? "disabled" : ""}><span class="codicon codicon-arrow-down"></span></button>`
       : "";
     return `<div class="cfg-list-item">
         <input data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" value="${esc(v)}">
         ${move}
-        <button class="btn btn-xs" data-act="list-del" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Remove">×</button>
+        <button class="icon-btn" data-act="list-del" data-file="${sec.file}" data-list="${esc(f.path)}" data-idx="${i}" title="Remove"><span class="codicon codicon-close"></span></button>
       </div>`;
   }).join("");
-  return `<div class="cfg-row" data-file="${sec.file}" data-path="${esc(f.path)}" data-search="${esc(search)}">
-      <div class="cfg-row-head"><span class="cfg-label">${esc(f.label)}</span><code class="cfg-key">${esc(f.path)}</code></div>
-      ${f.desc ? `<div class="cfg-desc">${esc(f.desc)}</div>` : ""}
+  return `<div class="setting-row cfg-row" data-file="${sec.file}" data-path="${esc(f.path)}" data-search="${esc(search)}">
+      <div class="cfg-row-head"><span class="setting-title cfg-label">${esc(f.label)}</span><code class="cfg-key">${esc(f.path)}</code></div>
+      ${f.desc ? `<div class="setting-desc cfg-desc">${esc(f.desc)}</div>` : ""}
       <div class="cfg-list">
         ${rows}
         <div class="cfg-list-add">
           <input data-add-list="${esc(f.path)}" data-file="${sec.file}" placeholder="${esc(f.addPh || "add…")}">
-          <button class="btn btn-xs" data-act="list-add" data-file="${sec.file}" data-list="${esc(f.path)}">+ Add</button>
+          <button class="btn secondary btn-sm" data-act="list-add" data-file="${sec.file}" data-list="${esc(f.path)}"><span class="codicon codicon-add"></span>Add</button>
         </div>
       </div>
     </div>`;
@@ -2217,10 +2301,10 @@ function cfgVaultCardHtml(v, i) {
   const search = `vaults vault ${v.name || ""} ${v.path || ""} ${v.category || ""} ${(v.tags || []).join(" ")}`.toLowerCase();
   return `<div class="cfg-card ${open ? "open" : ""}" data-kind="vault" data-idx="${i}" data-search="${esc(search)}">
       <div class="cfg-card-head">
-        <span class="cfg-card-chev">▾</span>
+        <span class="codicon codicon-chevron-down cfg-card-chev"></span>
         <span class="cfg-card-title">${esc(v.name || "(unnamed)")}</span>
         <span class="cfg-card-sub">${esc(sub)}</span>
-        <button class="btn btn-xs cfg-card-del" data-act="vault-del" data-idx="${i}" title="Remove this vault entry (unregisters only — files stay)">×</button>
+        <button class="icon-btn cfg-card-del" data-act="vault-del" data-idx="${i}" title="Remove this vault entry (unregisters only — files stay)"><span class="codicon codicon-close"></span></button>
       </div>
       <div class="cfg-card-body" ${open ? "" : "hidden"}>
         ${cfgFieldHtml("vfield", "name", "Name", v.name, 'placeholder="letters, numbers, _ -"')}
@@ -2239,10 +2323,10 @@ function cfgCronCardHtml(t, i) {
   const vaults = ["ALL", ...cfgState.meta.vaultNames];
   return `<div class="cfg-card ${open ? "open" : ""}" data-kind="cron" data-idx="${i}" data-search="${esc(search)}">
       <div class="cfg-card-head">
-        <span class="cfg-card-chev">▾</span>
+        <span class="codicon codicon-chevron-down cfg-card-chev"></span>
         <span class="cfg-card-title">${esc(t.name || "(unnamed)")}</span>
         <span class="cfg-card-sub">${esc(sub)}</span>
-        <button class="btn btn-xs cfg-card-del" data-act="cron-del" data-idx="${i}" title="Remove this cron task">×</button>
+        <button class="icon-btn cfg-card-del" data-act="cron-del" data-idx="${i}" title="Remove this cron task"><span class="codicon codicon-close"></span></button>
       </div>
       <div class="cfg-card-body" ${open ? "" : "hidden"}>
         ${cfgFieldHtml("cfield", "name", "Name", t.name, 'placeholder="letters, numbers, _ -"')}
@@ -2262,8 +2346,8 @@ function cfgCardsSectionHtml(sec) {
   const cards = arr.map((item, i) =>
     isVault ? cfgVaultCardHtml(item, i) : cfgCronCardHtml(item, i)).join("");
   return `${cards}
-    <button class="btn btn-sm cfg-add-card" data-act="${isVault ? "vault-add" : "cron-add"}">
-      + Add ${isVault ? "vault" : "cron task"}</button>`;
+    <button class="btn secondary btn-sm cfg-add-card" data-act="${isVault ? "vault-add" : "cron-add"}">
+      <span class="codicon codicon-add"></span>Add ${isVault ? "vault" : "cron task"}</button>`;
 }
 
 function renderCfgContent() {
@@ -2273,8 +2357,8 @@ function renderCfgContent() {
   const sections = CFG_SECTIONS.map((sec) => {
     let tools = "";
     if (sec.kind !== "fields") {
-      tools = `<button class="icon-btn" data-act="cards-expand" data-kind="${sec.kind}" title="Expand all">⊞</button>
-        <button class="icon-btn" data-act="cards-collapse" data-kind="${sec.kind}" title="Collapse all">⊟</button>`;
+      tools = `<button class="icon-btn" data-act="cards-expand" data-kind="${sec.kind}" title="Expand all"><span class="codicon codicon-expand-all"></span></button>
+        <button class="icon-btn" data-act="cards-collapse" data-kind="${sec.kind}" title="Collapse all"><span class="codicon codicon-collapse-all"></span></button>`;
     }
     const body = sec.kind === "fields"
       ? sec.fields.map((f) =>
@@ -2299,7 +2383,7 @@ function renderCfgNav(counts, filtering) {
   $("#cfg-nav").innerHTML = CFG_SECTIONS.map((sec) => {
     const n = counts[sec.id] ?? 0;
     if (filtering && n === 0) return "";
-    return `<button class="cfg-nav-item" data-sec="${sec.id}">
+    return `<button class="settings-nav-item cfg-nav-item" data-sec="${sec.id}">
         <span class="cfg-nav-dot"></span>${esc(sec.title)}
         <span class="cfg-nav-count">${n}</span>
       </button>`;
@@ -2663,22 +2747,21 @@ async function loadWindowSchedule() {
 }
 
 // The footer shows two meters — the local window (green) and the weekly cycle
-// (blue). For each, the bar fills with the *time* elapsed and that same time %
-// is shown INSIDE the bar; the number AFTER the bar is the *limit* used
-// (session / weekly utilization from claude.ai), or "?" until synced.
+// (blue). For each, the bar fills with the *time* elapsed; the number AFTER
+// the bar is the *limit* used (session / weekly utilization from claude.ai),
+// or "?" until synced.
 function renderWindowSchedule() {
   const sched = state.windowSchedule;
   const st = sched && sched.status;
   const usage = (st && st.usage) || {};
-  // --- Window meter (green): fill + inside = window time; after = session limit. ---
+  // --- Window meter (green): fill = window time; after = session limit. ---
   const wlabel = $("#window-meter-label"), wfill = $("#window-bar-fill"),
-        wtime = $("#window-time"), wmeter = $("#meter-window");
-  if (wlabel && wfill && wtime) {
+        wmeter = $("#meter-window");
+  if (wlabel && wfill) {
     const c = st && st.current;
     const pct = c ? Math.round((c.fraction || 0) * 100) : null;
     wlabel.textContent = c ? `Window ${c.index}/${c.count}` : "Window";
     wfill.style.width = (pct == null ? 0 : pct) + "%";
-    wtime.textContent = pct == null ? "—" : pct + "%";
     // After the limit %, the wall-clock time this window ends (schedule-based).
     const wreset = $("#window-reset");
     if (wreset) {
@@ -2700,14 +2783,12 @@ function renderWindowSchedule() {
     if (wmeter) wmeter.title = title + "\n"
       + limitNote("Session", usage.window_limit_pct, usage.session_resets_at, usage);
   }
-  // --- Week meter (blue): fill + inside = week time; after = weekly limit. ---
-  const kfill = $("#weekly-bar-fill"), ktime = $("#weekly-time"),
-        kmeter = $("#meter-week");
-  if (kfill && ktime) {
+  // --- Week meter (blue): fill = week time; after = weekly limit. ---
+  const kfill = $("#weekly-bar-fill"), kmeter = $("#meter-week");
+  if (kfill) {
     const wk = st && st.weekly;
     const pct = wk ? Math.round((wk.fraction || 0) * 100) : null;
     kfill.style.width = (pct == null ? 0 : pct) + "%";
-    ktime.textContent = pct == null ? "—" : pct + "%";
     // After the limit %, the day + time the weekly cycle resets (e.g. "Mon 09:00").
     const kreset = $("#weekly-reset");
     if (kreset) {
@@ -2806,7 +2887,7 @@ function activityRowHtml(e) {
   const lvl = LOG_LEVELS.includes(e.level) ? e.level : "info";
   const detail = e.detail
     ? `<span class="log-detail">${esc(e.detail)}</span>` : "";
-  return `<div class="log-row log-${lvl}" data-seq="${e.seq}">`
+  return `<div class="log-row ${lvl}" data-seq="${e.seq}">`
     + `<span class="log-time">${esc(fmtLogTime(e.ts))}</span>`
     + `<span class="log-level">${esc(lvl)}</span>`
     + `<span class="log-source">${esc(e.source || "app")}</span>`
@@ -2881,9 +2962,9 @@ async function openActivityLog() {
         </label>
         <span class="muted small" id="log-count"></span>
         <div class="spacer"></div>
-        <button type="button" class="btn btn-xs" id="log-clear">Clear</button>
+        <button type="button" class="btn secondary btn-xs" id="log-clear">Clear</button>
       </div>
-      <div id="log-list" class="log-list"></div>
+      <div id="log-list" class="log-view log-list"></div>
     </div>`;
   showModal("Activity log", body);
   // Restore the saved filter into the select.
@@ -3013,7 +3094,7 @@ async function loadWindowsTab() {
       <div class="win-card-head">
         <strong>Daily windows</strong>
         <div class="spacer"></div>
-        <button type="button" class="btn btn-xs" id="wc-add">+ Add window</button>
+        <button type="button" class="btn secondary btn-xs" id="wc-add"><span class="codicon codicon-add"></span>Add window</button>
       </div>
       <div class="wc">
         <p class="muted small wc-marks-hint">Tick <strong>open</strong> to have resman open/anchor that window
@@ -3031,13 +3112,13 @@ async function loadWindowsTab() {
       <div class="win-card-head">
         <strong>Usage statistics</strong>
         <div class="win-range" id="win-range">
-          <button type="button" class="btn btn-xs" data-range="7">7d</button>
-          <button type="button" class="btn btn-xs" data-range="30">30d</button>
-          <button type="button" class="btn btn-xs" data-range="90">90d</button>
+          <button type="button" class="btn secondary btn-xs" data-range="7">7d</button>
+          <button type="button" class="btn secondary btn-xs" data-range="30">30d</button>
+          <button type="button" class="btn secondary btn-xs" data-range="90">90d</button>
         </div>
         <div class="spacer"></div>
-        <button type="button" class="btn btn-xs" id="wc-collect-now" title="Take one usage reading now and store it">Collect now</button>
-        <button type="button" class="btn btn-xs" id="wc-clear-stats" title="Clear stored readings">Clear</button>
+        <button type="button" class="btn secondary btn-xs" id="wc-collect-now" title="Take one usage reading now and store it">Collect now</button>
+        <button type="button" class="btn secondary btn-xs" id="wc-clear-stats" title="Clear stored readings">Clear</button>
       </div>
       <div id="windows-stats"><p class="muted small" style="padding:8px">Loading statistics…</p></div>
     </div>`;
@@ -3087,7 +3168,7 @@ function renderWindowRows() {
       <label class="wc-mark"><input type="checkbox" class="wc-nightbox" data-i="${i}" ${w.night_window ? "checked" : ""}> night 🌙</label>
       <label class="wc-mark wc-mark-open"><input type="checkbox" class="wc-openbox" data-i="${i}" ${w.open ? "checked" : ""}> open</label>
       <label class="wc-mark wc-mark-collect"><input type="checkbox" class="wc-collectbox" data-i="${i}" ${w.collect ? "checked" : ""}> collect</label>
-      <button type="button" class="btn btn-xs btn-danger wc-remove" data-i="${i}" title="Remove window">×</button>
+      <button type="button" class="btn danger btn-xs wc-remove" data-i="${i}" title="Remove window">×</button>
     </div>`).join("") || `<p class="muted small">No windows — add at least one.</p>`;
   root.querySelectorAll(".wc-start").forEach((el) => el.addEventListener("change", (e) => {
     state.windowDraft.windows[+e.target.dataset.i].server_start = parseInt(e.target.value, 10);
@@ -3276,7 +3357,7 @@ function showModal(title, html, onSubmit) {
   footer.innerHTML = "";
   if (onSubmit) {
     const ok = document.createElement("button");
-    ok.className = "primary"; ok.textContent = "OK";
+    ok.className = "btn"; ok.textContent = "OK";
     ok.addEventListener("click", async () => {
       const result = await onSubmit();
       if (result !== false) closeModal();
@@ -3284,6 +3365,7 @@ function showModal(title, html, onSubmit) {
     footer.appendChild(ok);
   }
   const cancel = document.createElement("button");
+  cancel.className = "btn secondary";
   cancel.textContent = "Close";
   cancel.addEventListener("click", closeModal);
   footer.appendChild(cancel);
@@ -3338,17 +3420,17 @@ function pickFolder(initialPath) {
     const wrapper = document.createElement("div");
     wrapper.className = "modal-backdrop folder-picker-backdrop";
     wrapper.innerHTML = `
-      <div class="modal folder-picker">
-        <header>
-          <h3>Choose folder</h3>
-          <button class="close" data-act="cancel" aria-label="Cancel">×</button>
-        </header>
+      <div class="modal folder-picker" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <span class="modal-title">Choose folder</span>
+          <button class="icon-btn" data-act="cancel" aria-label="Cancel" title="Cancel"><span class="codicon codicon-close"></span></button>
+        </div>
         <div class="folder-picker-toolbar">
-          <button class="btn btn-sm" data-act="up" title="Parent directory">↑ Up</button>
-          <button class="btn btn-sm" data-act="home" title="Home">~ Home</button>
+          <button class="btn secondary btn-sm" data-act="up" title="Parent directory"><span class="codicon codicon-arrow-up"></span>Up</button>
+          <button class="btn secondary btn-sm" data-act="home" title="Home"><span class="codicon codicon-home"></span>Home</button>
           <span class="folder-picker-path" id="fp-path">…</span>
         </div>
-        <div class="folder-picker-list" id="fp-list">
+        <div class="folder-picker-list tree" id="fp-list">
           <div class="muted" style="padding:14px">Loading…</div>
         </div>
         <div class="folder-picker-newname">
@@ -3358,10 +3440,10 @@ function pickFolder(initialPath) {
         <div class="folder-picker-result">
           <strong>Selected:</strong> <span id="fp-selected" class="muted">—</span>
         </div>
-        <footer>
-          <button class="btn btn-sm" data-act="cancel">Cancel</button>
-          <button class="btn btn-sm btn-accent" data-act="ok">Use this path</button>
-        </footer>
+        <div class="modal-footer">
+          <button class="btn secondary" data-act="cancel">Cancel</button>
+          <button class="btn" data-act="ok">Use this path</button>
+        </div>
       </div>
     `;
     document.body.appendChild(wrapper);
@@ -3396,10 +3478,10 @@ function pickFolder(initialPath) {
           list.innerHTML = `<div class="muted" style="padding:14px">(no subdirectories — pick this folder, or create a new one below)</div>`;
         } else {
           list.innerHTML = data.entries.map((e) => `
-            <button class="folder-row" data-path="${esc(e.path)}">
-              <span class="folder-icon">📁</span>
-              <span class="folder-name">${esc(e.name)}</span>
-              ${e.is_obsidian ? '<span class="tag">vault</span>' : ""}
+            <button class="tree-row folder-row" data-path="${esc(e.path)}">
+              <span class="tree-icon codicon codicon-folder"></span>
+              <span class="tree-label folder-name">${esc(e.name)}</span>
+              ${e.is_obsidian ? '<span class="tree-tag">vault</span>' : ""}
             </button>
           `).join("");
         }
@@ -3491,7 +3573,7 @@ function showNewVaultWizard() {
     <label>Vault path <span class="muted">${pathHint}</span></label>
     <div class="path-input-row">
       <input id="nv-path" placeholder="/path/to/vault" autocomplete="off" value="${esc(pathSeed)}" />
-      <button type="button" class="btn btn-sm" id="nv-browse">Browse…</button>
+      <button type="button" class="btn secondary btn-sm" id="nv-browse"><span class="codicon codicon-folder-opened"></span>Browse…</button>
     </div>
     <label>Category <span class="muted">— optional sidebar group; nest with "/", e.g. hw/edge</span></label>
     <input id="nv-category" list="nv-category-list" placeholder="work" autocomplete="off" />
@@ -3583,6 +3665,7 @@ function showNewVaultWizard() {
               vault: name,
               type: "claude",
               bootstrap_new_vault: true,
+              theme: currentTheme(),
             }),
           });
           state.sessions.push(sess);
@@ -3707,9 +3790,9 @@ function renderInbox() {
   if (filterRow) {
     if (facets.length > 1) {
       const chip = (label, n, active, key) =>
-        `<button type="button" class="inbox-chip${active ? " active" : ""}" ` +
+        `<button type="button" class="chip inbox-chip${active ? " active" : ""}" ` +
         `data-vault="${key === null ? "" : esc(key)}" aria-pressed="${active}">` +
-        `${esc(label)} <span class="inbox-chip-count">${n}</span></button>`;
+        `${esc(label)} <span class="chip-count">${n}</span></button>`;
       filterRow.innerHTML =
         chip("All", state.inbox.length, state.inboxFilter === null, null) +
         facets.map((f) =>
@@ -3734,16 +3817,16 @@ function renderInbox() {
   }
 
   grid.innerHTML = visible.map((p) => `
-    <div class="inbox-card" data-vault="${esc(p.vault)}" data-file="${esc(p.file)}">
+    <div class="card inbox-card" data-vault="${esc(p.vault)}" data-file="${esc(p.file)}">
       <div class="inbox-card-main">
-        <span class="inbox-card-title">${esc(p.title)}</span>
+        <span class="card-name inbox-card-title">${esc(p.title)}</span>
         <span class="inbox-card-meta">
           <span class="inbox-card-vault">${esc(p.vault_label || p.vault)}</span>
           <span class="muted">${esc(formatAge(p.ctime))}</span>
         </span>
       </div>
-      <button type="button" class="inbox-card-dismiss" title="Mark read"
-              aria-label="Mark read">✓</button>
+      <button type="button" class="icon-btn inbox-card-dismiss" title="Mark read"
+              aria-label="Mark read"><span class="codicon codicon-check"></span></button>
     </div>`).join("");
 
   grid.querySelectorAll(".inbox-card").forEach((el) => {
@@ -3814,8 +3897,67 @@ function setupInbox() {
 }
 
 function setupTabs() {
-  $$("#header-tabs .tab").forEach((tab) => {
-    tab.addEventListener("click", () => showPanel(tab.dataset.tab));
+  $$("#header-tabs .activity-item").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      // Any activity icon brings the vault tree back out of easy-read mode.
+      revealSidebar();
+      showPanel(tab.dataset.tab);
+    });
+  });
+}
+
+function setupSidebar() {
+  // Restore persisted width + visibility before first paint of interactions.
+  applySidebarWidth(loadSidebarWidth());
+  if (localStorage.getItem("resman-sidebar-hidden") === "1") setSidebarHidden(true);
+
+  const resizer = $("#sidebar-resizer");
+  const sidebar = $(".sidebar");
+  if (!resizer || !sidebar) return;
+
+  let startX = 0, startW = 0, dragging = false, lastW = SIDEBAR_DEFAULT_W;
+  const onMove = (e) => {
+    if (!dragging) return;
+    lastW = applySidebarWidth(startW + (e.clientX - startX));
+  };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove("dragging");
+    document.body.classList.remove("resizing-sidebar");
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", stop);
+    saveSidebarWidth(lastW);
+  };
+  resizer.addEventListener("mousedown", (e) => {
+    if (sidebar.classList.contains("collapsed")) return; // nothing to resize
+    dragging = true;
+    startX = e.clientX;
+    startW = sidebar.getBoundingClientRect().width;
+    resizer.classList.add("dragging");
+    document.body.classList.add("resizing-sidebar");
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", stop);
+    e.preventDefault();
+  });
+  // Double-click resets to the default width.
+  resizer.addEventListener("dblclick", () => {
+    lastW = applySidebarWidth(SIDEBAR_DEFAULT_W);
+    saveSidebarWidth(lastW);
+  });
+  // Keyboard: ←/→ nudge, Home/End jump to the bounds (role="separator").
+  resizer.addEventListener("keydown", (e) => {
+    if (sidebar.classList.contains("collapsed")) return;
+    const cur = sidebar.getBoundingClientRect().width;
+    const step = e.shiftKey ? 32 : 8;
+    let next = null;
+    if (e.key === "ArrowLeft") next = cur - step;
+    else if (e.key === "ArrowRight") next = cur + step;
+    else if (e.key === "Home") next = SIDEBAR_MIN_W;
+    else if (e.key === "End") next = SIDEBAR_MAX_W;
+    if (next == null) return;
+    e.preventDefault();
+    saveSidebarWidth(applySidebarWidth(next));
   });
 }
 
@@ -3988,12 +4130,22 @@ function setupStatusBar() {
   if (btnSync) btnSync.addEventListener("click", syncWindowState);
   const btnLog = $("#btn-activity-log");
   if (btnLog) btnLog.addEventListener("click", openActivityLog);
+  // The footer "resman" item toggles the vault tree (easy-read mode).
+  const winStateItem = $("#win-state-item");
+  if (winStateItem) {
+    winStateItem.addEventListener("click", toggleSidebar);
+    winStateItem.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSidebar(); }
+    });
+  }
 }
 
-// Three-way theme switch (green / dark / light) — mirrors the garage
-// reference. The chosen theme is written to <html data-theme> and persisted
-// under "resman-theme" so the FOUC inline script can restore it pre-paint.
-const THEMES = ["green", "dark", "light"];
+// Three-way theme switch (dark / light / hc) — the VS Code kit themes
+// (Dark Modern / Light Modern / Dark High Contrast). The chosen theme is
+// written to <html data-theme> and persisted under "resman-theme" so the
+// FOUC inline script can restore it pre-paint. Keep in sync with the
+// `valid` map in index.html's pre-paint script.
+const THEMES = ["dark", "light", "hc"];
 
 function currentTheme() {
   const t = document.documentElement.getAttribute("data-theme");
@@ -4072,7 +4224,7 @@ function renderSessionsOverview(stats) {
     orphans = `<div class="session-orphans">
       <div class="session-orphans-head">
         <strong>Orphaned tmux sessions (${count})</strong>
-        <button id="btn-kill-orphans" class="btn btn-sm btn-danger"
+        <button id="btn-kill-orphans" class="btn danger btn-sm"
                 title="Run tmux kill-session on every orphan listed below">Kill all</button>
       </div>
       <p>Matching our prefix but not tracked by the running control plane —
@@ -4111,7 +4263,7 @@ function renderSessionRow(s) {
   const head = `
     <div class="session-row-head">
       <span class="sess-name">${esc(s.vault)}</span>
-      <span class="state-pill state-${esc(s.alive ? "running" : "ended")}">${esc(s.alive ? "alive" : "dead")}</span>
+      <span class="pill ${s.alive ? "ok" : "neutral"}">${esc(s.alive ? "alive" : "dead")}</span>
       <span class="sess-meta">${esc(s.session_type)} · port ${esc(String(s.port))} · age ${esc(formatAgeSeconds(s.age_seconds))}</span>
       <span class="sess-meta"><code>${esc(s.tmux_session)}</code></span>
       <span class="sess-rss">${esc(formatRss(s.total_rss_kb))}</span>
@@ -4209,6 +4361,7 @@ function setupSocket() {
 
 async function init() {
   setupTabs();
+  setupSidebar();
   setupFilters();
   setupToolbar();
   setupStatusBar();

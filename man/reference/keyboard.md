@@ -16,12 +16,14 @@ keystrokes apply. tmux-specific:
 ## Tabs
 
 The terminal tab strip currently has **no keyboard shortcuts** for switching
-tabs (Phase 6 idea: ⌥1 / ⌥2 …). Click a tab or use the rename `✎` button.
+tabs (Phase 6 idea: ⌥1 / ⌥2 …). Click a tab or use the rename (pencil)
+button in the title bar.
 
-## Header tabs
+## Activity bar
 
-The four header tabs — **Wiki**, **Tasks**, **Config**, **Help** — can be
-clicked. There are no global keystroke bindings yet.
+The views — **Home**, **Wiki**, **Inbox**, **Ops**, **Tasks**, **Windows**,
+**Help**, **Config** — are the icons on the activity bar (left edge) and can
+be clicked. There are no global keystroke bindings yet.
 
 ## Why so few shortcuts?
 
