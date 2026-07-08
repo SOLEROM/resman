@@ -13,7 +13,9 @@ const state = {
   tasks: [],
   ttydAvailable: true,
   window: { state: "between" },
-  filter: { search: "", status: "any" },
+  // `tag` is the active sidebar tag filter (null = show all). It lives here
+  // alongside search/status so renderVaultList applies all three together.
+  filter: { search: "", status: "any", tag: null },
   // Sidebar category tree: explicit ordering from resman.yaml `categories:`
   // plus the set of collapsed category paths (persisted — default expanded).
   categoryOrder: [],
@@ -331,13 +333,40 @@ function toggleCategory(path) {
   renderVaultList();
 }
 
+// Echo the active tag filter in the sidebar "Vaults" title (name + accent
+// colour) so it's visible even when the tag panel is collapsed. Reverts to
+// the plain "Vaults" label when no tag is filtered.
+function updateSidebarTitle() {
+  const el = $(".sidebar-title-text");
+  if (!el) return;
+  const tag = state.filter.tag;
+  if (tag) {
+    el.textContent = `Vaults · ${tag}`;
+    el.classList.add("filtered");
+    el.title = `Filtered by tag "${tag}"`;
+  } else {
+    el.textContent = "Vaults";
+    el.classList.remove("filtered");
+    el.removeAttribute("title");
+  }
+}
+
 function renderVaultList() {
   const root = $("#vault-list");
   const search = state.filter.search.toLowerCase();
   const status = state.filter.status;
-  const filtering = !!search || status !== "any";
+  // Drop a tag filter that no vault carries any more (e.g. a vault was
+  // deleted or retagged) so it can't strand the tree on an empty list.
+  if (state.filter.tag &&
+      !state.vaults.some((v) => (v.tags || []).includes(state.filter.tag))) {
+    state.filter.tag = null;
+  }
+  const tag = state.filter.tag;
+  updateSidebarTitle();
+  const filtering = !!search || status !== "any" || !!tag;
   const filtered = state.vaults.filter((v) => {
     if (search && !v.name.toLowerCase().includes(search)) return false;
+    if (tag && !(v.tags || []).includes(tag)) return false;
     if (status === "session" && !state.sessions.some((s) => s.vault === v.name)) return false;
     if (status === "task" && !state.tasks.some((t) => t.vault === v.name)) return false;
     if (status === "error" && !state.tasks.some((t) => t.vault === v.name && t.state === "failed")) return false;
@@ -399,6 +428,75 @@ function renderVaultList() {
   } else {
     $("#discovered-section").hidden = true;
   }
+}
+
+// ----- tag filter (sidebar bottom panel) -----
+// How many tags the panel shows. Tags are ranked by how many vaults carry
+// them (most common first), so the cap keeps the "common ones" the user asked
+// for and drops the long tail of one-off tags.
+const TAG_FACET_LIMIT = 16;
+
+// Tag -> vault-count across the registered list, most common first (ties
+// broken alphabetically). Drives the tag chips.
+function vaultTagFacets() {
+  const by = new Map();
+  for (const v of state.vaults) {
+    for (const t of (v.tags || [])) by.set(t, (by.get(t) || 0) + 1);
+  }
+  return [...by.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+// Render the tag panel. The chips are only built while the panel is expanded;
+// when collapsed we just surface any active tag as a clearable header pill so
+// a filtered tree is never silent. The active tag chip carries `.active`
+// (accent fill) so the current filter is obvious.
+function renderTagsBar() {
+  const bar = $("#vault-tags-bar");
+  const list = $("#vault-tags-list");
+  if (!bar || !list) return;
+  const collapsed = list.hidden;
+
+  const activeBtn = $("#vault-tags-active");
+  if (activeBtn) {
+    if (collapsed && state.filter.tag) {
+      activeBtn.innerHTML =
+        `${esc(state.filter.tag)} <span class="codicon codicon-close"></span>`;
+      activeBtn.title = `Filtering by "${state.filter.tag}" — click to clear`;
+      activeBtn.hidden = false;
+    } else {
+      activeBtn.hidden = true;
+    }
+  }
+
+  // Collapsed: the chip list is hidden, so skip building it entirely — it's
+  // rebuilt the moment the panel is expanded.
+  if (collapsed) return;
+
+  const facets = vaultTagFacets();
+  if (!facets.length) {
+    list.innerHTML =
+      `<span class="tags-empty">No tags yet — add tags to a vault in Config.</span>`;
+    return;
+  }
+  const chip = (label, n, active, key, extra = "") =>
+    `<button type="button" class="chip tag-chip${active ? " active" : ""}${extra}" ` +
+    `data-tag="${key === null ? "" : esc(key)}" aria-pressed="${active}">` +
+    `${esc(label)}${n === null ? "" : ` <span class="chip-count">${n}</span>`}</button>`;
+  const top = facets.slice(0, TAG_FACET_LIMIT);
+  list.innerHTML =
+    chip("All", state.vaults.length, state.filter.tag === null, null, " tag-chip-all") +
+    top.map((f) => chip(f.tag, f.count, state.filter.tag === f.tag, f.tag)).join("");
+  list.querySelectorAll(".tag-chip").forEach((el) => {
+    el.addEventListener("click", () => {
+      const tag = el.dataset.tag || null;
+      // Re-clicking the active tag clears it (back to all); "All" clears too.
+      state.filter.tag = (tag && state.filter.tag === tag) ? null : tag;
+      renderTagsBar();
+      renderVaultList();
+    });
+  });
 }
 
 // opts.wikiFile — open this wiki page instead of the default overview.
@@ -3385,6 +3483,7 @@ async function loadVaults() {
   // Explicit category ordering from resman.yaml `categories:` (may be empty).
   state.categoryOrder = data.categories || [];
   renderVaultList();
+  renderTagsBar();
   renderTriggerForm();
 }
 
@@ -4008,6 +4107,50 @@ function setupFilters() {
     saveCollapsedCats();
     renderVaultList();
   });
+  setupTagFilter();
+}
+
+// The tag panel: the "Filter by tag" header is always visible; clicking it
+// expands/collapses the chips below. Collapsed by default, state persisted.
+// Collapsing keeps any active filter (surfaced as a header pill), so it is
+// never silent.
+function setupTagFilter() {
+  const bar = $("#vault-tags-bar");
+  const head = $("#vault-tags-head");
+  const list = $("#vault-tags-list");
+  if (!bar || !head || !list) return;
+  const setCollapsed = (collapsed, persist = true) => {
+    list.hidden = collapsed;
+    bar.classList.toggle("collapsed", collapsed);
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    if (persist) {
+      try { localStorage.setItem("resman-tags-collapsed", collapsed ? "1" : "0"); } catch (_) {}
+    }
+    renderTagsBar();
+  };
+  head.addEventListener("click", () => setCollapsed(!list.hidden));
+  head.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCollapsed(!list.hidden); }
+  });
+  // The header active-tag pill (collapsed only) clears the filter — stop the
+  // click from also toggling the panel.
+  const activeBtn = $("#vault-tags-active");
+  if (activeBtn) {
+    activeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.filter.tag = null;
+      renderTagsBar();
+      renderVaultList();
+    });
+  }
+  // Restore collapsed state — default collapsed (only the header shows). Don't
+  // persist the restore itself; it isn't a user toggle.
+  let collapsed = true;
+  try {
+    const v = localStorage.getItem("resman-tags-collapsed");
+    if (v !== null) collapsed = v === "1";
+  } catch (_) {}
+  setCollapsed(collapsed, false);
 }
 
 function setupToolbar() {
@@ -4117,9 +4260,8 @@ function setupToolbar() {
 function setupStatusBar() {
   // Window state + its start/end/weekly controls now live in the ⊞ Windows
   // modal (the footer just shows the schedule), so there is no sync menu here.
-  $$("#theme-switch button[data-theme-set]").forEach((btn) => {
-    btn.addEventListener("click", () => setTheme(btn.dataset.themeSet));
-  });
+  const themeCycle = $("#theme-cycle");
+  if (themeCycle) themeCycle.addEventListener("click", cycleTheme);
   renderThemeSwitch();
   const connPill = $("#conn-pill");
   if (connPill) connPill.addEventListener("click", openSessionsOverview);
@@ -4140,12 +4282,22 @@ function setupStatusBar() {
   }
 }
 
-// Three-way theme switch (dark / light / hc) — the VS Code kit themes
-// (Dark Modern / Light Modern / Dark High Contrast). The chosen theme is
-// written to <html data-theme> and persisted under "resman-theme" so the
-// FOUC inline script can restore it pre-paint. Keep in sync with the
-// `valid` map in index.html's pre-paint script.
-const THEMES = ["dark", "light", "hc"];
+// Theme switch — a single button in the title bar cycles through every mode
+// in order (Dark Modern → Light Modern → Dark High Contrast → Garage Green →
+// back to Dark). The chosen theme is written to <html data-theme> and
+// persisted under "resman-theme" so the FOUC inline script can restore it
+// pre-paint. Keep THEMES in sync with the `valid` map in index.html's
+// pre-paint script and the [data-theme] blocks in style.css.
+const THEMES = ["dark", "light", "hc", "green"];
+
+// Per-theme presentation for the cycle button: the codicon shown for the
+// *current* theme and the human label used in the tooltip.
+const THEME_META = {
+  dark:  { icon: "circle-filled",  label: "Dark Modern" },
+  light: { icon: "circle-outline", label: "Light Modern" },
+  hc:    { icon: "color-mode",     label: "Dark High Contrast" },
+  green: { icon: "terminal",       label: "Garage Green" },
+};
 
 function currentTheme() {
   const t = document.documentElement.getAttribute("data-theme");
@@ -4159,11 +4311,23 @@ function setTheme(name) {
   renderThemeSwitch();
 }
 
+function cycleTheme() {
+  const idx = THEMES.indexOf(currentTheme());
+  setTheme(THEMES[(idx + 1) % THEMES.length]);
+}
+
 function renderThemeSwitch() {
   const active = currentTheme();
-  $$("#theme-switch button[data-theme-set]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.themeSet === active);
-  });
+  const meta = THEME_META[active] || THEME_META.dark;
+  const icon = $("#theme-cycle-icon");
+  if (icon) icon.className = "codicon codicon-" + meta.icon;
+  const btn = $("#theme-cycle");
+  if (btn) {
+    const title = `Theme: ${meta.label} — click to cycle`;
+    btn.title = title;
+    btn.setAttribute("aria-label", title);
+    btn.classList.add("active");
+  }
 }
 
 function setConn(state) {

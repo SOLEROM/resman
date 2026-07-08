@@ -405,6 +405,129 @@
   --vsc-scrollbar-hover: #6fc3dfb3;
   --vsc-scrollbar-active: #6fc3df;
 }
+
+/* ==========================================================================
+   THEME: green — "Garage" phosphor-green terminal skin
+   Ported from /data/agents/garage (frontDesign/Garage Design System).
+   Dark, green-tinted surfaces with a phosphor-green (#36c97a) accent.
+   ========================================================================== */
+:root[data-theme="green"] {
+  color-scheme: dark;
+
+  /* ----- frontStackView.md §5.5 contract ----- */
+  --bg-base: #0c120e;          /* editor.background (main canvas) */
+  --bg-surface: #0a0f0c;       /* garage --bg (chrome: sidebar/status/title) */
+  --bg-elevated: #101711;      /* garage --card (raised card/input) */
+  --bg-hover: #141d16;         /* garage --card-hover */
+
+  --border: #1d2a21;           /* garage --border */
+  --border-light: #16201a;     /* subtler divider */
+
+  --text-primary: #d6e8da;     /* garage --fg */
+  --text-secondary: #7f9584;   /* garage --muted */
+  --text-muted: #4d5e51;       /* garage --faint */
+
+  --accent: #36c97a;           /* garage --green-400 (primary accent) */
+  --accent-bg: #123524;        /* dark-green selection fill */
+  --success: #36c97a;          /* garage --status-ok */
+  --warning: #e9b97a;          /* garage --status-warn */
+  --danger: #ff6b66;           /* garage --status-err */
+  --info: #45d8e0;             /* garage --status-run (cyan) */
+
+  --status-running: var(--success);
+  --status-stopped: var(--danger);
+  --status-warn: var(--warning);
+  --status-idle: #7f9584;
+
+  /* ----- VS Code chrome extension tokens ----- */
+  --vsc-focus-border: #36c97a;
+  --vsc-contrast-active: transparent;
+
+  --vsc-titlebar-bg: #0a0f0c;
+  --vsc-titlebar-fg: #d6e8da;
+
+  --vsc-activitybar-bg: #0a0f0c;
+  --vsc-activitybar-fg: #d6e8da;
+  --vsc-activitybar-inactive-fg: #7f9584;
+  --vsc-activitybar-active-border: #36c97a;
+  --vsc-activitybar-badge-bg: #36c97a;
+  --vsc-activitybar-badge-fg: #06110a;
+
+  --vsc-sidebar-bg: #0a0f0c;
+  --vsc-sidebar-fg: #d6e8da;
+  --vsc-sidebar-title-fg: #d6e8da;
+  --vsc-sidebar-section-border: #1d2a21;
+
+  --vsc-tabs-bg: #0a0f0c;
+  --vsc-tab-active-bg: #0c120e;
+  --vsc-tab-active-fg: #eafff0;
+  --vsc-tab-inactive-bg: #0a0f0c;
+  --vsc-tab-inactive-fg: #7f9584;
+  --vsc-tab-hover-bg: #0c120e;
+  --vsc-tab-active-border-top: #36c97a;
+  --vsc-tab-border: #1d2a21;
+
+  --vsc-panel-bg: #0a0f0c;
+  --vsc-panel-title-active-fg: #d6e8da;
+  --vsc-panel-title-inactive-fg: #7f9584;
+  --vsc-panel-title-active-border: #36c97a;
+
+  --vsc-statusbar-bg: #0a0f0c;
+  --vsc-statusbar-fg: #d6e8da;
+  --vsc-statusbar-border: #1d2a21;
+  --vsc-statusbar-item-hover-bg: #36c97a22;
+  --vsc-statusbar-remote-bg: #178a4c;
+  --vsc-statusbar-remote-fg: #eafff0;
+
+  --vsc-input-bg: #070b09;
+  --vsc-input-fg: #d6e8da;
+  --vsc-input-border: #2c4032;
+  --vsc-input-placeholder: #4d5e51;
+  --vsc-dropdown-bg: #101711;
+  --vsc-dropdown-border: #2c4032;
+  --vsc-dropdown-list-bg: #101711;
+
+  --vsc-btn-bg: #36c97a;
+  --vsc-btn-fg: #06110a;
+  --vsc-btn-hover-bg: #4bd88a;
+  --vsc-btn-border: #ffffff1a;
+  --vsc-btn2-bg: transparent;
+  --vsc-btn2-fg: #d6e8da;
+  --vsc-btn2-hover-bg: #141d16;
+  --vsc-btn2-border: #2c4032;
+
+  --vsc-list-hover-bg: #141d16;
+  --vsc-list-active-bg: #123524;
+  --vsc-list-active-fg: #eafff0;
+  --vsc-list-inactive-bg: #16211a;
+  --vsc-list-focus-outline: #36c97a;
+
+  --vsc-badge-bg: #178a4c;
+  --vsc-badge-fg: #eafff0;
+
+  --vsc-menu-bg: #101711;
+  --vsc-menu-fg: #d6e8da;
+  --vsc-menu-border: #2c4032;
+  --vsc-menu-sel-bg: #36c97a;
+  --vsc-menu-sel-fg: #06110a;
+  --vsc-menu-separator: #1d2a21;
+
+  --vsc-widget-bg: #0d130f;
+  --vsc-widget-border: #1d2a21;
+  --vsc-widget-shadow: 0 2px 12px 2px rgba(0, 0, 0, 0.5);
+  --vsc-quickinput-bg: #0d130f;
+
+  --vsc-link: #5ce99a;
+  --vsc-code-bg: #070b09;
+  --vsc-blockquote-bg: #070b09;
+  --vsc-blockquote-border: #2c4032;
+
+  --vsc-progress: #36c97a;
+
+  --vsc-scrollbar: #36c97a40;
+  --vsc-scrollbar-hover: #36c97a80;
+  --vsc-scrollbar-active: #36c97ab3;
+}
 /* ==========================================================================
    VS Code look-and-feel — COMPONENT CHROME
    ==========================================================================
@@ -746,7 +869,15 @@ body.resizing-sidebar iframe { pointer-events: none; }
   letter-spacing: 0.04em;
   color: var(--vsc-sidebar-title-fg);
 }
-.sidebar-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.sidebar-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* While a tag filter is active the title echoes it in the accent colour so
+   the current filter is visible even with the tag panel collapsed. */
+.sidebar-title-text.filtered { color: var(--accent); font-weight: 600; }
+.sidebar-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; flex: none; }
 .sidebar:hover .sidebar-actions,
 .sidebar:focus-within .sidebar-actions { opacity: 1; }
 .sidebar-filter { padding: 0 12px 8px; }
@@ -1702,6 +1833,66 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 .tree-row:hover .play, .tree-row .play:focus-visible { visibility: visible; }
 .tree-row .btn { height: 18px; padding: 0 6px; font-size: 11px; flex: none; }
 .discovered { padding: 4px 0; border-top: 1px solid var(--border-light); flex: none; }
+
+/* Tag filter — pinned to the sidebar bottom. The header row is always shown;
+   the chip list below it collapses/expands. Capped in height with its own
+   scroll so a long tag list never crowds out the tree. */
+.sidebar-tags {
+  flex: none;
+  border-top: 1px solid var(--border);
+  padding: 6px 12px 10px;
+  max-height: 42%;
+  overflow-y: auto;
+  background: var(--vsc-sidebar-bg);
+}
+.sidebar-tags.collapsed { padding-bottom: 6px; }
+/* The whole header row is the toggle — clicking it shows/hides the chips. */
+.sidebar-tags-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  cursor: pointer;
+  user-select: none;
+}
+.sidebar-tags-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vsc-sidebar-title-fg);
+}
+.sidebar-tags-head:hover .sidebar-tags-title { color: var(--text-primary); }
+.sidebar-tags-head:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* The × on the right rotates 45° to a "+" when collapsed, hinting that
+   clicking reveals more. */
+.sidebar-tags-x {
+  margin-left: auto;
+  font-size: 16px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease, color 0.12s;
+}
+.sidebar-tags.collapsed .sidebar-tags-x { transform: rotate(45deg); }
+.sidebar-tags-head:hover .sidebar-tags-x { color: var(--text-secondary); }
+/* Active-tag pill shown in the header only while collapsed, so a filtered
+   tree is never silent. Clicking it clears the filter. */
+.tag-active-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px 0 8px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+}
+.tag-active-clear .codicon { font-size: 12px; opacity: 0.85; }
+.tag-active-clear:hover { filter: brightness(1.1); }
+/* Compact chips so more tags fit the narrow sidebar. */
+.tag-chip-row { margin-top: 2px; }
+.tag-chip { height: 20px; padding: 0 8px; font-size: 11px; }
+.tags-empty { font-size: 11px; color: var(--text-muted); padding: 2px 0; }
 
 /* ---------- Landing / home (vault card grid) ---------- */
 .landing-title { font-weight: 600; font-size: 13px; color: var(--text-primary); }

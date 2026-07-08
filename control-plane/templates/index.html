@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>resman</title>
   <!-- Apply saved theme before render so the page never flashes the wrong
-       palette. Valid themes: dark | light | hc (VS Code kit). Persisted
-       values of retired themes (e.g. "green") fail the lookup and fall back
-       to the OS colour scheme. Keep the map in sync with THEMES in app.js. -->
+       palette. Valid themes: dark | light | hc (VS Code kit) | green (Garage).
+       Persisted values of unknown themes fail the lookup and fall back to the
+       OS colour scheme. Keep the map in sync with THEMES in app.js. -->
   <script>
     (function () {
       try {
         var saved = localStorage.getItem("resman-theme");
-        var valid = { dark: 1, light: 1, hc: 1 };
+        var valid = { dark: 1, light: 1, hc: 1, green: 1 };
         var theme = (saved && valid[saved]) ? saved : (window.matchMedia &&
           window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
         document.documentElement.setAttribute("data-theme", theme);
@@ -57,9 +57,9 @@
       <span class="conn-label" id="conn-label">connecting...</span>
     </span>
     <div class="theme-switch" id="theme-switch" role="group" aria-label="Theme">
-      <button data-theme-set="dark" title="Dark Modern" aria-label="Dark theme"><span class="codicon codicon-circle-filled"></span></button>
-      <button data-theme-set="light" title="Light Modern" aria-label="Light theme"><span class="codicon codicon-circle-outline"></span></button>
-      <button data-theme-set="hc" title="Dark High Contrast" aria-label="High contrast theme"><span class="codicon codicon-color-mode"></span></button>
+      <button id="theme-cycle" title="Theme" aria-label="Cycle theme">
+        <span class="codicon codicon-circle-filled" id="theme-cycle-icon"></span>
+      </button>
     </div>
   </div>
 </header>
@@ -139,6 +139,23 @@
     <div id="discovered-section" class="discovered" hidden>
       <div class="divider">Unregistered</div>
       <div id="discovered-list"></div>
+    </div>
+    <!-- Tag filter — pinned to the sidebar bottom. The "Filter by tag" header
+         row is always visible; clicking it expands/collapses the chips below
+         (collapsed by default, state persisted). Picking a tag shows only
+         vaults carrying it (that chip goes to the accent colour); the "All"
+         chip or re-clicking the tag resets. While collapsed, an active tag is
+         surfaced as a clearable pill in the header so the tree is never
+         silently filtered. -->
+    <div class="sidebar-tags collapsed" id="vault-tags-bar">
+      <div class="sidebar-tags-head" id="vault-tags-head" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="vault-tags-list"
+           title="Show or hide the tag filters">
+        <span class="sidebar-tags-title">Filter by tag</span>
+        <button type="button" class="tag-active-clear" id="vault-tags-active" hidden></button>
+        <span class="codicon codicon-close sidebar-tags-x" aria-hidden="true"></span>
+      </div>
+      <div class="chip-row tag-chip-row" id="vault-tags-list" hidden></div>
     </div>
   </aside>
 
