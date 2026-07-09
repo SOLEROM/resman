@@ -135,7 +135,13 @@ sudo loginctl enable-linger $USER
 
 **Port 5090 already in use**
 
-Edit `~/.resman.yaml` or `config/resman.yaml` and change `app.port`, then restart the service.
+Pick a different port with whichever is easiest — resolution is most-specific first:
+
+1. `.port` file at the repo root — one line with just the number (e.g. `echo 6001 > /path/to/repo/.port`). Honored by both `./run.sh` and this service, no YAML or unit-file edit needed.
+2. `app.port` in `~/.resman.yaml` or `config/resman.yaml`.
+3. Otherwise falls back to `5090`.
+
+Then `systemctl --user restart resman`. (An explicit `--port` in the unit's `ExecStart` still overrides all of the above.)
 
 **Check what the service is actually running**
 

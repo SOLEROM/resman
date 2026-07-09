@@ -14,6 +14,8 @@
 # User-specific config (vault paths, ttyd ports, etc.) — *.example is the template.
 **/config/resman.yaml
 **/config/schedule.yaml
+# Per-host listen-port override read at startup (one line: the port number).
+/.port
 # Legacy name — kept ignored so old checkouts don't accidentally commit it.
 **/config/system.yaml
 
