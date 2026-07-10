@@ -12,6 +12,7 @@ ttyd handles PTY management, xterm.js protocol, resize, WebSocket streaming.
 """
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import subprocess
@@ -20,6 +21,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import RLock
 from typing import Dict, List, Optional
 
@@ -27,6 +29,28 @@ from . import process_stats
 from .tmux_manager import TmuxManager, TmuxSessionError
 
 log = logging.getLogger(__name__)
+
+# xterm.js palettes per GUI theme (dark/light/hc), from the codeGui VS Code
+# kit (theme/terminal-themes.json). Passed to ttyd at session creation via
+# --client-option theme=<json> — the terminal iframe cannot be styled by app
+# CSS, so the palette is fixed for the session's lifetime: sessions spawned
+# before a theme switch keep their old colors (known/documented limitation).
+_TERMINAL_THEMES_FILE = Path(__file__).resolve().parent.parent / "terminal-themes.json"
+
+
+def _load_terminal_themes() -> Dict[str, dict]:
+    try:
+        raw = json.loads(_TERMINAL_THEMES_FILE.read_text(encoding="utf-8"))
+        return {k: v for k, v in raw.items() if isinstance(v, dict) and not k.startswith("_")}
+    except (OSError, ValueError) as exc:
+        log.warning("terminal-themes.json unavailable (%s) — ttyd uses defaults", exc)
+        return {}
+
+
+TERMINAL_THEMES: Dict[str, dict] = _load_terminal_themes()
+# VS Code Linux terminal font stack (matches --vsc-font-mono in the CSS kit).
+TERMINAL_FONT_FAMILY = "Droid Sans Mono,Consolas,Ubuntu Mono,monospace"
+TERMINAL_FONT_SIZE = 13
 
 
 def _utcnow() -> datetime:
@@ -170,8 +194,12 @@ class SessionManager:
         initial_command: Optional[str] = None,
         initial_text: Optional[str] = None,
         initial_command_delay: float = 5.0,
+        theme: Optional[str] = None,
     ) -> Session:
         """Spawn a tmux+ttyd session.
+
+        theme — GUI theme id ("dark" | "light" | "hc"); picks the xterm
+        palette ttyd renders with. Unknown/missing ids fall back to "dark".
 
         initial_command — when set and session_type=="claude", typed into the
         Claude prompt after `initial_command_delay` seconds. Used by the new-
@@ -217,6 +245,15 @@ class SessionManager:
             "--interface", self.bind_host,
             "--writable",
             "--check-origin=false",
+        ]
+        palette = TERMINAL_THEMES.get(theme or "") or TERMINAL_THEMES.get("dark")
+        if palette:
+            ttyd_cmd += [
+                "--client-option", f"theme={json.dumps(palette)}",
+                "--client-option", f"fontSize={TERMINAL_FONT_SIZE}",
+                "--client-option", f"fontFamily={TERMINAL_FONT_FAMILY}",
+            ]
+        ttyd_cmd += [
             "tmux", "-L", self.tmux.socket, "attach-session", "-t", tmux_name,
         ]
         try:

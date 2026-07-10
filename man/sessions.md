@@ -8,13 +8,12 @@ tags: []
 
 Each session is a **tmux session** wrapped in a **ttyd process** that exposes
 it to the browser as an `<iframe>`. resman launches both for you. The
-**Ops** tab in the header bar is where the iframes live.
+**Ops** view (terminal icon in the activity bar) is where the iframes live.
 
 ## Spawning a session
 
-The spawn buttons live in the **header bar** (centered between the tab
-strip and the connection indicator) and act on the currently selected
-vault:
+The spawn buttons live in the **title bar** (centered, next to the active
+vault's name) and act on the currently selected vault:
 
 - **+ Claude** — runs `claude --dangerously-skip-permissions` (configurable
   via `app.claude_cmd`) in the vault directory.

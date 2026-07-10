@@ -2,15 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>resman</title>
-  <link rel="stylesheet" href="/static/css/style.css" />
-  <!-- Apply saved theme before render so the page never flashes the wrong palette.
-       Valid themes: green | dark | light. Default follows the OS colour scheme. -->
+  <!-- Apply saved theme before render so the page never flashes the wrong
+       palette. Valid themes: dark | light | hc (VS Code kit) | green (Garage).
+       Persisted values of unknown themes fail the lookup and fall back to the
+       OS colour scheme. Keep the map in sync with THEMES in app.js. -->
   <script>
     (function () {
       try {
         var saved = localStorage.getItem("resman-theme");
-        var valid = { green: 1, dark: 1, light: 1 };
+        var valid = { dark: 1, light: 1, hc: 1, green: 1 };
         var theme = (saved && valid[saved]) ? saved : (window.matchMedia &&
           window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
         document.documentElement.setAttribute("data-theme", theme);
@@ -19,163 +21,242 @@
       }
     })();
   </script>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
-          crossorigin="anonymous"></script>
-  <!-- Markdown rendering for the Wiki tab. Marked is small (~30KB) and
-       has no runtime deps. -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"
-          crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <script defer src="/static/vendor/socket.io.min.js"></script>
+  <!-- Markdown rendering for the Wiki/Help tabs. -->
+  <script defer src="/static/vendor/marked.min.js"></script>
+  <script defer src="/static/js/app.js"></script>
 </head>
 <body>
 
-<header class="header">
-  <div class="header-brand" id="header-brand" role="button" tabindex="0"
-       title="Home — all vaults" aria-label="Go to vault landing page">
-    <span class="header-icon">⚗</span>
-    <span class="header-title">resman</span>
-    <span class="header-tagline">— Research Vault Manager</span>
-  </div>
-  <nav class="header-tabs" id="header-tabs">
-    <button class="tab" data-tab="wiki"><span class="tab-ico">☰</span>Wiki</button>
-    <button class="tab" data-tab="inbox" title="Recent wiki pages across all vaults — read and mark them"><span class="tab-ico">📥</span>Inbox<span class="tab-badge" id="inbox-badge" hidden></span></button>
-    <button class="tab" data-tab="ops" title="Open terminal sessions for this vault"><span class="tab-ico">❯</span>Ops</button>
-    <button class="tab" data-tab="tasks"><span class="tab-ico">✓</span>Tasks</button>
-    <button class="tab" data-tab="config"><span class="tab-ico">⚙︎</span>Config</button>
-    <button class="tab" data-tab="windows" title="Window management, automation &amp; usage statistics"><span class="tab-ico">⊞</span>Windows</button>
-    <button class="tab" data-tab="help"><span class="tab-ico">?</span>Help</button>
-  </nav>
-  <div class="header-vault-actions empty" id="header-vault-actions">
-    <span class="vault-context" id="vault-context">No vault selected</span>
-    <button id="btn-rename-tab" class="btn btn-sm" title="Rename active tab" aria-label="Rename active tab">✎</button>
-    <button id="btn-shell" class="btn btn-sm">+ Shell</button>
-    <button id="btn-claude" class="btn btn-sm btn-accent">+ Claude</button>
-    <button id="btn-obsidian" class="btn btn-sm">Obsidian</button>
-    <span class="ttyd-warning" id="ttyd-warning" hidden>
-      ttyd not installed
+<!-- ============================== Title bar ============================== -->
+<header class="titlebar">
+  <div class="titlebar-left">
+    <span class="brand" id="header-brand" role="button" tabindex="0"
+          title="Home — all vaults" aria-label="Go to vault landing page">
+      <span class="codicon codicon-beaker"></span>
     </span>
+    <span class="titlebar-title">resman</span>
   </div>
-  <div class="header-status">
+  <div class="titlebar-center">
+    <div class="header-vault-actions empty" id="header-vault-actions">
+      <span class="vault-context" id="vault-context"
+            title="Open Ops (terminal sessions) for this vault">No vault selected</span>
+      <button id="btn-rename-tab" class="icon-btn" title="Rename active tab"
+              aria-label="Rename active tab"><span class="codicon codicon-edit"></span></button>
+      <button id="btn-shell" class="btn secondary"><span class="codicon codicon-terminal"></span>Shell</button>
+      <button id="btn-claude" class="btn"><span class="codicon codicon-add"></span>Claude</button>
+      <button id="btn-obsidian" class="btn secondary"><span class="codicon codicon-link-external"></span>Obsidian</button>
+      <span class="ttyd-warning" id="ttyd-warning" hidden>ttyd not installed</span>
+    </div>
+  </div>
+  <div class="titlebar-right">
     <span class="conn-pill" id="conn-pill"
           title="Click to see every running tmux + ttyd session and its memory footprint">
-      <span class="status-dot" id="conn-dot"></span>
-      <span id="conn-label">connecting...</span>
+      <span class="conn-dot" id="conn-dot"></span>
+      <span class="conn-label" id="conn-label">connecting...</span>
     </span>
     <div class="theme-switch" id="theme-switch" role="group" aria-label="Theme">
-      <button data-theme-set="green" title="Phosphor green" aria-label="Green theme">●</button>
-      <button data-theme-set="dark"  title="Dark (white on black)" aria-label="Dark theme">◐</button>
-      <button data-theme-set="light" title="Light (black on white)" aria-label="Light theme">○</button>
+      <button id="theme-cycle" title="Theme" aria-label="Cycle theme">
+        <span class="codicon codicon-circle-filled" id="theme-cycle-icon"></span>
+      </button>
     </div>
   </div>
 </header>
 
-<div class="app">
-  <div class="layout">
+<!-- ============================== Workbench ============================== -->
+<div class="workbench">
 
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <span>Vaults</span>
-        <div class="sidebar-tools" role="group" aria-label="Vault list controls">
-          <button class="icon-btn" id="btn-vault-filter"
-                  title="Search &amp; filter vaults" aria-label="Search and filter vaults">⌕</button>
-          <button class="icon-btn" id="btn-cats-toggle"
-                  title="Collapse all categories" aria-label="Expand or collapse all categories">⊟</button>
-          <button class="icon-btn" id="btn-new-vault"
-                  title="New vault" aria-label="New vault">+</button>
-          <button class="icon-btn" id="btn-refresh"
-                  title="Refresh vaults" aria-label="Refresh vaults">↻</button>
-        </div>
-      </div>
-      <!-- Collapsed by default — the ⌕ toolbar button reveals it. Closing it
-           clears any active search/status filter so a hidden filter can never
-           silently shrink the vault list. -->
-      <div class="filter-bar" id="vault-filter-bar" hidden>
-        <input id="vault-search" type="search" placeholder="Search vaults..." />
-        <select id="status-filter">
-          <option value="any">any status</option>
-          <option value="session">active session</option>
-          <option value="task">has tasks</option>
-          <option value="error">has error</option>
-        </select>
-      </div>
-      <div id="vault-list" class="vault-list"></div>
-      <div id="discovered-section" class="discovered" hidden>
-        <div class="divider">Unregistered</div>
-        <div id="discovered-list"></div>
-      </div>
-    </aside>
+  <nav class="activitybar" id="header-tabs" aria-label="Views">
+    <div class="activity-group">
+      <button class="activity-item" data-tab="home" title="Home — all vaults">
+        <span class="codicon codicon-home"></span>
+        <span class="activity-label">Vaults</span>
+      </button>
+      <button class="activity-item" data-tab="inbox"
+              title="Inbox — recent wiki pages across all vaults; read and mark them">
+        <span class="codicon codicon-inbox"></span>
+        <span class="activity-badge" id="inbox-badge" hidden></span>
+        <span class="activity-label">Inbox</span>
+      </button>
+      <button class="activity-item" data-tab="wiki" title="Wiki">
+        <span class="codicon codicon-book"></span>
+        <span class="activity-label">Wiki</span>
+      </button>
+      <button class="activity-item" data-tab="ops" title="Ops — terminal sessions for this vault">
+        <span class="codicon codicon-terminal"></span>
+        <span class="activity-label">Ops</span>
+      </button>
+      <button class="activity-item" data-tab="tasks" title="Tasks">
+        <span class="codicon codicon-checklist"></span>
+        <span class="activity-label">Tasks</span>
+      </button>
+      <button class="activity-item" data-tab="windows"
+              title="Windows — window management, automation &amp; usage statistics">
+        <span class="codicon codicon-window"></span>
+        <span class="activity-label">Windows</span>
+      </button>
+    </div>
+    <div class="activity-group activity-bottom">
+      <button class="activity-item" data-tab="help" title="Help">
+        <span class="codicon codicon-question"></span>
+        <span class="activity-label">Help</span>
+      </button>
+      <button class="activity-item" data-tab="config" title="Config">
+        <span class="codicon codicon-settings-gear"></span>
+        <span class="activity-label">Config</span>
+      </button>
+    </div>
+  </nav>
 
-    <main class="main">
+  <aside class="sidebar">
+    <div class="sidebar-title">
+      <span class="sidebar-title-text">Vaults</span>
+      <span class="sidebar-actions" role="group" aria-label="Vault list controls">
+        <button class="icon-btn" id="btn-vault-filter"
+                title="Search &amp; filter vaults" aria-label="Search and filter vaults"><span class="codicon codicon-search"></span></button>
+        <button class="icon-btn" id="btn-cats-toggle"
+                title="Collapse all categories" aria-label="Expand or collapse all categories"><span class="codicon codicon-collapse-all"></span></button>
+        <button class="icon-btn" id="btn-new-vault"
+                title="New vault" aria-label="New vault"><span class="codicon codicon-add"></span></button>
+        <button class="icon-btn" id="btn-refresh"
+                title="Refresh vaults" aria-label="Refresh vaults"><span class="codicon codicon-refresh"></span></button>
+      </span>
+    </div>
+    <!-- Collapsed by default — the search toolbar button reveals it. Closing
+         it clears any active search/status filter so a hidden filter can
+         never silently shrink the vault list. -->
+    <div class="sidebar-filter" id="vault-filter-bar" hidden>
+      <input id="vault-search" type="search" placeholder="Search vaults..." />
+      <select id="status-filter">
+        <option value="any">any status</option>
+        <option value="session">active session</option>
+        <option value="task">has tasks</option>
+        <option value="error">has error</option>
+      </select>
+    </div>
+    <div id="vault-list" class="tree" role="tree"></div>
+    <div id="discovered-section" class="discovered" hidden>
+      <div class="divider">Unregistered</div>
+      <div id="discovered-list"></div>
+    </div>
+    <!-- Tag filter — pinned to the sidebar bottom. The "Filter by tag" header
+         row is always visible; clicking it expands/collapses the chips below
+         (collapsed by default, state persisted). Picking a tag shows only
+         vaults carrying it (that chip goes to the accent colour); the "All"
+         chip or re-clicking the tag resets. While collapsed, an active tag is
+         surfaced as a clearable pill in the header so the tree is never
+         silently filtered. -->
+    <div class="sidebar-tags collapsed" id="vault-tags-bar">
+      <div class="sidebar-tags-head" id="vault-tags-head" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="vault-tags-list"
+           title="Show or hide the tag filters">
+        <span class="sidebar-tags-title">Filter by tag</span>
+        <button type="button" class="tag-active-clear" id="vault-tags-active" hidden></button>
+        <span class="codicon codicon-close sidebar-tags-x" aria-hidden="true"></span>
+      </div>
+      <div class="chip-row tag-chip-row" id="vault-tags-list" hidden></div>
+    </div>
+  </aside>
+
+  <!-- Drag handle between the vault sidebar and the editor area. Drag to
+       resize (clamped so the "Vaults" title always fits); double-click to
+       reset to the default width. -->
+  <div class="sidebar-resizer" id="sidebar-resizer" role="separator"
+       aria-orientation="vertical" tabindex="0"
+       aria-label="Resize vault sidebar"
+       title="Drag to resize · double-click to reset width"></div>
+
+  <main class="main">
+    <div class="tabstrip">
+      <div class="tabs" role="tablist">
+        <span class="tab active" id="active-view-tab">
+          <span class="codicon codicon-home" id="active-view-icon"></span>
+          <span id="active-view-label">Home</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="panels">
+
       <section id="tab-home" class="tab-panel active">
         <div class="toolbar landing-toolbar">
           <span class="landing-title">Vaults</span>
           <span id="landing-count" class="muted small"></span>
           <div class="spacer"></div>
-          <button id="btn-landing-refresh" class="btn btn-sm"
-                  title="Reload vault summaries">↻</button>
+          <button id="btn-landing-refresh" class="icon-btn"
+                  title="Reload vault summaries"><span class="codicon codicon-refresh"></span></button>
         </div>
-        <div id="landing-grid" class="landing-grid">
+        <div id="landing-grid" class="card-grid landing-grid">
           <p class="muted" style="padding:16px">Loading vaults…</p>
         </div>
       </section>
 
       <section id="tab-inbox" class="tab-panel">
         <div class="toolbar">
-          <span class="landing-title">📥 Inbox</span>
-          <span id="inbox-count" class="muted"></span>
+          <span class="landing-title">Inbox</span>
+          <span id="inbox-count" class="muted small"></span>
           <div class="spacer"></div>
-          <button id="btn-inbox-mark-all" class="btn btn-sm"
-                  title="Mark every visible page read">Mark all read</button>
-          <button id="btn-inbox-refresh" class="btn btn-sm"
-                  title="Reload recent pages">↻</button>
+          <button id="btn-inbox-mark-all" class="btn secondary btn-sm"
+                  title="Mark every visible page read"><span class="codicon codicon-check-all"></span>Mark all read</button>
+          <button id="btn-inbox-refresh" class="icon-btn"
+                  title="Reload recent pages"><span class="codicon codicon-refresh"></span></button>
         </div>
-        <div id="inbox-filter" class="inbox-filter" role="group"
+        <div id="inbox-filter" class="chip-row inbox-filter" role="group"
              aria-label="Filter by vault" hidden></div>
-        <div id="inbox-grid" class="inbox-grid">
+        <div id="inbox-grid" class="card-grid inbox-grid">
           <p class="muted" style="padding:16px">Loading recent pages…</p>
         </div>
       </section>
 
       <section id="tab-ops" class="tab-panel">
-        <div class="term-tabs" id="term-tabs"></div>
-        <div class="term-frames" id="term-frames"></div>
+        <div class="terminal-panel">
+          <div class="term-header">
+            <span class="panel-title active">Terminal</span>
+            <div class="term-tabs" id="term-tabs"></div>
+          </div>
+          <div class="term-frames" id="term-frames"></div>
+        </div>
       </section>
 
       <section id="tab-wiki" class="tab-panel">
         <div class="toolbar wiki-toolbar">
           <span id="wiki-context" class="vault-context empty">No vault selected</span>
-          <span id="wiki-file" class="muted" style="margin-left:8px;font-size:12px"></span>
+          <span id="wiki-file" class="muted small"></span>
           <div class="spacer"></div>
           <input id="wiki-search" class="wiki-search" type="search"
                  placeholder="Search wiki…" autocomplete="off" spellcheck="false" />
-          <button id="btn-wiki-random" class="btn btn-sm" title="Open a random unread page">Random</button>
-          <button id="btn-wiki-read" class="btn btn-sm" title="Toggle read/unread for this page" hidden>read</button>
-          <button class="btn btn-sm" data-wiki-page="wiki/hot.md" title="Load wiki/hot.md">Hot</button>
-          <button class="btn btn-sm" data-wiki-page="wiki/index.md" title="Load wiki/index.md">Index</button>
-          <button class="btn btn-sm" data-wiki-page="wiki/overview.md" title="Load wiki/overview.md">Overview</button>
-          <button id="btn-wiki-back" class="btn btn-sm" title="Back to previous page" disabled>←</button>
-          <button id="btn-wiki-fwd" class="btn btn-sm" title="Forward" disabled>→</button>
-          <button id="btn-wiki-refresh" class="btn btn-sm" title="Reload current page">↻</button>
+          <button id="btn-wiki-random" class="btn secondary btn-sm" title="Open a random unread page">Random</button>
+          <button id="btn-wiki-read" class="btn secondary btn-sm" title="Toggle read/unread for this page" hidden>read</button>
+          <button class="btn secondary btn-sm" data-wiki-page="wiki/hot.md" title="Load wiki/hot.md">Hot</button>
+          <button class="btn secondary btn-sm" data-wiki-page="wiki/index.md" title="Load wiki/index.md">Index</button>
+          <button class="btn secondary btn-sm" data-wiki-page="wiki/overview.md" title="Load wiki/overview.md">Overview</button>
+          <button id="btn-wiki-back" class="icon-btn" title="Back to previous page" disabled><span class="codicon codicon-arrow-left"></span></button>
+          <button id="btn-wiki-fwd" class="icon-btn" title="Forward" disabled><span class="codicon codicon-arrow-right"></span></button>
+          <button id="btn-wiki-refresh" class="icon-btn" title="Reload current page"><span class="codicon codicon-refresh"></span></button>
         </div>
-        <div class="wiki-layout">
-          <aside class="wiki-tree" id="wiki-tree">
-            <div class="wiki-tree-header">
+        <div class="docs wiki-layout">
+          <aside class="docs-tree wiki-tree" id="wiki-tree">
+            <div class="docs-tree-header">
               <span>Pages</span>
-              <button id="btn-wiki-tree-refresh" class="btn btn-xs" title="Reload tree">↻</button>
+              <button id="btn-wiki-tree-refresh" class="icon-btn" title="Reload tree"><span class="codicon codicon-refresh"></span></button>
             </div>
             <div id="wiki-tree-list">
               <p class="muted" style="padding:8px 12px">Select a vault.</p>
             </div>
           </aside>
-          <div id="wiki-content" class="wiki-body">
+          <div id="wiki-content" class="docs-body markdown-body wiki-body">
             <p class="muted">Select a vault to view its wiki.</p>
           </div>
         </div>
       </section>
 
       <section id="tab-tasks" class="tab-panel">
-        <div id="cron-skip-banner" class="cron-skip-banner" hidden>
+        <div id="cron-skip-banner" class="banner warn cron-skip-banner" hidden>
+          <span class="codicon codicon-warning"></span>
           <span id="cron-skip-text"></span>
-          <button class="btn btn-xs" id="cron-skip-dismiss">Dismiss</button>
+          <div class="spacer"></div>
+          <button class="btn secondary btn-xs" id="cron-skip-dismiss">Dismiss</button>
         </div>
 
         <div class="task-trigger" id="task-trigger">
@@ -228,7 +309,7 @@
                          title="Read your Claude session/weekly usage limits right before and right after this task runs, and show both (plus the delta) on the task.">
                     <input type="checkbox" id="t-check-limits"> check limits
                   </label>
-                  <button id="btn-task-run" class="btn btn-accent">Run task</button>
+                  <button id="btn-task-run" class="btn"><span class="codicon codicon-play"></span>Run task</button>
                 </div>
               </div>
             </div>
@@ -250,8 +331,8 @@
               <option value="all">all</option>
             </select>
             <div class="spacer"></div>
-            <button id="btn-task-clean" class="btn btn-sm" title="Archive all finished tasks (completed/failed/cancelled/interrupted) so they drop out of the queue. Kept in the log.">Clean finished</button>
-            <button id="btn-task-compact" class="btn btn-sm" title="Compact tasks.jsonl (snapshot terminal-state tasks &gt; 90 days old)">Compact log</button>
+            <button id="btn-task-clean" class="btn secondary btn-sm" title="Archive all finished tasks (completed/failed/cancelled/interrupted) so they drop out of the queue. Kept in the log."><span class="codicon codicon-clear-all"></span>Clean finished</button>
+            <button id="btn-task-compact" class="btn secondary btn-sm" title="Compact tasks.jsonl (snapshot terminal-state tasks &gt; 90 days old)"><span class="codicon codicon-archive"></span>Compact log</button>
           </div>
           <div id="task-list" class="task-list"></div>
         </div>
@@ -267,11 +348,11 @@
           </select>
           <div class="spacer"></div>
           <div class="cfg-mode-switch" title="Form: guided settings editor. YAML: raw file editor (preserves comments).">
-            <button id="btn-cfg-form" class="btn btn-xs active">Form</button>
-            <button id="btn-cfg-yaml" class="btn btn-xs">YAML</button>
+            <button id="btn-cfg-form" class="btn secondary btn-xs active">Form</button>
+            <button id="btn-cfg-yaml" class="btn secondary btn-xs">YAML</button>
           </div>
-          <button id="btn-config-save" class="btn btn-sm btn-success" disabled>Save</button>
-          <span id="config-status" class="muted"></span>
+          <button id="btn-config-save" class="btn btn-sm btn-success" disabled><span class="codicon codicon-save"></span>Save</button>
+          <span id="config-status" class="muted small"></span>
         </div>
         <div id="cfg-layout" class="cfg-layout">
           <nav id="cfg-nav" class="cfg-nav" aria-label="Settings sections"></nav>
@@ -282,10 +363,11 @@
 
       <section id="tab-windows" class="tab-panel">
         <div class="toolbar">
-          <span class="landing-title">⊞ Windows</span>
+          <span class="landing-title">Windows</span>
           <span class="muted small">window management · automation · usage statistics</span>
           <div class="spacer"></div>
-          <button id="btn-windows-refresh" class="btn btn-sm" title="Reload window state &amp; stats">↻</button>
+          <button id="btn-windows-refresh" class="icon-btn"
+                  title="Reload window state &amp; stats"><span class="codicon codicon-refresh"></span></button>
         </div>
         <div id="windows-root" class="windows-layout">
           <p class="muted" style="padding:16px">Loading window management…</p>
@@ -293,67 +375,70 @@
       </section>
 
       <section id="tab-help" class="tab-panel">
-        <div class="help-layout">
-          <aside class="help-tree" id="help-tree">
-            <div class="help-tree-header">
+        <div class="docs help-layout">
+          <aside class="docs-tree help-tree" id="help-tree">
+            <div class="docs-tree-header">
               <span>Help</span>
-              <button id="btn-help-refresh" class="btn btn-xs" title="Reload tree">↻</button>
+              <button id="btn-help-refresh" class="icon-btn" title="Reload tree"><span class="codicon codicon-refresh"></span></button>
             </div>
             <div id="help-tree-list"></div>
           </aside>
-          <div class="help-content wiki-body" id="help-content">
+          <div class="docs-body markdown-body wiki-body help-content" id="help-content">
             <p class="muted">Loading help…</p>
           </div>
         </div>
       </section>
-    </main>
-  </div>
+    </div>
+  </main>
+</div>
 
-  <footer class="status-bar" id="status-bar">
-    <!-- Two usage meters: the local window (green) and the weekly cycle (blue).
-         Bar fill + the number INSIDE the bar = time elapsed; the number AFTER
-         the bar = the usage limit used (session / weekly), or ? until synced. -->
+<!-- ============================== Status bar ============================== -->
+<footer class="statusbar" id="status-bar">
+  <div class="statusbar-side" id="status-left">
+    <span class="statusbar-item remote" id="win-state-item" role="button" tabindex="0"
+          title="Window gate state (green = active window, red = ended) · click to show/hide the vault list">
+      <span class="codicon codicon-remote"></span><span>resman</span>
+    </span>
+    <!-- Two usage meters: the local window (green) and the weekly cycle
+         (blue). The bar fill still shows time elapsed; the bold number after
+         it = the usage limit used (session / weekly), or ? until synced. -->
     <span class="meter meter-window" id="meter-window" title="Current window">
       <span class="meter-label" id="window-meter-label">Window</span>
-      <span class="meter-bar">
-        <span class="meter-fill" id="window-bar-fill"></span>
-        <span class="meter-inside" id="window-time">—</span>
-      </span>
+      <span class="meter-track"><span class="meter-fill" id="window-bar-fill"></span></span>
       <span class="meter-after" id="window-limit" title="Session limit used">?</span>
       <span class="meter-reset" id="window-reset" title="When the current window ends"></span>
     </span>
-    <span class="status-sep" aria-hidden="true">|</span>
     <span class="meter meter-week" id="meter-week" title="Weekly cycle">
       <span class="meter-label">Week</span>
-      <span class="meter-bar">
-        <span class="meter-fill" id="weekly-bar-fill"></span>
-        <span class="meter-inside" id="weekly-time">—</span>
-      </span>
+      <span class="meter-track"><span class="meter-fill" id="weekly-bar-fill"></span></span>
       <span class="meter-after" id="weekly-limit" title="Weekly limit used">?</span>
       <span class="meter-reset" id="weekly-reset" title="When the weekly limit resets"></span>
     </span>
-    <button type="button" class="meter-sync" id="btn-window-sync"
-            title="Sync — fetch session/weekly usage from claude.ai">⟳</button>
-    <div class="spacer"></div>
-    <button type="button" class="status-log-btn" id="btn-activity-log"
-            title="Show the activity log">
-      <span class="log-dot" id="activity-log-dot" hidden></span>📋 Log
+    <button type="button" class="statusbar-item" id="btn-window-sync"
+            title="Sync — fetch session/weekly usage from claude.ai">
+      <span class="codicon codicon-sync"></span>
     </button>
-  </footer>
-</div>
+  </div>
+  <div class="statusbar-side" id="status-right">
+    <button type="button" class="statusbar-item" id="btn-activity-log"
+            title="Show the activity log">
+      <span class="log-dot" id="activity-log-dot" hidden></span>
+      <span class="codicon codicon-output"></span><span>Log</span>
+    </button>
+  </div>
+</footer>
 
-<!-- Modal -->
+<!-- ============================== Modal ============================== -->
 <div class="modal-backdrop" id="modal-backdrop" hidden>
-  <div class="modal" id="modal">
-    <header>
-      <h3 id="modal-title"></h3>
-      <button class="close" id="modal-close">×</button>
-    </header>
-    <div id="modal-body"></div>
-    <footer id="modal-footer"></footer>
+  <div class="modal" id="modal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title"></span>
+      <button class="icon-btn" id="modal-close" title="Close" aria-label="Close"><span class="codicon codicon-close"></span></button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
   </div>
 </div>
 
-<script src="/static/js/app.js"></script>
 </body>
 </html>

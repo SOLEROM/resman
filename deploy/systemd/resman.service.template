@@ -1,5 +1,5 @@
 [Unit]
-Description=Resman resource manager (port 5090)
+Description=Resman resource manager
 After=network.target
 
 [Service]

@@ -783,12 +783,19 @@ def spawn_session():
             repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
             repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
         )
+    # Optional GUI theme id — picks the xterm palette ttyd applies at
+    # creation (see session_manager.TERMINAL_THEMES). Unknown ids fall
+    # back to dark server-side.
+    theme = body.get("theme")
+    if theme is not None and not isinstance(theme, str):
+        theme = None
     try:
         s = sm.spawn(
             vault=v.name, vault_path=v.path, session_type=session_type,
             claude_cmd=_ctx()["config"].app.get("claude_cmd", "claude"),
             initial_command=initial_command,
             initial_text=initial_text,
+            theme=theme,
         )
     except Exception as exc:
         log.exception("spawn session failed")
@@ -931,11 +938,16 @@ def attend_task(tid):
     sm = ctx["session_manager"]
     if not sm.available:
         return jsonify({"error": "ttyd not installed"}), 503
+    body = request.get_json(force=True, silent=True) or {}
+    theme = body.get("theme")
+    if theme is not None and not isinstance(theme, str):
+        theme = None
     try:
         s = sm.spawn(
             vault=v.name, vault_path=v.path, session_type="claude",
             claude_cmd=ctx["config"].app.get("claude_cmd", "claude"),
             initial_text=prompt,
+            theme=theme,
         )
     except Exception as exc:
         log.exception("attend session spawn failed")

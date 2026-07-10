@@ -1,0 +1,47 @@
+{
+  "_comment": "xterm.js theme objects matching each GUI theme. Pass to ttyd via --client-option theme=<json> when creating a terminal session (frontStackView.md §7.1: the terminal interior cannot be styled by app CSS). ANSI values are the VS Code terminal defaults.",
+  "dark": {
+    "background": "#1f1f1f", "foreground": "#cccccc",
+    "cursor": "#cccccc", "selectionBackground": "#264f78",
+    "black": "#000000", "red": "#cd3131", "green": "#0dbc79",
+    "yellow": "#e5e510", "blue": "#2472c8", "magenta": "#bc3fbc",
+    "cyan": "#11a8cd", "white": "#e5e5e5", "brightBlack": "#666666",
+    "brightRed": "#f14c4c", "brightGreen": "#23d18b",
+    "brightYellow": "#f5f543", "brightBlue": "#3b8eea",
+    "brightMagenta": "#d670d6", "brightCyan": "#29b8db",
+    "brightWhite": "#e5e5e5"
+  },
+  "light": {
+    "background": "#ffffff", "foreground": "#3b3b3b",
+    "cursor": "#005fb8", "selectionBackground": "#add6ff",
+    "black": "#000000", "red": "#cd3131", "green": "#00bc00",
+    "yellow": "#949800", "blue": "#0451a5", "magenta": "#bc05bc",
+    "cyan": "#0598bc", "white": "#555555", "brightBlack": "#666666",
+    "brightRed": "#cd3131", "brightGreen": "#14ce14",
+    "brightYellow": "#b5ba00", "brightBlue": "#0451a5",
+    "brightMagenta": "#bc05bc", "brightCyan": "#0598bc",
+    "brightWhite": "#a5a5a5"
+  },
+  "hc": {
+    "background": "#000000", "foreground": "#ffffff",
+    "cursor": "#f38518", "selectionBackground": "#008000",
+    "black": "#000000", "red": "#f14c4c", "green": "#23d18b",
+    "yellow": "#f5f543", "blue": "#3b8eea", "magenta": "#d670d6",
+    "cyan": "#29b8db", "white": "#ffffff", "brightBlack": "#a5a5a5",
+    "brightRed": "#f14c4c", "brightGreen": "#23d18b",
+    "brightYellow": "#f5f543", "brightBlue": "#3b8eea",
+    "brightMagenta": "#d670d6", "brightCyan": "#29b8db",
+    "brightWhite": "#ffffff"
+  },
+  "green": {
+    "background": "#0a0f0c", "foreground": "#d6e8da",
+    "cursor": "#36c97a", "selectionBackground": "#123524",
+    "black": "#060907", "red": "#ff6b66", "green": "#36c97a",
+    "yellow": "#e9b97a", "blue": "#45d8e0", "magenta": "#b3a4ff",
+    "cyan": "#45d8e0", "white": "#d6e8da", "brightBlack": "#4d5e51",
+    "brightRed": "#ff8a85", "brightGreen": "#5ce99a",
+    "brightYellow": "#f0cfa0", "brightBlue": "#6fe3ea",
+    "brightMagenta": "#c9bcff", "brightCyan": "#6fe3ea",
+    "brightWhite": "#eafff0"
+  }
+}

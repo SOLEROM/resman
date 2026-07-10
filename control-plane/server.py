@@ -52,6 +52,62 @@ log = logging.getLogger("resman")
 RESMAN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = RESMAN_ROOT / "config"
 
+# Fallback port when nothing else specifies one (no --port, no .port file, no
+# `app.port` in resman.yaml).
+DEFAULT_PORT = 5090
+# Optional project-local default: a `.port` file at the repo root holding a
+# single line with the port number. Lets an operator pin the listen port for
+# both `run.sh` and the systemd service without editing YAML or the unit file.
+PORT_FILE = RESMAN_ROOT / ".port"
+
+
+def _read_port_file(path: Path = PORT_FILE) -> "int | None":
+    """Return the port declared in the `.port` file, or None if unusable.
+
+    The file is expected to hold a single line with the port number; blank
+    lines are skipped and the first non-empty line is used. Any problem
+    (missing file, unreadable, non-numeric, out of the 1–65535 range) is
+    treated as "not set" and logged rather than raised — a malformed override
+    must never stop the server from starting.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        log.warning("ignoring .port file at %s — could not read it: %s", path, exc)
+        return None
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    if not line:
+        return None
+    try:
+        port = int(line)
+    except ValueError:
+        log.warning("ignoring .port file at %s — %r is not a number", path, line)
+        return None
+    if not (1 <= port <= 65535):
+        log.warning("ignoring .port file at %s — %d is out of range 1–65535", path, port)
+        return None
+    return port
+
+
+def _resolve_port(
+    config: ConfigManager,
+    cli_port: "int | None" = None,
+    port_file: Path = PORT_FILE,
+) -> int:
+    """Resolve the effective listen port from all sources, most specific first.
+
+    Precedence: explicit --port on the command line › the `.port` file ›
+    `app.port` in resman.yaml › DEFAULT_PORT.
+    """
+    if cli_port is not None:
+        return cli_port
+    file_port = _read_port_file(port_file)
+    if file_port is not None:
+        return file_port
+    return int(config.app.get("port", DEFAULT_PORT))
+
 
 def _print_startup_report(report: dict) -> None:
     sys.stdout.write("\nresman starting...\n")
@@ -82,8 +138,13 @@ def build_app(
     *,
     async_mode: str = "eventlet",
     public: bool = False,
+    port: "int | None" = None,
 ) -> tuple[Flask, SocketIO, dict]:
     """Compose the Flask app + Socket.IO + module instances.
+
+    ``port`` is the explicit --port override (None when unset); the effective
+    port is resolved via :func:`_resolve_port` and exposed as ``ctx["port"]`` so
+    the caller binds to the same value used for CORS and the startup report.
 
     Returns (app, socketio, ctx). ctx is the dict of module instances; tests
     use it directly without going through Flask.
@@ -93,6 +154,7 @@ def build_app(
 
     config = ConfigManager(config_dir, bus)
     config.load()
+    resolved_port = _resolve_port(config, port)
 
     tmux = TmuxManager(
         socket=config.app.get("tmux_socket", "resman"),
@@ -192,7 +254,7 @@ def build_app(
         static_url_path="/static",
     )
 
-    cors_origins = "*" if public else [f"http://127.0.0.1:{config.app.get('port', 5090)}"]
+    cors_origins = "*" if public else [f"http://127.0.0.1:{resolved_port}"]
     socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode=async_mode)
 
     ctx = {
@@ -212,6 +274,7 @@ def build_app(
         "bus": bus,
         "socketio": socketio,
         "resman_root": RESMAN_ROOT,
+        "port": resolved_port,
     }
     app.config["RESMAN"] = ctx
 
@@ -222,15 +285,14 @@ def build_app(
     app.register_blueprint(api_bp)
     attach_socketio(socketio, bus)
 
-    port = config.app.get("port", 5090)
     if public:
         lan_ip = _discover_lan_ip()
-        server_line = f"http://0.0.0.0:{port}"
+        server_line = f"http://0.0.0.0:{resolved_port}"
         if lan_ip:
-            server_line += f"  (LAN: http://{lan_ip}:{port})"
+            server_line += f"  (LAN: http://{lan_ip}:{resolved_port})"
         server_line += "  [PUBLIC — exposed on local network]"
     else:
-        server_line = f"http://{config.app.get('host', '127.0.0.1')}:{port}"
+        server_line = f"http://{config.app.get('host', '127.0.0.1')}:{resolved_port}"
     active_mounts = mount_manager.status()
     mounts_with = sum(1 for v in config.vaults if v.get("mount"))
     if mounts_with:
@@ -258,7 +320,8 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="resman — research vault manager")
     parser.add_argument("--config-dir", type=str, default=str(CONFIG_DIR))
-    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--port", type=int, default=None,
+                        help="Listen port (overrides the .port file and resman.yaml).")
     parser.add_argument("--host", type=str, default=None,
                         help="Interface to bind (overrides resman.yaml). Use 0.0.0.0 for LAN.")
     parser.add_argument("--public", action="store_true",
@@ -268,7 +331,9 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        app, socketio, ctx = build_app(Path(args.config_dir), public=args.public)
+        app, socketio, ctx = build_app(
+            Path(args.config_dir), public=args.public, port=args.port,
+        )
     except ConfigError as exc:
         sys.stderr.write(f"\nFATAL: {exc}\n")
         return 2
@@ -286,8 +351,7 @@ def main() -> int:
         host = "0.0.0.0"
     else:
         host = config.app.get("host", "127.0.0.1")
-    port = args.port or config.app.get("port", 5090)
-    socketio.run(app, host=host, port=port, allow_unsafe_werkzeug=True)
+    socketio.run(app, host=host, port=ctx["port"], allow_unsafe_werkzeug=True)
     return 0
 
 

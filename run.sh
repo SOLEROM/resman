@@ -13,6 +13,11 @@
 #                                     # on a trusted network.)
 # Any remaining args are forwarded to control-plane/server.py
 # (e.g. --port 5099, --host 0.0.0.0, --no-scheduler).
+#
+# Port selection (most specific wins): --port ARG > a .port file at the repo
+# root (one line, just the number) > app.port in resman.yaml > 5090. Drop a
+# .port file here to pin the port for both ./run.sh and the systemd service
+# without editing YAML or the unit file.
 
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
