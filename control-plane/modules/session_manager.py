@@ -48,8 +48,9 @@ def _load_terminal_themes() -> Dict[str, dict]:
 
 
 TERMINAL_THEMES: Dict[str, dict] = _load_terminal_themes()
-# VS Code Linux terminal font stack (matches --vsc-font-mono in the CSS kit).
-TERMINAL_FONT_FAMILY = "Droid Sans Mono,Consolas,Ubuntu Mono,monospace"
+# Symbola trails the mono fonts to cover the TUI glyphs Claude Code draws with
+# (U+23FA, U+23BF, U+23F5); no other font on a stock Ubuntu box has them.
+TERMINAL_FONT_FAMILY = "JetBrains Mono,DejaVu Sans Mono,Symbola,monospace"
 TERMINAL_FONT_SIZE = 13
 
 
