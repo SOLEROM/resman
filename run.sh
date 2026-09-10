@@ -30,6 +30,13 @@ cd "$ROOT"
 # so this is belt-and-suspenders for anything else the server spawns.
 [[ -d "$HOME/.bun/bin" ]] && export PATH="$HOME/.bun/bin:$PATH"
 
+# Same story for ~/.local/bin, where the native `claude` installer puts the CLI.
+# Task operations (autoresearch, lint, canvas, ...) and tools/ingest.sh spawn
+# `claude`; with systemd's bare PATH they fail with exit 127 "executable not
+# found". task_manager also resolves the binary directly (claude_usage.find_claude),
+# so this covers the shell scripts and tmux sessions the server starts.
+[[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
+
 VNAME=""
 USER_PROVIDED_VENV=0
 FORWARD=()

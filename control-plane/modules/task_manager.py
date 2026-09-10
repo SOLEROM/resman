@@ -29,9 +29,22 @@ from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 from . import plugin_commands
+from .claude_usage import find_claude
 from .event_bus import EventBus, get_bus
 
 log = logging.getLogger(__name__)
+
+
+def _claude_exe() -> str:
+    """Absolute path to the ``claude`` CLI, or the bare name as a last resort.
+
+    The server usually runs under ``systemd --user``, whose PATH lacks
+    ``~/.local/bin`` — where the native installer puts claude. Popen would then
+    raise FileNotFoundError and every claude-backed operation fails with exit
+    127. find_claude() (shared with claude_usage) checks the override env vars,
+    PATH, then the known install locations. Falling back to "claude" keeps the
+    old behaviour (and the old error message) when nothing resolves."""
+    return find_claude() or "claude"
 
 PRIORITIES = ("high", "medium", "low")
 STATES = (
@@ -967,25 +980,25 @@ class TaskManager:
                 cmd.append("--can")
             return cmd, vault_path
         if op == "wiki-lint":
-            return ["claude", "-p", plugin_commands.WIKI_LINT, "--dangerously-skip-permissions"], vault_path
+            return [_claude_exe(), "-p", plugin_commands.WIKI_LINT, "--dangerously-skip-permissions"], vault_path
         if op == "wiki-autoresearch":
             return [
-                "claude", "-p", plugin_commands.autoresearch_prompt(params["topic"]),
+                _claude_exe(), "-p", plugin_commands.autoresearch_prompt(params["topic"]),
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-canvas":
             return [
-                "claude", "-p", plugin_commands.canvas_prompt(params.get("description", "")),
+                _claude_exe(), "-p", plugin_commands.canvas_prompt(params.get("description", "")),
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-update-hot-cache":
             return [
-                "claude", "-p", plugin_commands.WIKI_UPDATE_HOT_CACHE,
+                _claude_exe(), "-p", plugin_commands.WIKI_UPDATE_HOT_CACHE,
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-hint":
             return [
-                "claude", "-p", plugin_commands.WIKI_HINT,
+                _claude_exe(), "-p", plugin_commands.WIKI_HINT,
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-bootstrap":
@@ -995,12 +1008,12 @@ class TaskManager:
                 repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
             )
             return [
-                "claude", "-p", prompt,
+                _claude_exe(), "-p", prompt,
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "run-prompt":
             return [
-                "claude", "-p", params["prompt"], "--dangerously-skip-permissions",
+                _claude_exe(), "-p", params["prompt"], "--dangerously-skip-permissions",
             ], vault_path
         if op == "run-shell":
             cmd_parts = list(params["cmd_parts"])

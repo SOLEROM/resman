@@ -172,7 +172,7 @@ def test_create_task_with_csrf(tmp_path):
     body = rv.get_json()
     assert body["state"] == "completed"
     # runner saw a claude command
-    assert runner_calls and runner_calls[0][0][0] == "claude"
+    assert runner_calls and Path(runner_calls[0][0][0]).name == "claude"
 
 
 def test_create_task_validates(tmp_path):

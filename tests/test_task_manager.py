@@ -343,7 +343,9 @@ def test_wiki_bootstrap_runs_claude_with_correct_command(tmp_path):
     assert t.state == "completed"
     assert len(runner_calls) == 1
     call = runner_calls[0]
-    assert call["cmd"][0] == "claude"
+    # _claude_exe() resolves an absolute path when one is found; the CLI
+    # identity is what matters here, not how it was located.
+    assert Path(call["cmd"][0]).name == "claude"
     assert "-p" in call["cmd"]
     p_idx = call["cmd"].index("-p")
     prompt = call["cmd"][p_idx + 1]
@@ -410,7 +412,7 @@ def test_wiki_hint_runs_claude_with_correct_command(tmp_path):
     assert t.state == "completed"
     assert len(runner_calls) == 1
     cmd = runner_calls[0]["cmd"]
-    assert cmd[0] == "claude"
+    assert Path(cmd[0]).name == "claude"
     assert "-p" in cmd
     prompt = cmd[cmd.index("-p") + 1]
     assert "wiki/hint.json" in prompt
@@ -451,7 +453,7 @@ def test_wiki_canvas_runs_claude_with_correct_command(tmp_path):
     assert t.state == "completed"
     assert len(runner_calls) == 1
     cmd = runner_calls[0]["cmd"]
-    assert cmd[0] == "claude"
+    assert Path(cmd[0]).name == "claude"
     assert "-p" in cmd
     assert any(
         s.startswith("/claude-obsidian:canvas ") and "map all ideas" in s
