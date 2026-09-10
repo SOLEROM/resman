@@ -1578,6 +1578,17 @@ state.wikiTreeMissing = false;
 // Vault-relative paths (e.g. "wiki/concepts/gguf.md") that are currently
 // unread, derived from the tree response. Drives the tree dots + read toggle.
 state.wikiUnread = new Set();
+// Vault-relative paths listed in <vault>/.favorites.md, derived from the tree
+// response (each file node carries a `favorite` flag) and refreshed by every
+// favorites API call. Drives the tree ★ marks + the ☆/★ toggle.
+state.wikiFavorites = new Set();
+// Pseudo-page: loadWiki(WIKI_FAVORITES) renders the favorites list instead of
+// fetching raw markdown, so the list takes part in history / refresh like any
+// other page. The name matches the on-disk file so #wiki-file reads naturally.
+const WIKI_FAVORITES = ".favorites.md";
+// True after the current page failed to load (404) — hides the ☆ toggle since
+// the server refuses to favorite a page that doesn't exist.
+state.wikiPageMissing = false;
 
 // Browser-style back/forward history of visited pages, scoped to the current
 // vault (reset on vault switch). wikiHistory is the ordered list of files;
@@ -1679,9 +1690,21 @@ function renderWikiTree() {
       No <code>wiki/</code> directory yet.</p>`;
     return;
   }
+  // Pinned first row: the favorites list (<vault>/.favorites.md). Rendered as
+  // a .wiki-file so it shares the label styling, active highlight and the
+  // click binding below (data-path → loadWiki(".favorites.md")).
+  const favCount = state.wikiFavorites.size;
+  const pinned = `<ul class="wiki-pinned">
+    <li class="wiki-file wiki-pinned-fav ${state.wikiFile === WIKI_FAVORITES ? "active" : ""}">
+      <span class="wiki-tree-label" data-path="${esc(WIKI_FAVORITES)}" title="${esc(WIKI_FAVORITES)}"
+            ><span class="wiki-unread-dot" aria-hidden="true"></span>★ Favorites${
+              favCount ? `<span class="wiki-fav-count">${favCount}</span>` : ""}</span>
+    </li>
+  </ul>`;
   const tree = state.wikiTree;
   if (!tree || !tree.length) {
-    root.innerHTML = `<p class="muted" style="padding:8px 12px">Empty.</p>`;
+    root.innerHTML = pinned + `<p class="muted" style="padding:8px 12px">Empty.</p>`;
+    bindWikiTreeClicks(root);
     return;
   }
   const fileUnread = (n) => state.wikiUnread.has(n.path);
@@ -1707,19 +1730,24 @@ function renderWikiTree() {
       const label = n.name.replace(/\.md$/, "");
       const isActive = n.path === state.wikiFile;
       const unread = fileUnread(n) ? "unread" : "";
-      return `<li class="wiki-file ${isActive ? "active" : ""} ${unread}">
+      const fav = state.wikiFavorites.has(n.path) ? "fav" : "";
+      return `<li class="wiki-file ${isActive ? "active" : ""} ${unread} ${fav}">
         <span class="wiki-tree-label" data-path="${esc(n.path)}" title="${esc(n.path)}"
-              ><span class="wiki-unread-dot" aria-hidden="true"></span>${esc(label)}</span>
+              ><span class="wiki-unread-dot" aria-hidden="true"></span>${esc(label)}<span class="wiki-fav-mark" aria-hidden="true">★</span></span>
       </li>`;
     }).join("") + `</ul>`;
   };
-  root.innerHTML = renderNodes(tree);
-  root.querySelectorAll(".wiki-file > .wiki-tree-label").forEach((el) => {
-    el.addEventListener("click", () => loadWiki(el.dataset.path));
-  });
+  root.innerHTML = pinned + renderNodes(tree);
+  bindWikiTreeClicks(root);
   // Keep the selected page visible in the sidebar after a jump.
   const activeEl = root.querySelector(".wiki-file.active");
   if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+}
+
+function bindWikiTreeClicks(root) {
+  root.querySelectorAll(".wiki-file > .wiki-tree-label").forEach((el) => {
+    el.addEventListener("click", () => loadWiki(el.dataset.path));
+  });
 }
 
 async function loadWikiTree() {
@@ -1734,16 +1762,19 @@ async function loadWikiTree() {
     state.wikiTree = data.tree || [];
     state.wikiTreeMissing = !!data.missing;
     rebuildWikiUnread();
+    rebuildWikiFavorites();
   } catch (err) {
     state.wikiTree = [];
     state.wikiTreeMissing = false;
     state.wikiUnread = new Set();
+    state.wikiFavorites = new Set();
     const root = $("#wiki-tree-list");
     if (root) root.innerHTML = `<p class="wiki-error" style="padding:8px 12px">${esc(err.message)}</p>`;
     return;
   }
   renderWikiTree();
   updateReadToggle();
+  updateFavToggle();
 }
 
 // Recompute the unread set from the cached tree (each file node carries an
@@ -1756,6 +1787,18 @@ function rebuildWikiUnread() {
   });
   walk(state.wikiTree || []);
   state.wikiUnread = set;
+}
+
+// Same for favorites (each file node carries a `favorite` flag read from
+// <vault>/.favorites.md when the tree was built).
+function rebuildWikiFavorites() {
+  const set = new Set();
+  const walk = (nodes) => (nodes || []).forEach((n) => {
+    if (n.type === "file") { if (n.favorite) set.add(n.path); }
+    else if (n.children) walk(n.children);
+  });
+  walk(state.wikiTree || []);
+  state.wikiFavorites = set;
 }
 
 // Record a freshly-navigated page onto the history stack. No-op reloads (the
@@ -1812,14 +1855,22 @@ async function loadWiki(file, opts = {}) {
   }
   if (fileEl) fileEl.textContent = state.wikiFile;
   root.innerHTML = `<p class="muted">Loading…</p>`;
+  state.wikiPageMissing = false;
   renderWikiTree();
   updateReadToggle();
+  updateFavToggle();
+  if (state.wikiFile === WIKI_FAVORITES) {
+    await renderWikiFavoritesView(root);
+    return;
+  }
   const url = "/api/vaults/" + encodeURIComponent(state.selectedVault)
             + "/wiki?file=" + encodeURIComponent(state.wikiFile);
   let data;
   try {
     data = await api(url);
   } catch (err) {
+    state.wikiPageMissing = err.status === 404;
+    updateFavToggle();
     // Distinguish "no wiki yet" (404 on default home) from other errors so the
     // user is nudged toward generating one rather than chasing a bug.
     if (state.wikiFile === WIKI_HOME && /not found/i.test(err.message)) {
@@ -1847,7 +1898,8 @@ async function loadWiki(file, opts = {}) {
 function updateReadToggle() {
   const btn = $("#btn-wiki-read");
   if (!btn) return;
-  if (!state.selectedVault || !state.wikiFile || state.wikiTreeMissing) {
+  if (!state.selectedVault || !state.wikiFile || state.wikiTreeMissing
+      || state.wikiFile === WIKI_FAVORITES) {
     btn.hidden = true;
     return;
   }
@@ -1875,6 +1927,102 @@ async function toggleReadCurrent() {
   } catch (err) {
     alert("Could not update read state: " + (err.body?.error || err.message));
   }
+}
+
+// ----- wiki favorites (<vault>/.favorites.md) -----
+// The ☆/★ button next to Mark read. Hidden on the favorites list itself and
+// on a page that failed to load (the server refuses to favorite a missing page).
+function updateFavToggle() {
+  const btn = $("#btn-wiki-fav");
+  if (!btn) return;
+  if (!state.selectedVault || !state.wikiFile || state.wikiTreeMissing
+      || state.wikiFile === WIKI_FAVORITES || state.wikiPageMissing) {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  const fav = state.wikiFavorites.has(state.wikiFile);
+  btn.textContent = fav ? "★ Favorited" : "☆ Favorite";
+  btn.title = fav ? "Remove this page from " + WIKI_FAVORITES
+                  : "Add this page to " + WIKI_FAVORITES;
+  btn.classList.toggle("is-fav", fav);
+}
+
+// Add (want=true) or remove (want=false) one page; the server answers with the
+// full list, which replaces the cached set so tree marks + toggle stay exact.
+// Returns the entries ([{file, title, exists}]) or null on failure (alerted).
+async function setFavorite(file, want) {
+  if (!state.selectedVault || !file) return null;
+  try {
+    const r = await api("/api/vaults/" + encodeURIComponent(state.selectedVault) + "/wiki/favorites", {
+      method: "POST",
+      body: JSON.stringify({ file, favorite: !!want }),
+    });
+    state.wikiFavorites = new Set((r.favorites || []).map((f) => f.file));
+    renderWikiTree();
+    updateFavToggle();
+    return r.favorites || [];
+  } catch (err) {
+    alert("Could not update favorites: " + (err.body?.error || err.message));
+    return null;
+  }
+}
+
+function toggleFavoriteCurrent() {
+  if (!state.selectedVault || !state.wikiFile || state.wikiFile === WIKI_FAVORITES) return;
+  return setFavorite(state.wikiFile, !state.wikiFavorites.has(state.wikiFile));
+}
+
+// Render the favorites list into the content pane. Each entry is a link
+// (data-wiki-file = exact vault-relative path, handled by the delegated
+// #wiki-content click handler) plus a ✕ that removes it in place. Dangling
+// entries (page deleted/renamed) stay visible, struck through, so the user
+// can spot and clean them.
+async function renderWikiFavoritesView(root) {
+  if (!root) return;
+  let data;
+  try {
+    data = await api("/api/vaults/" + encodeURIComponent(state.selectedVault) + "/wiki/favorites");
+  } catch (err) {
+    root.innerHTML = `<div class="wiki-error">${esc(err.message)}</div>`;
+    return;
+  }
+  const entries = data.favorites || [];
+  state.wikiFavorites = new Set(entries.map((f) => f.file));
+  renderWikiTree();
+  if (!entries.length) {
+    root.innerHTML = `
+      <div class="wiki-empty">
+        <p>No favorites yet.</p>
+        <p class="muted">Open a page and click <b>☆ Favorite</b>, or list pages in
+        <code>${esc(data.file || WIKI_FAVORITES)}</code> at the vault root — one per
+        line, e.g. <code>wiki/concepts/gguf.md</code> or <code>[[wiki/hot|Hot]]</code>.</p>
+      </div>`;
+    return;
+  }
+  root.innerHTML = `
+    <div class="wiki-favorites">
+      <h1>Favorites</h1>
+      <p class="muted small">${entries.length} page${entries.length === 1 ? "" : "s"}
+        listed in <code>${esc(data.file || WIKI_FAVORITES)}</code></p>
+      <ul class="wiki-fav-list">` + entries.map((f) => `
+        <li class="wiki-fav-item ${f.exists ? "" : "missing"}">
+          <a href="#" class="wikilink wiki-fav-link" data-wiki-file="${esc(f.file)}"
+             title="${esc(f.file)}">${esc(f.title || f.file)}</a>
+          <span class="wiki-fav-path">${esc(f.file)}</span>
+          ${f.exists ? "" : `<span class="pill error" title="Page not found on disk">missing</span>`}
+          <button class="icon-btn wiki-fav-remove" data-path="${esc(f.file)}"
+                  title="Remove from favorites">✕</button>
+        </li>`).join("") + `
+      </ul>
+    </div>`;
+  root.querySelectorAll(".wiki-fav-remove").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const ok = await setFavorite(btn.dataset.path, false);
+      if (ok !== null) renderWikiFavoritesView(root);
+    });
+  });
 }
 
 async function loadRandomWiki() {
@@ -3749,6 +3897,8 @@ function setupToolbar() {
   if (btnWikiRandom) btnWikiRandom.addEventListener("click", loadRandomWiki);
   const btnWikiRead = $("#btn-wiki-read");
   if (btnWikiRead) btnWikiRead.addEventListener("click", toggleReadCurrent);
+  const btnWikiFav = $("#btn-wiki-fav");
+  if (btnWikiFav) btnWikiFav.addEventListener("click", toggleFavoriteCurrent);
   const wikiSearch = $("#wiki-search");
   if (wikiSearch) {
     wikiSearch.addEventListener("keydown", (e) => {
@@ -3771,6 +3921,8 @@ function setupToolbar() {
       const a = e.target.closest("a.wikilink");
       if (!a) return;
       e.preventDefault();
+      // Favorites entries carry the exact vault-relative path — no resolution.
+      if (a.dataset.wikiFile) { loadWiki(a.dataset.wikiFile); return; }
       const target = a.dataset.wikiTarget;
       const resolved = resolveWikiTarget(target);
       if (resolved) loadWiki(resolved);

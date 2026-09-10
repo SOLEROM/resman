@@ -65,7 +65,7 @@ resman/
 ├── man/                      # operator manual — rendered live in the Help tab
 ├── deploy/systemd/           # systemd unit + installer
 ├── docs/                     # design spec, remote-agent + plugin reference
-├── tests/                    # pytest suite (427 tests, ~25s)
+├── tests/                    # pytest suite (542 tests, ~25s)
 ├── run.sh                    # launcher
 └── deps.sh                   # dependency installer
 ```
@@ -92,6 +92,8 @@ The suite covers:
 - TmuxManager: integration tests on an isolated socket (skipped when tmux
   is absent)
 - ObsidianPush: priority rule, atomic dir creation, OSError handling
+- WikiFavorites: lenient `.favorites.md` parsing, idempotent add/remove that
+  preserves hand-written lines, atomic writes, favorites endpoints + tree flag
 
 ## Design references
 

@@ -11,13 +11,16 @@ inside each vault. The convention is:
 ```
 
 resman opens `wiki/overview.md` for the currently selected vault when the tab
-is shown. The toolbar exposes search, random, a read toggle, three explicit
-page buttons, plus a reload:
+is shown. The toolbar exposes search, random, a read toggle, a favorite
+toggle, the favorites list, three explicit page buttons, plus a reload:
 
 - **Search wiki…** — type a query and press Enter to search every page
   (titles weigh more than body text). Clearing the box restores the page.
 - **Random** — jump to a random **unread** page (see Read/unread below).
 - **Mark read ✓ / Mark unread** — toggle the open page's read state.
+- **☆ Favorite / ★ Favorited** — add or remove the open page in the vault's
+  favorites file (see Favorites below).
+- **★ Favorites** — open the favorites list: every entry is a link.
 - **Hot** — loads `wiki/hot.md`
 - **Index** — loads `wiki/index.md`
 - **Overview** — loads `wiki/overview.md`
@@ -29,6 +32,9 @@ The Wiki tab has a **left sidebar** listing every markdown page under
 `<vault>/wiki/` (recursively). Click a page to load it — the selected page is
 highlighted with an accent box and scrolled into view. Subdirectories nest
 under their parent. Click the sidebar's **↻** to refresh the tree.
+
+The first row of the tree is always **★ Favorites** (with a count of favorite
+pages) — click it to open the vault's favorites list (see Favorites below).
 
 ## Read / unread
 
@@ -42,15 +48,48 @@ survives the rsync that mirrors wiki pages between machines.
 - New or freshly-synced pages show up as unread automatically.
 - **Random** picks a random unread page so you can chip away at the backlog.
 
+## Favorites
+
+Each vault keeps its favorite pages in **`<vault>/.favorites.md`** — a plain
+markdown file at the vault root (next to `wiki/` and `.obsidian/`), one page
+per line. Favorite pages show a small **★** at the right of their row in the
+sidebar tree.
+
+- **☆ Favorite** appends the open page; **★ Favorited** removes it again.
+  resman writes entries as Obsidian wikilinks with the page title as alias —
+  `- [[wiki/concepts/gguf.md|GGUF]]` — so the file also works as a link list
+  when opened inside Obsidian.
+- **★ Favorites** renders the list in the content pane. Click an entry to open
+  the page (Back returns to the list); the **✕** on a row removes it. An entry
+  whose page no longer exists is struck through and tagged **missing** so you
+  can spot and prune it.
+- **You can edit the file by hand.** Paths are relative to the vault root
+  (`wiki/concepts/gguf.md`); a missing `.md` is assumed. Any of these lines is
+  a favorite, with or without a list bullet:
+
+  ```
+  wiki/concepts/gguf.md
+  - [[wiki/hot|Hot page]]
+  - [Index](wiki/index.md)
+  ```
+
+  Headings, blank lines, `<!-- comments -->` and prose are left alone —
+  removing a favorite from the UI drops only that entry's line and keeps the
+  rest of the file byte-for-byte. Favoriting a page that doesn't exist on disk
+  is refused, as is a page whose name contains `[`, `]`, `|` or `#` (Obsidian
+  can't link those either).
+
 ## API
 
 The browser fetches these endpoints:
 
 ```
-GET  /api/vaults/<name>/wiki/tree            ← sidebar tree (each file has `unread`)
+GET  /api/vaults/<name>/wiki/tree            ← sidebar tree (each file has `unread`, `favorite`)
 GET  /api/vaults/<name>/wiki?file=…          ← a single page's markdown
 POST /api/vaults/<name>/wiki/read            ← { file, read } toggle read/unread
 GET  /api/vaults/<name>/wiki/random          ← a random unread page
+GET  /api/vaults/<name>/wiki/favorites       ← { file, exists, favorites: [{file, title, exists}] }
+POST /api/vaults/<name>/wiki/favorites       ← { file, favorite } add/remove in .favorites.md
 GET  /api/vaults/<name>/wiki/search?q=…      ← ranked search hits
 ```
 

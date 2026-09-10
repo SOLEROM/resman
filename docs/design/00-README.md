@@ -30,6 +30,7 @@ planning iterations preserved in git history.
 | 13 | [13-window-schedule.md](13-window-schedule.md) | cld20-style daily/weekly window schedule, config modal, footer, night-window task scheduling |
 | 14 | [14-wiki-read-unread.md](14-wiki-read-unread.md) | Wiki read/unread markers, reconcile, search ranking, random-unread |
 | 15 | [15-activity-log.md](15-activity-log.md) | Volatile activity log, footer Log window, bus auto-capture, logging bridge |
+| 16 | [16-wiki-favorites.md](16-wiki-favorites.md) | Per-vault `.favorites.md` link list, lenient parser, ☆/★ toggle, favorites view |
 
 ---
 

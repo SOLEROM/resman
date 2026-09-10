@@ -1576,3 +1576,120 @@ def test_config_structured_rejects_unknown_file_and_bad_data(tmp_path):
                      json={"file": "resman.yaml", "data": "not-a-mapping"},
                      headers={"X-Requested-With": "resman"})
     assert rv.status_code == 400
+
+
+# ----- Wiki favorites (<vault>/.favorites.md) -----
+def _csrf():
+    return {"X-Requested-With": "resman"}
+
+
+def test_wiki_favorites_get_empty_when_no_file(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    rv = app.test_client().get("/api/vaults/alpha/wiki/favorites")
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body == {"file": ".favorites.md", "exists": False, "favorites": []}
+
+
+def test_wiki_favorites_add_then_remove_roundtrip(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    client = app.test_client()
+    # Add.
+    rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(),
+                     json={"file": "wiki/concepts/gguf.md", "favorite": True})
+    assert rv.status_code == 200
+    body = rv.get_json()
+    assert body["file"] == "wiki/concepts/gguf.md"
+    assert body["favorite"] is True
+    assert body["favorites"] == [
+        {"file": "wiki/concepts/gguf.md", "title": "GGUF", "exists": True}]
+    # The file landed at the vault root as an Obsidian-style link list.
+    text = (tmp_path / "alpha" / ".favorites.md").read_text()
+    assert "- [[wiki/concepts/gguf.md|GGUF]]" in text
+    # GET reflects it; the tree flags the page.
+    assert client.get("/api/vaults/alpha/wiki/favorites").get_json()["exists"] is True
+    tree = client.get("/api/vaults/alpha/wiki/tree").get_json()["tree"]
+    concepts = next(n for n in tree if n["name"] == "concepts")
+    assert concepts["children"][0]["favorite"] is True
+    assert next(n for n in tree if n["name"] == "overview.md")["favorite"] is False
+    # Remove.
+    rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(),
+                     json={"file": "wiki/concepts/gguf.md", "favorite": False})
+    assert rv.status_code == 200
+    assert rv.get_json()["favorite"] is False
+    assert rv.get_json()["favorites"] == []
+    assert "gguf" not in (tmp_path / "alpha" / ".favorites.md").read_text()
+
+
+def test_wiki_favorites_toggle_is_idempotent(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    client = app.test_client()
+    for _ in range(2):
+        rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(),
+                         json={"file": "wiki/overview.md", "favorite": True})
+        assert rv.status_code == 200 and rv.get_json()["favorite"] is True
+    assert len(rv.get_json()["favorites"]) == 1
+    for _ in range(2):
+        rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(),
+                         json={"file": "wiki/overview.md", "favorite": False})
+        assert rv.status_code == 200 and rv.get_json()["favorite"] is False
+
+
+def test_wiki_favorites_get_parses_hand_written_file(tmp_path):
+    """The user maintains the file by hand too — mixed formats, comments and a
+    dangling entry must all come back in order, with `exists` telling the UI
+    which links are broken."""
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    (tmp_path / "alpha" / ".favorites.md").write_text(
+        "# Favorites\n\n<!-- note -->\n- [[wiki/overview.md|Home]]\n"
+        "- [Missing](wiki/nope.md)\nwiki/concepts/gguf\n- wiki/overview.md\n")
+    body = app.test_client().get("/api/vaults/alpha/wiki/favorites").get_json()
+    assert body["exists"] is True
+    assert body["favorites"] == [
+        {"file": "wiki/overview.md", "title": "Overview", "exists": True},
+        {"file": "wiki/nope.md", "title": "nope", "exists": False},
+        {"file": "wiki/concepts/gguf.md", "title": "GGUF", "exists": True},
+    ]
+
+
+def test_wiki_favorites_post_requires_csrf(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    rv = app.test_client().post("/api/vaults/alpha/wiki/favorites",
+                                json={"file": "wiki/overview.md", "favorite": True})
+    assert rv.status_code == 403
+
+
+def test_wiki_favorites_post_validation(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    _seed_wiki(tmp_path)
+    client = app.test_client()
+    # Missing file.
+    rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(), json={"favorite": True})
+    assert rv.status_code == 400
+    # Traversal.
+    rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(),
+                     json={"file": "../secret.md", "favorite": True})
+    assert rv.status_code == 400
+    # Favoriting a page that doesn't exist is refused (removing one is fine —
+    # that's how a dangling entry gets cleaned up).
+    rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(),
+                     json={"file": "wiki/ghost.md", "favorite": True})
+    assert rv.status_code == 404
+    rv = client.post("/api/vaults/alpha/wiki/favorites", headers=_csrf(),
+                     json={"file": "wiki/ghost.md", "favorite": False})
+    assert rv.status_code == 200
+    assert not (tmp_path / "alpha" / ".favorites.md").exists()
+
+
+def test_wiki_favorites_unknown_vault(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    assert client.get("/api/vaults/ghost/wiki/favorites").status_code == 404
+    rv = client.post("/api/vaults/ghost/wiki/favorites", headers=_csrf(),
+                     json={"file": "wiki/x.md", "favorite": True})
+    assert rv.status_code == 404

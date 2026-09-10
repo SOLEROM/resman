@@ -2252,6 +2252,56 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 :root[data-theme="hc"] .wiki-search-hit .hit-snippet mark {
   background: #008000; color: #ffffff;
 }
+/* Favorites: ★ after favorite pages in the tree (hidden otherwise so labels
+   keep their width), the ☆/★ toggle state, and the favorites list view. */
+.wiki-tree .wiki-tree-label { position: relative; }
+.wiki-tree .wiki-fav-mark {
+  display: none; position: absolute; right: 8px; top: 0;
+  color: var(--accent); font-size: 10px; line-height: 18px;
+}
+.wiki-tree .wiki-file.fav > .wiki-tree-label { padding-right: 22px; }
+.wiki-tree .wiki-file.fav > .wiki-tree-label .wiki-fav-mark { display: inline; }
+#btn-wiki-fav.is-fav { color: var(--accent); }
+/* Pinned "★ Favorites" row at the top of the page tree. */
+.wiki-tree .wiki-pinned {
+  /* -8px cancels .docs-tree's top padding so nothing peeks above the row. */
+  position: sticky; top: -8px; z-index: 1;
+  padding-top: 8px;
+  background: var(--bg-surface);   /* same as .docs-tree, the scroll container */
+  margin-bottom: 4px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-light);
+}
+.wiki-tree .wiki-pinned-fav > .wiki-tree-label { font-weight: 600; }
+.wiki-tree .wiki-fav-count {
+  margin-left: 6px;
+  color: var(--text-muted); font-weight: 400; font-size: 11px;
+}
+.wiki-tree .wiki-pinned-fav.active > .wiki-tree-label .wiki-fav-count { color: inherit; opacity: 0.8; }
+/* The toolbar now carries seven buttons: never wrap a label mid-word — let the
+   search box give up width first. */
+.wiki-toolbar .btn, .wiki-toolbar .icon-btn { white-space: nowrap; flex-shrink: 0; }
+.wiki-toolbar .wiki-search { flex: 0 1 200px; min-width: 90px; }
+.wiki-favorites { padding: 8px 4px; max-width: 860px; }
+.wiki-favorites h1 { margin-top: 0; }
+.wiki-fav-list { list-style: none; margin: 0; padding: 0; }
+.wiki-fav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; margin-bottom: 6px;
+  border: 1px solid var(--border-light); border-radius: 4px;
+}
+.wiki-fav-item:hover { border-color: var(--vsc-focus-border); }
+.wiki-fav-item .wiki-fav-link { font-weight: 600; white-space: nowrap; }
+.wiki-fav-item .wiki-fav-path {
+  flex: 1; min-width: 0;
+  color: var(--text-muted); font-size: 11px; font-family: var(--vsc-font-mono);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wiki-fav-item.missing .wiki-fav-link {
+  color: var(--text-muted); border-bottom-color: var(--text-muted);
+  text-decoration: line-through;
+}
+.wiki-fav-item .wiki-fav-remove { opacity: 0.55; }
+.wiki-fav-item:hover .wiki-fav-remove { opacity: 1; }
 
 /* ---------- Cron-skip banner ---------- */
 .cron-skip-banner .spacer { flex: 1; }

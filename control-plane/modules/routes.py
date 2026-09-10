@@ -16,6 +16,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from . import plugin_commands
 from . import vault_hints
+from . import wiki_favorites
 from . import wiki_unread
 from . import window_schedule as window_schedule_mod
 from .session_plan import (
@@ -369,7 +370,8 @@ def vault_wiki(name):
 
 
 def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path("."),
-                     unread: set[str] | None = None) -> list[dict]:
+                     unread: set[str] | None = None,
+                     favorites: set[str] | None = None) -> list[dict]:
     """Walk <vault>/wiki/ recursively, returning sorted dirs + .md files.
 
     Paths in the response are relative to the vault root (so the SPA can pass
@@ -377,8 +379,11 @@ def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path("."),
     symlinks are skipped. ``unread`` is the set of wiki-relative page paths
     (e.g. ``concepts/gguf.md``) that carry an unread marker — each file node
     gets an ``unread`` flag the sidebar uses to render its indicator.
+    ``favorites`` is the set of vault-relative paths (``wiki/concepts/gguf.md``)
+    listed in ``.favorites.md`` — each file node gets a ``favorite`` flag.
     """
     unread = unread or set()
+    favorites = favorites or set()
     entries: list[dict] = []
     base = wiki_root / rel
     try:
@@ -397,7 +402,8 @@ def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path("."),
                 "type": "dir",
                 "name": child.name,
                 "path": vault_rel,
-                "children": _build_wiki_tree(wiki_root, vault_root, rel_child, unread),
+                "children": _build_wiki_tree(wiki_root, vault_root, rel_child,
+                                             unread, favorites),
             })
         elif child.is_file() and child.suffix.lower() == ".md":
             entries.append({
@@ -405,6 +411,7 @@ def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path("."),
                 "name": child.name,
                 "path": vault_rel,
                 "unread": rel_child.as_posix() in unread,
+                "favorite": vault_rel in favorites,
             })
     return entries
 
@@ -437,9 +444,14 @@ def vault_wiki_tree(name):
     except Exception:
         log.exception("wiki unread reconcile failed for %s", name)
         unread = set()
+    try:
+        favorites = set(wiki_favorites.list_favorites(vault_root))
+    except Exception:
+        log.exception("wiki favorites read failed for %s", name)
+        favorites = set()
     return jsonify({
         "missing": False,
-        "tree": _build_wiki_tree(wiki_root, vault_root, Path("."), unread),
+        "tree": _build_wiki_tree(wiki_root, vault_root, Path("."), unread, favorites),
     })
 
 
@@ -472,6 +484,70 @@ def vault_wiki_set_read(name):
     return jsonify({
         "file": "wiki/" + wiki_rel,
         "unread": wiki_unread.is_unread(wiki_root, wiki_rel),
+    })
+
+
+@bp.get("/api/vaults/<name>/wiki/favorites")
+def vault_wiki_favorites(name):
+    """List the vault's favorite pages from ``<vault>/.favorites.md``.
+
+    Response: ``{file: ".favorites.md", exists, favorites: [{file, title,
+    exists}]}`` in file order. Entry ``file`` is vault-relative (``wiki/…``)
+    so it feeds straight into ``GET …/wiki?file=``; entry ``exists`` is False
+    for a dangling link. Read-only; no CSRF required.
+    """
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    vault_root = Path(v.path).resolve()
+    return jsonify({
+        "file": wiki_favorites.FAVORITES_FILE,
+        "exists": (vault_root / wiki_favorites.FAVORITES_FILE).is_file(),
+        "favorites": wiki_favorites.entries(vault_root),
+    })
+
+
+@bp.post("/api/vaults/<name>/wiki/favorites")
+@_csrf_required
+def vault_wiki_set_favorite(name):
+    """Add or remove a page in ``<vault>/.favorites.md``.
+
+    Body: ``{file: "wiki/concepts/gguf.md", favorite: true|false}``. Adding a
+    page that doesn't exist is refused (404); removing works regardless so a
+    dangling entry can be cleaned up. Idempotent. Returns the page's resulting
+    state plus the full list (same shape as the GET).
+    """
+    reg = _ctx()["vault_registry"]
+    v = reg.get(name)
+    if not v:
+        return jsonify({"error": "vault not found"}), 404
+    body = request.get_json(force=True, silent=True) or {}
+    raw = (body.get("file") or "").strip()
+    if not raw:
+        return jsonify({"error": "file required"}), 400
+    rel = wiki_favorites.normalize(raw)
+    if rel is None:
+        return jsonify({"error": "invalid path"}), 400
+    vault_root = Path(v.path).resolve()
+    want = bool(body.get("favorite"))
+    try:
+        if want:
+            page = wiki_favorites.page_path(vault_root, rel)
+            if not page or not page.is_file():
+                return jsonify({"error": f"not found: {rel}", "file": rel}), 404
+            wiki_favorites.add(vault_root, rel)
+        else:
+            wiki_favorites.remove(vault_root, rel)
+    except ValueError:
+        return jsonify({"error": "invalid path"}), 400
+    except OSError as exc:
+        log.warning("favorites write failed for %s: %s", name, exc)
+        return jsonify({"error": f"could not write {wiki_favorites.FAVORITES_FILE}: {exc}"}), 500
+    return jsonify({
+        "file": rel,
+        "favorite": wiki_favorites.is_favorite(vault_root, rel),
+        "favorites": wiki_favorites.entries(vault_root),
     })
 
 
