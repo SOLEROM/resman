@@ -18,6 +18,9 @@ from . import plugin_commands
 from . import vault_hints
 from . import wiki_unread
 from . import window_schedule as window_schedule_mod
+from .session_plan import (
+    SessionPlanError, build_attend_plan, build_session_plan,
+)
 from .config_manager import ConfigError, VAULT_NAME_RE
 
 log = logging.getLogger(__name__)
@@ -700,7 +703,12 @@ def list_sessions():
     return jsonify({
         "sessions": [s.to_dict() for s in sm.list()],
         "available": sm.available,
-        "orphaned": sm.orphaned_tmux_sessions() if sm.available else [],
+        # Under the shared terminal the ttyd manager tracks nothing, so its
+        # "not in my registry" test would report every live terminal as an
+        # orphan. It isn't one: webterm treats tmux as the source of truth and
+        # reattaches to any prefixed session, so they are all real tabs.
+        "orphaned": ([] if current_app.config.get("WEBTERM_ENABLED")
+                     else (sm.orphaned_tmux_sessions() if sm.available else [])),
     })
 
 
@@ -727,6 +735,15 @@ def kill_orphan_sessions():
     a previous control-plane run. Used by the "Kill all" action in the
     sessions-overview modal. Best-effort per name; partial success is OK.
     """
+    if current_app.config.get("WEBTERM_ENABLED"):
+        # Refused rather than quietly no-op: on the shared terminal every
+        # prefixed tmux session is a live tab, so this would have killed all
+        # of them (see list_sessions).
+        return jsonify({
+            "error": "there are no orphans on the shared terminal — every tmux "
+                     "session on resman's socket is a live tab. Close the ones "
+                     "you don't want.",
+        }), 409
     sm = _ctx()["session_manager"]
     if not sm.available:
         return jsonify({"killed": [], "failed": [],
@@ -745,44 +762,10 @@ def spawn_session():
     if not sm.available:
         return jsonify({"error": "ttyd not installed"}), 503
     body = request.get_json(force=True, silent=True) or {}
-    vault_name = body.get("vault")
-    session_type = body.get("type") or body.get("session_type")
-    if session_type == "bash":
-        session_type = "shell"
-    reg = _ctx()["vault_registry"]
-    v = reg.get(vault_name) if vault_name else None
-    if not v:
-        return jsonify({"error": "unknown vault"}), 400
-    if session_type not in ("claude", "shell"):
-        return jsonify({"error": "type must be 'claude' or 'shell'"}), 400
-    # Optional: type a slash command into the Claude prompt once it's ready.
-    # Used by the new-vault wizard to send /claude-obsidian:wiki so the user
-    # answers prompts inside the terminal tab instead of running the command
-    # blindly via `claude -p`.
-    initial_command = body.get("initial_command")
-    if initial_command is not None:
-        if not isinstance(initial_command, str) or len(initial_command) > 200:
-            return jsonify({"error": "initial_command must be a string ≤200 chars"}), 400
-        if session_type != "claude":
-            return jsonify({"error": "initial_command requires type='claude'"}), 400
-    # Optional: wrap /claude-obsidian:wiki with the prefix/suffix instruction
-    # files (tools/newValPrefix.md, tools/newValSuffix.md) and paste the whole
-    # block into the Claude prompt as a single message. Used by the new-vault
-    # wizard so plugin-presence is checked before bootstrap and the visual
-    # workspace.json is copied after.
-    initial_text = None
-    if body.get("bootstrap_new_vault"):
-        if session_type != "claude":
-            return jsonify({"error": "bootstrap_new_vault requires type='claude'"}), 400
-        if initial_command:
-            return jsonify({
-                "error": "bootstrap_new_vault and initial_command are mutually exclusive"
-            }), 400
-        repo_root = _ctx()["resman_root"]
-        initial_text = plugin_commands.new_vault_bootstrap_prompt(
-            repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
-            repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
-        )
+    try:
+        plan = build_session_plan(_ctx(), body)
+    except SessionPlanError as exc:
+        return jsonify({"error": str(exc)}), exc.status
     # Optional GUI theme id — picks the xterm palette ttyd applies at
     # creation (see session_manager.TERMINAL_THEMES). Unknown ids fall
     # back to dark server-side.
@@ -791,18 +774,18 @@ def spawn_session():
         theme = None
     try:
         s = sm.spawn(
-            vault=v.name, vault_path=v.path, session_type=session_type,
-            claude_cmd=_ctx()["config"].app.get("claude_cmd", "claude"),
-            initial_command=initial_command,
-            initial_text=initial_text,
+            vault=plan.vault, vault_path=plan.vault_path,
+            session_type=plan.session_type, claude_cmd=plan.claude_cmd,
+            initial_command=plan.initial_command,
+            initial_text=plan.initial_text,
             theme=theme,
         )
     except Exception as exc:
         log.exception("spawn session failed")
-        _activity(f"session spawn failed: {v.name} ({session_type}) — {exc}",
+        _activity(f"session spawn failed: {plan.vault} ({plan.session_type}) — {exc}",
                   level="error", source="session")
         return jsonify({"error": str(exc)}), 500
-    _activity(f"session spawned: {v.name} ({session_type})", source="session")
+    _activity(f"session spawned: {plan.vault} ({plan.session_type})", source="session")
     return jsonify(s.to_dict()), 201
 
 
@@ -919,22 +902,12 @@ def attend_task(tid):
     (wiki-ingest, wiki-ingest-prefix, run-shell) return 400.
     """
     ctx = _ctx()
-    tm = ctx["task_manager"]
-    t = tm.get(tid)
-    if not t:
-        return jsonify({"error": "task not found"}), 404
-    if t.vault == "ALL":
-        return jsonify({"error": "cannot attend a parent ALL-vault task"}), 400
-    prompt = tm.build_attend_prompt(t)
-    if not prompt:
-        return jsonify({
-            "error": f"operation {t.operation!r} is not attendable "
-                     "(no Claude prompt to re-run)",
-        }), 400
-    reg = ctx["vault_registry"]
-    v = reg.get(t.vault)
-    if not v:
-        return jsonify({"error": f"vault {t.vault!r} is no longer registered"}), 400
+    # Resolve the task first: "no such task" is a 404 regardless of whether a
+    # terminal could have been opened for it.
+    try:
+        plan = build_attend_plan(ctx, tid)
+    except SessionPlanError as exc:
+        return jsonify({"error": str(exc)}), exc.status
     sm = ctx["session_manager"]
     if not sm.available:
         return jsonify({"error": "ttyd not installed"}), 503
@@ -944,9 +917,9 @@ def attend_task(tid):
         theme = None
     try:
         s = sm.spawn(
-            vault=v.name, vault_path=v.path, session_type="claude",
-            claude_cmd=ctx["config"].app.get("claude_cmd", "claude"),
-            initial_text=prompt,
+            vault=plan.vault, vault_path=plan.vault_path,
+            session_type=plan.session_type, claude_cmd=plan.claude_cmd,
+            initial_text=plan.initial_text,
             theme=theme,
         )
     except Exception as exc:

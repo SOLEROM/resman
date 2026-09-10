@@ -1,3 +1,10 @@
+
+> **Superseded (2026-08-19).** Terminals now come from the shared
+> `webterm` library (`solBench/webterm`) rather than ttyd: no port pool,
+> no iframe, no second HTTP server. This document records the original
+> ttyd design, which still runs behind `RESMAN_WEBTERM=0`. See
+> `man/sessions.md` and `solBench/compatibleTest.md` §6.
+
 ---
 noteId: "ea0975704f5c11f18eaba108b9c533e7"
 tags: []

@@ -1,6 +1,12 @@
 Flask>=3.0
 Flask-SocketIO>=5.3
-eventlet>=0.36
+# Real WebSockets under async_mode='threading' (without it Socket.IO silently
+# falls back to long-polling). Redundant with webterm's own dependency, but
+# explicit: resman serves its own Socket.IO events too.
+simple-websocket>=1.0.0
 PyYAML>=6.0
 APScheduler>=3.10
 pytest>=8.0
+
+# Shared web terminal library — lives in /data/proj/agents/solBench/webterm
+-e /data/proj/agents/solBench/webterm

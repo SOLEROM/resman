@@ -37,6 +37,10 @@ log = logging.getLogger(__name__)
 
 MAX_CONFIG_BYTES = 1024 * 1024  # 1 MB
 VAULT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+# app.remdev_url — the origin of remdev's Claude status-bar service, embedded
+# in the footer. Scheme-qualified on purpose: the cldBar kit refuses anything
+# else, and a bare host would silently resolve against resman's own page.
+REMDEV_URL_RE = re.compile(r"^https?://[^\s/]+/?$")
 # One category path segment ("hw" in "hw/edge"). Slash separates nesting levels.
 CATEGORY_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9 _.\-]+$")
 MAX_CATEGORY_DEPTH = 3
@@ -122,6 +126,16 @@ def validate_resman_yaml(data: Any) -> dict:
     app = data.get("app") or {}
     if not isinstance(app, dict):
         raise ConfigError("resman.yaml: 'app' must be a mapping")
+    remdev_url = app.get("remdev_url")
+    # Empty (or absent) means "no pin" — the browser derives the origin.
+    if str(remdev_url or "").strip() and not REMDEV_URL_RE.match(str(remdev_url)):
+        # The value ends up as an iframe origin for the Claude status bar.
+        # A malformed one leaves an empty footer slot and nothing else, so
+        # it is caught here rather than in the browser console.
+        raise ConfigError(
+            f"resman.yaml: app.remdev_url must be an http(s) origin like "
+            f"'http://station:6005' (got {remdev_url!r})"
+        )
     default_root = app.get("vault_default_root_path")
     if default_root is not None:
         if not isinstance(default_root, str) or not default_root:

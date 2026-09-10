@@ -6,7 +6,8 @@ resman expects a Linux host with:
 
 - **tmux** — required. resman creates an isolated socket so it never collides
   with your interactive tmux.
-- **ttyd** — optional. Without it, terminal sessions are disabled but the rest
+- **ttyd** — only for the legacy terminal (`RESMAN_WEBTERM=0`). Without it
+  *there*, terminal sessions are disabled but the rest
   of the panel works fine.
 - **Python 3.10+** — for the venv that runs Flask + Socket.IO.
 - **Obsidian** — optional. Only needed if you want the *Obsidian* button

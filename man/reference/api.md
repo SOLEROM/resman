@@ -46,11 +46,15 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 
 ## Window
 
+These endpoints stay in resman (it owns all window state), but their main
+UI consumer is now **remdev**: its Claude tab and embeddable status bar call
+them through remdev's `/api/claude/*` proxy.
+
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/window` | Current manual-gate state (active / between / ended) |
 | POST | `/api/window` | Set the gate: `{action: start|end|start_weekly|end_weekly}` (CSRF) |
-| POST | `/api/window/sync` | On-demand **usage-limit** refresh (read-only, no tokens) — powers the footer `⟳ sync` |
+| POST | `/api/window/sync` | On-demand **usage-limit** refresh (read-only, no tokens) — powers the status bar's `⟳ sync` |
 | GET | `/api/window/schedule` | Configured windows + marks + live status (current/next/weekly) + log |
 | PUT | `/api/window/schedule` | Update schedule (body keys: `windows` with per-window `open`/`collect`, `weekly_anchor`, `operator_hour_offset`, `window_length_hours`, `refresh_interval_minutes`, `sync_interval_minutes`, `collection_rate`) (CSRF) |
 | GET | `/api/window/next-night` | ISO start of the next night window |

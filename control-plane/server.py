@@ -1,18 +1,15 @@
 """resman server entrypoint.
 
-eventlet.monkey_patch() is called as the first step, before any other imports
-that might pull in stdlib socket / select / threading state. After that the
-Flask + SocketIO server is composed from the module classes.
+The Flask + SocketIO server is composed from the module classes.
+
+Socket.IO runs in **threading** mode (the app-family standard — see
+solBench/compatibleTest.md §2). Real WebSockets come from simple-websocket;
+without it engine.io silently degrades to long-polling. eventlet is
+deliberately absent: it is deprecated upstream, its import-time monkey-patch
+infected every module in the process, and task dispatch now uses the portable
+``socketio.start_background_task`` instead of ``eventlet.spawn``.
 """
 from __future__ import annotations
-
-# eventlet must monkey-patch before anything else
-try:
-    import eventlet
-    eventlet.monkey_patch()
-    EVENTLET_OK = True
-except Exception:
-    EVENTLET_OK = False
 
 import argparse
 import atexit
@@ -48,6 +45,9 @@ from modules.activity_log import ActivityLog, install_logging_bridge
 from modules.window_state import WindowState
 
 log = logging.getLogger("resman")
+
+# Socket.IO async mode for the family: threading + simple-websocket.
+ASYNC_MODE = "threading"
 
 RESMAN_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = RESMAN_ROOT / "config"
@@ -133,10 +133,26 @@ def _discover_lan_ip() -> str | None:
         return None
 
 
+def _terminal_line(webterm_state, session_manager) -> str:
+    """Which terminal stack answered, and who may reach it."""
+    if webterm_state is None:
+        return ("ttyd (legacy, RESMAN_WEBTERM=0)" if session_manager.available
+                else "ttyd MISSING (terminal sessions disabled)")
+    config = webterm_state.config
+    if config.allow_insecure_lan:
+        gate = "ANY peer (RESMAN_WEBTERM_LAN=1)"
+    elif config.trusted_networks:
+        gate = "loopback + " + ",".join(config.trusted_networks)
+    else:
+        gate = "loopback only"
+    return f"webterm (shared) — reachable from {gate}"
+
+
 def build_app(
     config_dir: Path = CONFIG_DIR,
     *,
-    async_mode: str = "eventlet",
+    async_mode: str = ASYNC_MODE,
+    use_webterm: "bool | None" = None,
     public: bool = False,
     port: "int | None" = None,
 ) -> tuple[Flask, SocketIO, dict]:
@@ -200,14 +216,6 @@ def build_app(
     )
     replay_summary = task_manager.replay()
 
-    # When running under eventlet, spawn each task in its own greenlet so the
-    # request handler that created the task returns immediately while the
-    # streaming runner pushes task_log_appended events on the bus.
-    if EVENTLET_OK:
-        task_manager.set_executor(
-            lambda task: eventlet.spawn(task_manager._execute, task)
-        )
-
     obsidian_push = ObsidianPush(
         vault_iter=lambda: vault_registry.registered,
         get_task_states=lambda n: [
@@ -257,6 +265,15 @@ def build_app(
     cors_origins = "*" if public else [f"http://127.0.0.1:{resolved_port}"]
     socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode=async_mode)
 
+    # Each task runs in its own background worker so the request handler that
+    # created it returns immediately while the streaming runner pushes
+    # task_log_appended events on the bus. start_background_task is the
+    # async-mode-agnostic primitive: a real thread under threading mode, and
+    # whatever the async mode provides otherwise.
+    task_manager.set_executor(
+        lambda task: socketio.start_background_task(task_manager._execute, task)
+    )
+
     ctx = {
         "config": config,
         "tmux": tmux,
@@ -267,6 +284,7 @@ def build_app(
         "window_stats": window_stats,
         "window_sampler": window_sampler,
         "session_manager": session_manager,
+        "webterm": None,       # set below when the shared terminal is enabled
         "task_manager": task_manager,
         "obsidian_push": obsidian_push,
         "scheduler": scheduler,
@@ -280,10 +298,39 @@ def build_app(
 
     @app.get("/")
     def index():
-        return render_template("index.html")
+        # The footer's Claude window/week meters are rendered by remdev's
+        # embeddable status-bar service (iframe, no native fallback) and the
+        # Windows-management UI lives in remdev's Claude tab. remdev_url in
+        # resman.yaml's app section overrides discovery; when unset the
+        # browser derives it from its own hostname + port 6005 (a server-side
+        # 127.0.0.1 default would point remote viewers at *their* machine).
+        remdev_url = (config.app.get("remdev_url") or "").rstrip("/")
+        return render_template("index.html",
+                               use_webterm=app.config.get("WEBTERM_ENABLED", False),
+                               remdev_url=remdev_url)
 
     app.register_blueprint(api_bp)
     attach_socketio(socketio, bus)
+
+    # Terminal stack: the shared webterm library is the default;
+    # RESMAN_WEBTERM=0 reverts to the legacy ttyd + iframe stack. Both drive
+    # the same tmux socket and prefix, so live sessions survive a flip in
+    # either direction.
+    if use_webterm is None:
+        use_webterm = os.environ.get("RESMAN_WEBTERM", "1") == "1"
+    if use_webterm:
+        try:
+            from modules.webterm_integration import init_webterm
+            ctx["webterm"] = init_webterm(app, socketio, ctx)
+        except Exception:
+            # A missing or broken library must not take resman down — the
+            # legacy terminal is still there to fall back on.
+            log.exception(
+                "webterm unavailable — falling back to the legacy ttyd terminal")
+            use_webterm = False
+    app.config["WEBTERM_ENABLED"] = use_webterm
+    if ctx["webterm"] is not None:
+        atexit.register(ctx["webterm"].pty.cleanup_all)
 
     if public:
         lan_ip = _discover_lan_ip()
@@ -305,7 +352,7 @@ def build_app(
         "config": f"OK ({len(config.vaults)} vaults loaded)",
         "mounts": mounts_line,
         "tmux": "OK" if tmux.is_installed() else "MISSING",
-        "ttyd": "OK" if session_manager.available else "MISSING (terminal sessions disabled)",
+        "terminal": _terminal_line(ctx["webterm"], session_manager),
         "scheduler": f"OK ({len(config.cron_tasks)} cron tasks)",
         "tasks": f"OK (replayed {replay_summary['lines']} events, "
                  f"{replay_summary['bad_lines']} bad lines, {replay_summary['tasks']} tasks)",

@@ -1,8 +1,27 @@
 # Troubleshooting
 
-## "ttyd not installed — terminal sessions disabled"
+## The terminal doesn't open
 
-ttyd is a separate binary. Try:
+First check which stack answered — the startup report has a `terminal:` line.
+It reads `webterm (shared) — reachable from ...` normally, or
+`ttyd (legacy, RESMAN_WEBTERM=0)` when the flag is set or the library failed
+to import (the log line above the report says which).
+
+- **Blank terminal from another machine while the rest of the page works** —
+  that is the terminal's own gate, not a bug. It accepts loopback and the
+  tailnet by default; see [LAN access](lan-access.md).
+- **The terminal reconnects but shows nothing** — hard-refresh
+  (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). webterm's JS and CSS are
+  served by the library and cached hard by browsers.
+- **A tab is marked dead** — the tmux session ended. Use *Restart* on the
+  tab; the scrollback is gone but the vault is untouched.
+- **`webterm` fails to import** — reinstall it into the venv resman actually
+  runs from:
+  `/data/proj/agents/solBench/webterm/install.sh <that-venv>`.
+
+## "ttyd not installed — terminal sessions disabled" (legacy stack only)
+
+Only reachable under `RESMAN_WEBTERM=0`. ttyd is a separate binary. Try:
 
 ```bash
 sudo snap install ttyd --classic     # Ubuntu / snap
@@ -58,7 +77,10 @@ obsidian_cmd: "/snap/bin/obsidian"                  # snap install
 obsidian_cmd: "obsidian"                            # native install on PATH
 ```
 
-## Iframe shows "connection refused" right after spawning a session
+## Iframe shows "connection refused" right after spawning a session (legacy stack)
+
+The default terminal has no iframe and no port, so this only applies under
+`RESMAN_WEBTERM=0`.
 
 ttyd takes a moment to start. resman blocks the spawn API until ttyd is
 listening, so this should be rare — but on a slow VM it can race.

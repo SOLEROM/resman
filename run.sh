@@ -76,6 +76,21 @@ if ! venv_works; then
   "$VENV/bin/python3" -m pip install --quiet -r control-plane/requirements.txt
 fi
 
+# The shared webterm terminal library is installed editable from the solBench
+# checkout (requirements.txt carries the path). Without it the server logs the
+# failure and falls back to the legacy ttyd terminal, so this is a repair step,
+# not a hard requirement.
+WEBTERM_SRC="/data/proj/agents/solBench/webterm"
+if ! "$VENV/bin/python3" -c "import webterm" >/dev/null 2>&1; then
+  echo "[setup] webterm library not installed — installing requirements..."
+  "$VENV/bin/python3" -m pip install -q -r control-plane/requirements.txt || true
+  if ! "$VENV/bin/python3" -c "import webterm" >/dev/null 2>&1; then
+    echo "[setup] retrying with explicit path $WEBTERM_SRC ..."
+    "$VENV/bin/python3" -m pip install -q -e "$WEBTERM_SRC" \
+      || echo "[warn] webterm install failed — the terminal falls back to ttyd this run."
+  fi
+fi
+
 if [[ ! -f "$HOME/.resman.yaml" && ! -f config/resman.yaml ]]; then
   echo "No resman.yaml found."
   echo "  Place one at ~/.resman.yaml (per-user override), OR"

@@ -706,15 +706,16 @@ class TaskManager:
     def _dispatch(self, task: Task) -> None:
         if task.vault == "ALL":
             return  # parent task — no direct dispatch; children run
-        # Run synchronously via the runner (tests can inject a recording runner).
-        # Production setups should wrap this in eventlet.spawn() at the call site.
+        # Run synchronously via the runner (tests can inject a recording
+        # runner). The server injects an executor that puts each task on a
+        # background worker — see server.py's set_executor call.
         if self._executor is not None:
             self._executor(task)
             return
         self._execute(task)
 
     def set_executor(self, fn: Callable[[Task], None]) -> None:
-        """Inject an executor (e.g., eventlet.spawn wrapper) for async dispatch."""
+        """Inject an executor (the server passes socketio.start_background_task)."""
         self._executor = fn
 
     def _execute(self, task: Task) -> None:
@@ -799,7 +800,8 @@ class TaskManager:
         log once the process exited and flushed.
 
         A dedicated reader thread does the blocking os.read() on the PTY
-        master so we don't depend on eventlet patching os-level fds. The
+        master, a plain OS-level read on a real thread — which is what made
+        this correct under eventlet's fd patching and stays correct without it. The
         thread emits task_log_appended chunks and writes the same bytes to
         the log file. The dispatching greenlet/thread waits on proc.wait()
         and joins the reader.

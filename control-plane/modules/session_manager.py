@@ -206,9 +206,8 @@ class SessionManager:
         Claude prompt after `initial_command_delay` seconds. Used by the new-
         vault wizard to send `/claude-obsidian:wiki` so the user can answer
         any prompts the bootstrap command asks. The keystroke is scheduled
-        with `threading.Timer`, which eventlet patches to a cooperative
-        greenlet — so the API call returns immediately and the keystroke
-        fires in the background once Claude is ready.
+        with a daemon `threading.Timer`, so the API call returns immediately
+        and the keystroke fires in the background once Claude is ready.
 
         initial_text — mutually exclusive with initial_command. Multi-line
         natural-language instruction block delivered via bracketed paste
@@ -245,7 +244,13 @@ class SessionManager:
             "--port", str(port),
             "--interface", self.bind_host,
             "--writable",
-            "--check-origin=false",
+            # Bare flag. `--check-origin=false` is REJECTED by ttyd, which then
+            # silently runs with origin checking OFF — letting any web page the
+            # user visits open a writable shell over ws://127.0.0.1:<port>.
+            # (The family documents this trap; resman was the one still
+            # carrying the unsafe form.) The terminal iframe is served by ttyd
+            # itself, so its WebSocket Origin always matches and passes.
+            "--check-origin",
         ]
         palette = TERMINAL_THEMES.get(theme or "") or TERMINAL_THEMES.get("dark")
         if palette:

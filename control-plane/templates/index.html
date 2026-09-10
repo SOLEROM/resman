@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- interactive-widget: the fixed layout tracks the soft keyboard
+       instead of being covered by it (webterm mobile input) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1,
+                                 interactive-widget=resizes-content" />
   <title>resman</title>
   <!-- Apply saved theme before render so the page never flashes the wrong
        palette. Valid themes: dark | light | hc (VS Code kit) | green (Garage).
@@ -22,10 +25,20 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/css/style.css" />
+  {% if use_webterm %}
+  <link rel="stylesheet" href="/webterm/static/webterm.css" />
+  {% endif %}
   <script defer src="/static/vendor/socket.io.min.js"></script>
   <!-- Markdown rendering for the Wiki/Help tabs. -->
   <script defer src="/static/vendor/marked.min.js"></script>
+  <!-- Claude window/week status bar: the cldBar kit (copy-in from solBench,
+       do not edit) plus resman's mount/theme glue. -->
+  <script defer src="/static/js/cldbar.js"></script>
+  <script defer src="/static/js/cldbar-glue.js"></script>
   <script defer src="/static/js/app.js"></script>
+  {% if use_webterm %}
+  <script type="module" src="/static/js/webterm-glue.js"></script>
+  {% endif %}
 </head>
 <body>
 
@@ -47,7 +60,9 @@
       <button id="btn-shell" class="btn secondary"><span class="codicon codicon-terminal"></span>Shell</button>
       <button id="btn-claude" class="btn"><span class="codicon codicon-add"></span>Claude</button>
       <button id="btn-obsidian" class="btn secondary"><span class="codicon codicon-link-external"></span>Obsidian</button>
+      {% if not use_webterm %}
       <span class="ttyd-warning" id="ttyd-warning" hidden>ttyd not installed</span>
+      {% endif %}
     </div>
   </div>
   <div class="titlebar-right">
@@ -90,11 +105,6 @@
       <button class="activity-item" data-tab="tasks" title="Tasks">
         <span class="codicon codicon-checklist"></span>
         <span class="activity-label">Tasks</span>
-      </button>
-      <button class="activity-item" data-tab="windows"
-              title="Windows — window management, automation &amp; usage statistics">
-        <span class="codicon codicon-window"></span>
-        <span class="activity-label">Windows</span>
       </button>
     </div>
     <div class="activity-group activity-bottom">
@@ -211,11 +221,23 @@
 
       <section id="tab-ops" class="tab-panel">
         <div class="terminal-panel">
+          {% if not use_webterm %}
+          <!-- Legacy ttyd mode renders its session tabs here; webterm draws
+               its own tab strip inside #webterm-root, so this row is omitted
+               (it would be a 35px bar holding only the "Terminal" label). -->
           <div class="term-header">
             <span class="panel-title active">Terminal</span>
             <div class="term-tabs" id="term-tabs"></div>
           </div>
+          {% endif %}
+          {% if use_webterm %}
+          <!-- webterm draws its own tab strip and terminals in here; the glue
+               keeps the strip scoped to the selected vault -->
+          <div class="term-frames"><div id="webterm-root"
+               style="position:absolute; inset:0;"></div></div>
+          {% else %}
           <div class="term-frames" id="term-frames"></div>
+          {% endif %}
         </div>
       </section>
 
@@ -361,19 +383,6 @@
         <textarea id="config-editor" spellcheck="false" hidden></textarea>
       </section>
 
-      <section id="tab-windows" class="tab-panel">
-        <div class="toolbar">
-          <span class="landing-title">Windows</span>
-          <span class="muted small">window management · automation · usage statistics</span>
-          <div class="spacer"></div>
-          <button id="btn-windows-refresh" class="icon-btn"
-                  title="Reload window state &amp; stats"><span class="codicon codicon-refresh"></span></button>
-        </div>
-        <div id="windows-root" class="windows-layout">
-          <p class="muted" style="padding:16px">Loading window management…</p>
-        </div>
-      </section>
-
       <section id="tab-help" class="tab-panel">
         <div class="docs help-layout">
           <aside class="docs-tree help-tree" id="help-tree">
@@ -399,25 +408,18 @@
           title="Window gate state (green = active window, red = ended) · click to show/hide the vault list">
       <span class="codicon codicon-remote"></span><span>resman</span>
     </span>
-    <!-- Two usage meters: the local window (green) and the weekly cycle
-         (blue). The bar fill still shows time elapsed; the bold number after
-         it = the usage limit used (session / weekly), or ? until synced. -->
-    <span class="meter meter-window" id="meter-window" title="Current window">
-      <span class="meter-label" id="window-meter-label">Window</span>
-      <span class="meter-track"><span class="meter-fill" id="window-bar-fill"></span></span>
-      <span class="meter-after" id="window-limit" title="Session limit used">?</span>
-      <span class="meter-reset" id="window-reset" title="When the current window ends"></span>
-    </span>
-    <span class="meter meter-week" id="meter-week" title="Weekly cycle">
-      <span class="meter-label">Week</span>
-      <span class="meter-track"><span class="meter-fill" id="weekly-bar-fill"></span></span>
-      <span class="meter-after" id="weekly-limit" title="Weekly limit used">?</span>
-      <span class="meter-reset" id="weekly-reset" title="When the weekly limit resets"></span>
-    </span>
-    <button type="button" class="statusbar-item" id="btn-window-sync"
-            title="Sync — fetch session/weekly usage from claude.ai">
-      <span class="codicon codicon-sync"></span>
-    </button>
+    <!-- Window + week meters and the ⟳ sync button are rendered by remdev's
+         embeddable status-bar service (the sole renderer — no native
+         fallback; a stopped remdev blanks them by design). The gate-state
+         tint on this footer stays native: it reads GET /api/window.
+         The iframe is built browser-side by the shared cldBar kit through
+         cldbar-glue.js, from data-remdev-url when resman.yaml pins one, else
+         from the page's own hostname — a server-rendered 127.0.0.1 would
+         blank the bar for every viewer that is not the station itself. The
+         ?theme= slug follows the app theme (re-synced on every switch) so
+         the bar blends into the footer in all four themes. -->
+    <span class="cldbar-slot" id="cldbar-slot"
+          data-remdev-url="{{ remdev_url }}"></span>
   </div>
   <div class="statusbar-side" id="status-right">
     <button type="button" class="statusbar-item" id="btn-activity-log"

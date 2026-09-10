@@ -8,7 +8,8 @@ tags: []
 
 resman is a local-only web panel for running multiple Obsidian research vaults
 on one machine. It coordinates **tmux sessions** (via an isolated socket),
-**ttyd processes** (one browser terminal per session), a **task queue** backed
+the shared **webterm** library (browser terminals in resman's own process),
+a **task queue** backed
 by an append-only JSONL event log, and a **window-state** budget that gates
 when scheduled work is allowed to fire.
 

@@ -4,9 +4,10 @@ Cron tasks fire only when the window is active; otherwise emit a
 cron_skipped event in the JSONL log. ObsidianPush fires every 60 seconds
 regardless of window state.
 
-The plan mandates GeventScheduler in production. For test/dev environments
-without gevent, BackgroundScheduler is used as a compatibility fallback —
-this is gated by a runtime check, never silently downgraded in production.
+resman runs Socket.IO in threading mode (solBench/compatibleTest.md §2), so
+BackgroundScheduler — which uses real threads — is the correct scheduler, not
+a fallback. The old GeventScheduler preference belonged to the eventlet/gevent
+era and is gone with it.
 """
 from __future__ import annotations
 
@@ -26,19 +27,10 @@ log = logging.getLogger(__name__)
 
 
 def _make_scheduler():
-    """Prefer GeventScheduler; fall back to BackgroundScheduler if gevent absent."""
-    try:
-        from apscheduler.schedulers.gevent import GeventScheduler
+    """BackgroundScheduler — real threads, matching the app's threading mode."""
+    from apscheduler.schedulers.background import BackgroundScheduler
 
-        return GeventScheduler(), "gevent"
-    except Exception:
-        from apscheduler.schedulers.background import BackgroundScheduler
-
-        log.warning(
-            "gevent not available; using BackgroundScheduler. "
-            "In production with eventlet, install gevent or replace this fallback."
-        )
-        return BackgroundScheduler(), "background"
+    return BackgroundScheduler(), "background"
 
 
 def _utcnow_iso() -> str:

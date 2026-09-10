@@ -21,7 +21,8 @@ go back to days later.
 
 ## What gets logged
 
-- **Window limit sync** — every time the footer **⟳** runs (on load, every few
+- **Window limit sync** — every time the status bar's **⟳** runs (remdev's
+  embedded bar in the footer; on load, every few
   minutes, or when you click it) you'll see it start and its result, e.g.
   `window limit sync ok — session 8%, weekly 9%`, or a warning if you're logged
   out / it couldn't reach claude.ai. This is the quickest way to confirm the

@@ -43,10 +43,13 @@ app:
   scrollback_limit: 10000         # tmux history-limit per session
   claude_cmd: "claude --dangerously-skip-permissions"
   obsidian_cmd: "flatpak run md.obsidian.Obsidian"
-  ttyd_port_base: 7680            # range for ttyd to bind into
+  tmux_socket: resman             # isolated tmux socket, shared by both stacks
+  tmux_prefix: rsm-               # session-name prefix
+  ttyd_port_base: 7680            # legacy terminal only (RESMAN_WEBTERM=0)
   ttyd_port_max: 7999
   man_path: ""                    # optional override for the Help tree
   vault_default_root_path: ""     # optional; pre-fills the New Vault wizard
+  remdev_url: ""                  # optional; origin of remdev's Claude status bar
 
 window_budget:
   weekly_start: "Monday 09:00"
@@ -98,6 +101,24 @@ full path (`hw/edge`).
 - `tmux_socket` lets resman use its own tmux server. Don't set it to your
   default socket — if you do, killing resman would kill your interactive
   sessions.
+- `remdev_url` (optional) pins the origin of **remdev's** Claude status-bar
+  service — the window/week meters in resman's footer, embedded through the
+  shared cldBar kit. Leave it unset in the normal case (remdev on the same
+  station): the browser then builds the iframe URL from whatever address you
+  opened resman on, plus port 6005, so the bar follows you from the station
+  to a phone on the LAN without a setting.
+
+  Never pin `http://127.0.0.1:6005`. An iframe src is fetched by the
+  *viewer's* machine, so a loopback pin points every other device at itself
+  and the footer goes blank there while it still looks fine on the station.
+  Pin a real origin only when remdev runs on another host or port, or when
+  resman is served over HTTPS (an HTTPS page cannot embed a plain-HTTP bar).
+  It must be a full `http(s)://` origin; anything else is rejected on save.
+
+  | Footer shows | Meaning |
+  |---|---|
+  | meters, dimmed | remdev is up, its data backend (resman itself) is not answering — it retries by itself, ~60 s |
+  | nothing at all | remdev is not running, or not reachable from *this* browser |
 
 ## `schedule.yaml`
 

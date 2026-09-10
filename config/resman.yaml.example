@@ -10,7 +10,20 @@ app:
   scrollback_limit: 10000
   claude_cmd: "claude --dangerously-skip-permissions"
   obsidian_cmd: "flatpak run md.obsidian.Obsidian"
-  ttyd_port_base: 7680             # port range for ttyd processes
+  # Origin of the remdev deploy that renders the footer's Claude status bar
+  # (iframe) and hosts the Windows-management UI (its Claude tab). Leave it
+  # unset — the normal case, remdev on the same station: the browser then
+  # builds the iframe URL from whatever address you opened resman on, plus
+  # port 6005. Do NOT pin 127.0.0.1: an iframe src is fetched by the
+  # *viewer's* machine, so a loopback pin blanks the bar on every device
+  # except the station. Pin a real origin only when remdev lives on another
+  # host, listens elsewhere, or must be reached over HTTPS (an HTTPS page
+  # cannot embed a plain-HTTP bar).
+  # remdev_url: "http://station:6005"
+  # Terminals are served by the shared webterm library, inside resman's own
+  # process — no ports, no iframe. RESMAN_WEBTERM=0 reverts to the legacy
+  # ttyd stack, which is what the two ttyd_* keys below configure.
+  ttyd_port_base: 7680             # legacy terminal only: ttyd port range
   ttyd_port_max: 7999
   # Optional: absolute path used as the starting point for the New Vault
   # wizard's path input and the Browse-folder picker. Speeds up adding

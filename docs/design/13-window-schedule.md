@@ -6,8 +6,12 @@
 manual [`WindowState`](07-window-state.md) gate. It ports the *concept* of the
 garage `cld20` window manager: the day is tiled into fixed-length "windows"
 aligned to Claude's session windows, and a weekly cycle is anchored to a chosen
-weekday/hour. It drives the footer schedule line, the top-bar **⊞ Windows**
-configuration modal, the checks/log view, and night-window task scheduling.
+weekday/hour. It drives the footer schedule line and night-window task
+scheduling. The management UI (settings, daily-window rows, usage charts)
+lives in **remdev's Claude tab**, and the footer meters are rendered by
+remdev's embedded status bar — both consume this module through remdev's
+`/api/claude/*` proxy. (This doc predates that move and the `open`/`collect`
+marks + `collection_rate`; trust the code and `man/window-state.md`.)
 
 `WindowState` still owns the authoritative active/between/ended gate that defers
 tasks; `WindowSchedule` adds *when* — current window, next window, weekly

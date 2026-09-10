@@ -5,7 +5,8 @@
 #   - tmux                  (mandatory; server refuses to start without it)
 #   - python3 + venv        (mandatory)
 #   - ttyd                  (optional; browser terminals are disabled without it)
-#   - Python packages       (Flask, Flask-SocketIO, eventlet, PyYAML, APScheduler, pytest)
+#   - Python packages       (Flask, Flask-SocketIO, simple-websocket, PyYAML,
+#                            APScheduler, pytest) plus the shared webterm library
 #
 # Idempotent — safe to re-run. Detects apt (Debian/Ubuntu), dnf (Fedora/RHEL),
 # pacman (Arch), and brew (macOS). Falls back to a clear error otherwise.
@@ -332,11 +333,11 @@ $PIP install --quiet -r "$ROOT/control-plane/requirements.txt"
 # ----- step 4: verification -----
 echo
 echo "Verifying Python imports ..."
-if "$PY" -c "import flask, flask_socketio, eventlet, yaml, apscheduler" 2>/dev/null; then
+if "$PY" -c "import flask, flask_socketio, simple_websocket, yaml, apscheduler" 2>/dev/null; then
   ok "Python packages importable"
 else
   echo "$(c_red "✗") Python packages failed to import:"
-  "$PY" -c "import flask, flask_socketio, eventlet, yaml, apscheduler" || true
+  "$PY" -c "import flask, flask_socketio, simple_websocket, yaml, apscheduler" || true
   exit 5
 fi
 

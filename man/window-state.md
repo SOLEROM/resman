@@ -7,8 +7,11 @@ resman has **two** related but distinct notions of a "window":
 2. The **window schedule** — a cld20-style model of recurring daily work
    windows and a weekly cycle. It drives the footer usage meters, the task
    **When** picker, and the optional **openers / collectors** that anchor
-   Claude's rolling window and sample usage. You configure it from the **⊞
-   Windows** tab.
+   Claude's rolling window and sample usage. You configure it from **remdev's
+   Claude tab** (the ⊞ Windows activity-bar entry links there) — resman keeps
+   owning the model and the API; remdev renders and edits it over
+   `/api/window/*`. The footer meters are likewise rendered by remdev's
+   embedded status bar.
 
 ## The manual gate
 

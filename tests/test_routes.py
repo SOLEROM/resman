@@ -8,7 +8,7 @@ import sys
 import os
 from pathlib import Path
 
-# Skip eventlet monkey-patch in tests; we test the Flask app directly.
+# Marks the process as a test run; the Flask app is exercised directly.
 os.environ.setdefault("RESMAN_TEST", "1")
 
 import pytest

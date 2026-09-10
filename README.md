@@ -7,6 +7,7 @@ research vaults. Implements the design in [`docs/design/`](docs/design/).
 
 ```bash
 ./deps.sh                # install host deps (tmux, python3-venv, ttyd) + venv
+                         # webterm installs from solBench (see run.sh)
 ./run.sh                 # localhost only (http://127.0.0.1:5090)
 ./run.sh --public        # accessible on the LAN (http://<lan-ip>:5090)
 ```
@@ -14,7 +15,7 @@ research vaults. Implements the design in [`docs/design/`](docs/design/).
 The launcher creates a venv on first run, installs dependencies, and starts
 the Flask + Socket.IO server on `http://127.0.0.1:5090`.
 
-`--public` binds Flask and ttyd to `0.0.0.0` and relaxes the Socket.IO CORS
+`--public` binds Flask to `0.0.0.0` and relaxes the Socket.IO CORS
 allow-list. Resman has no authentication — only run `--public` on a trusted
 network.
 
@@ -86,7 +87,7 @@ The suite covers:
   skipping, partial-last-line truncation, ALL-vault parent/child, window
   gating, priority promotion
 - Scheduler: skip-when-inactive cron behaviour, skip-count threshold
-- Routes: CSRF header enforcement, 503 when ttyd is missing, validation
+- Routes: CSRF header enforcement, validation
   rejections, full create/cancel/promote/log lifecycle
 - TmuxManager: integration tests on an isolated socket (skipped when tmux
   is absent)
@@ -112,7 +113,8 @@ and the plugin reference in [`docs/obsidian-plugin.md`](docs/obsidian-plugin.md)
   back to `BackgroundScheduler` only when gevent is missing — the design
   mandates `GeventScheduler` in production with eventlet to avoid the
   documented BackgroundScheduler/eventlet subprocess deadlock.
-- `ttyd` is treated as optional. When missing, `POST /api/sessions` and
+- `ttyd` is only used by the legacy terminal (`RESMAN_WEBTERM=0`) and is
+  treated as optional there. When missing, `POST /api/sessions` and
   `DELETE /api/sessions/{id}` return HTTP 503; the rest of the server
   functions normally.
 - All subprocess calls use the argument-list form (`subprocess.run([...])`).

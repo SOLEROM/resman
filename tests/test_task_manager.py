@@ -781,7 +781,8 @@ def test_replay_overdue_scheduled_surfaces_warning(tmp_path):
 def _spawn_threaded(tm):
     """Use a background thread to run the streaming dispatch so tests can
     race with cancel/inspect _procs while the task is still running.
-    Mirrors what server.py does with eventlet.spawn in production."""
+    Mirrors what server.py does with socketio.start_background_task in
+    production."""
     import threading
     tm.set_executor(
         lambda task: threading.Thread(

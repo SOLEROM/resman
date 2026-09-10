@@ -1347,18 +1347,8 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 }
 .statusbar-item.remote:hover { background: color-mix(in srgb, var(--vsc-statusbar-remote-bg) 85%, #000000); }
 .statusbar-item.warning-item { color: var(--vsc-statusbar-fg); }
-.meter { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; }
-.meter-label { font-size: 11px; color: inherit; opacity: 0.85; }
-.meter-track {
-  width: 56px;
-  height: 5px;
-  border-radius: 3px;
-  background: rgba(127, 127, 127, 0.28);
-  overflow: hidden;
-}
-.meter-fill { display: block; height: 100%; border-radius: 3px; background: var(--accent); width: 0; transition: width 0.5s; }
-.meter.mem .meter-fill { background: var(--info); }
-
+/* (window/week meter widgets removed — the footer embeds remdev's
+   status bar now, see .cldbar-slot) */
 /* ---------- Dropdown menu ---------- */
 .dropdown {
   position: fixed;
@@ -1538,7 +1528,6 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 :root[data-theme="hc"] .command-center,
 :root[data-theme="hc"] .conn-pill { background: none; }
 :root[data-theme="hc"] .statusbar-item.remote { outline: 1px solid var(--border); outline-offset: -2px; }
-:root[data-theme="hc"] .meter-track { background: none; border: 1px solid var(--border); }
 
 /* ==========================================================================
    Generic widgets for ported apps — banner, filter chips, data table, log
@@ -2275,22 +2264,15 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 :root[data-theme="hc"] #status-bar.ended #win-state-item {
   background: none; color: var(--vsc-statusbar-fg);
 }
-.meter-window .meter-fill { background: var(--success); }
-.meter-week .meter-fill { background: var(--info); }
-/* Divider so the Window group reads as separate from the Week group. */
-.meter-week {
-  margin-left: 6px;
-  padding-left: 14px;
-  border-left: 1px solid var(--vsc-statusbar-border);
-}
-.meter-after {  /* limit-used % — the headline number */
-  font-weight: 600; font-size: 11px;
-  min-width: 26px;
-  font-variant-numeric: tabular-nums;
-}
-.meter-after.at-limit { color: var(--danger); font-weight: 700; }
-.meter-reset { font-size: 11px; opacity: 0.75; font-variant-numeric: tabular-nums; }
-.meter-reset:empty { display: none; }
+/* remdev's embedded Claude status bar, mounted by the shared cldBar kit
+   (cldbar-glue.js) into the meters' old slot. The iframe carries its own
+   size, color-scheme and transparency from the kit; the slot only places it
+   in the footer's left group. Keep the background transparent: the bar's own
+   canvas is transparent so the footer shows through, and anything painted
+   here would defeat that. If remdev is down the iframe is simply blank —
+   deliberate, there is no native fallback. */
+.cldbar-slot { display: inline-flex; align-items: center; }
+.cldbar-slot .cldbar-embed { display: block; }
 .log-dot {
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--warning); flex-shrink: 0;
@@ -2408,74 +2390,7 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 .path-input-row input { flex: 1; }
 .path-input-row .btn { flex: none; }
 
-/* ---------- ⊞ Windows tab (management · automation · statistics) ---------- */
-.windows-layout {
-  flex: 1; min-height: 0; overflow: auto;
-  display: grid; gap: 14px; padding: 14px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
-}
-@media (max-width: 900px) { .windows-layout { grid-template-columns: 1fr; } }
-.win-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: 4px;
-  padding: 12px 14px;
-  min-width: 0;
-}
-.win-card-wide { grid-column: 1 / -1; }
-.win-card-head {
-  display: flex; align-items: center; gap: 10px;
-  margin-bottom: 10px; padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-light);
-}
-.win-card-head .spacer { flex: 1; }
-.wc-grid {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 8px 12px;
-  align-items: center;
-  margin-bottom: 10px;
-}
-.wc-anchor { display: flex; align-items: center; gap: 8px; }
-.wc-anchor select { width: auto; }
-.wc-window-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--border-light);
-}
-.wc-window-row .wc-start { width: 64px; }
-.wc-window-row label { margin: 0; }
-.wc-mark { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 12px; }
-.wc-mark input { width: auto; }
-.wc-mark-open { color: var(--warning); }
-.wc-mark-collect { color: var(--vsc-link); }
-.wc-marks-hint { margin: 2px 0 8px; }
-.wc-remove { margin-left: auto; }
-.wc-section { margin-top: 16px; }
-.wc-section > strong { display: block; margin-bottom: 6px; }
-.wc-log-row { font-size: 12px; padding: 2px 0; }
-.wc-save-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
-.win-range { display: inline-flex; gap: 4px; }
-.win-range .btn.active {
-  background: var(--vsc-btn-bg); border-color: var(--vsc-btn-bg); color: var(--vsc-btn-fg);
-}
-.win-summary { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; font-size: 13px; }
-.win-sum-item { white-space: nowrap; }
-.win-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; padding: 0 2px; }
-@media (max-width: 700px) { .win-charts { grid-template-columns: 1fr; } }
-.win-chart-title { font-weight: 600; font-size: 12px; margin: 10px 0 6px; color: var(--text-secondary); }
-.win-chart-svg { width: 100%; height: auto; display: block; }
-.win-chart-svg .win-grid { stroke: var(--border); stroke-width: 1; }
-.win-chart-svg .win-axis { fill: var(--text-secondary); font-size: 9px; }
-.win-chart-svg .win-line { fill: none; stroke: var(--ch); stroke-width: 1.6; }
-.win-chart-svg .win-area { fill: var(--ch); opacity: 0.12; stroke: none; }
-.win-chart-svg .win-dots circle { fill: var(--ch); }
-.win-chart-foot { margin-top: 2px; }
-.win-chart-empty {
-  padding: 28px 8px; text-align: center;
-  border: 1px dashed var(--border); border-radius: 4px;
-}
+/* (⊞ Windows tab styles removed — the tab moved to remdev's Claude tab) */
 
 /* ---------- Misc ---------- */
 .small { font-size: 11px; }
