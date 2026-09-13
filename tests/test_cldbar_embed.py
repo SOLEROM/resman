@@ -24,10 +24,9 @@ import pytest
 
 from modules.config_manager import ConfigError, validate_resman_yaml
 from server import build_app
+from tests.conftest import solbench_home
 
 STATIC_JS = Path(__file__).resolve().parents[1] / "control-plane" / "static" / "js"
-# Same checkout path run.sh uses for the shared webterm install.
-KIT_DIR = Path("/data/proj/agents/solBench/cldBar")
 
 
 def build_client(tmp_path, app_block: str = ""):
@@ -164,9 +163,8 @@ def test_the_app_theme_switch_re_points_the_embed():
 def test_the_kit_copy_is_not_a_local_fork():
     """cldbar.js is a copy-in, refreshed by cldBar/install.sh. A local edit
     (or a stale copy) is drift, not an integration."""
-    if not KIT_DIR.exists():
-        pytest.skip(f"solBench checkout not at {KIT_DIR}")
-    assert (STATIC_JS / "cldbar.js").read_bytes() == (KIT_DIR / "cldbar.js").read_bytes()
+    kit_dir = solbench_home() / "cldBar"  # skips only this test on a lone clone
+    assert (STATIC_JS / "cldbar.js").read_bytes() == (kit_dir / "cldbar.js").read_bytes()
 
 
 def test_the_embed_mechanism_is_not_hand_rolled_a_second_time():

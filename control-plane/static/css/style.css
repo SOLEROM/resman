@@ -408,7 +408,7 @@
 
 /* ==========================================================================
    THEME: green — "Garage" phosphor-green terminal skin
-   Ported from /data/agents/garage (frontDesign/Garage Design System).
+   Ported from garage (frontDesign/Garage Design System).
    Dark, green-tinted surfaces with a phosphor-green (#36c97a) accent.
    ========================================================================== */
 :root[data-theme="green"] {
@@ -1701,7 +1701,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
    ==========================================================================
    Everything above this line is the codeGui VS Code kit
    (theme/vscode-tokens.css + theme/vscode-chrome.css, concatenated verbatim —
-   see /data/proj/aproj/codeGui/PORTING.md). This layer holds only what the
+   see codeGui/PORTING.md). This layer holds only what the
    chrome doesn't cover: resman's own layouts (task trigger, config cards,
    wiki tree, window schedule + charts) plus small glue rules. All colors
    resolve from the kit tokens so the three themes re-skin it for free.

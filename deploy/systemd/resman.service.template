@@ -1,12 +1,14 @@
 [Unit]
 Description=Resman resource manager
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 WorkingDirectory=__PROJECT_PATH__
 ExecStart=__PROJECT_PATH__/run.sh --vname __VENV_NAME__ --public
-Restart=on-failure
+Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal

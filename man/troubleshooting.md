@@ -15,9 +15,10 @@ to import (the log line above the report says which).
   served by the library and cached hard by browsers.
 - **A tab is marked dead** — the tmux session ended. Use *Restart* on the
   tab; the scrollback is gone but the vault is untouched.
-- **`webterm` fails to import** — reinstall it into the venv resman actually
-  runs from:
-  `/data/proj/agents/solBench/webterm/install.sh <that-venv>`.
+- **`webterm` fails to import** — restart resman: `run.sh` checks webterm on
+  every start and reinstalls it from the solBench checkout beside resman
+  (`../solBench`, or `$SOLBENCH_HOME`). By hand, from the resman checkout:
+  `../solBench/webterm/install.sh <the venv resman runs from>`.
 
 ## "ttyd not installed — terminal sessions disabled" (legacy stack only)
 

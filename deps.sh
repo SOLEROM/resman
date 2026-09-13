@@ -6,7 +6,7 @@
 #   - python3 + venv        (mandatory)
 #   - ttyd                  (optional; browser terminals are disabled without it)
 #   - Python packages       (Flask, Flask-SocketIO, simple-websocket, PyYAML,
-#                            APScheduler, pytest) plus the shared webterm library
+#                            APScheduler, pytest); webterm comes from run.sh
 #
 # Idempotent — safe to re-run. Detects apt (Debian/Ubuntu), dnf (Fedora/RHEL),
 # pacman (Arch), and brew (macOS). Falls back to a clear error otherwise.
