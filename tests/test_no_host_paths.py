@@ -1,4 +1,4 @@
-"""No host path may be baked into tracked code (solBench planUpdatePath.md §2.4)."""
+"""No host path may be baked into tracked code (solBench plans/benchLayoutPlan.md §2.4)."""
 import re
 import subprocess
 from pathlib import Path
