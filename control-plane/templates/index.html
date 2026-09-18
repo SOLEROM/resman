@@ -25,17 +25,25 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/wiki-marks.css" />
   {% if use_webterm %}
   <link rel="stylesheet" href="/webterm/static/webterm.css" />
   {% endif %}
   <script defer src="/static/vendor/socket.io.min.js"></script>
-  <!-- Markdown rendering for the Wiki/Help tabs. -->
+  <!-- Markdown rendering for the Wiki/Help tabs; every render is sanitized. -->
   <script defer src="/static/vendor/marked.min.js"></script>
+  <script defer src="/static/vendor/purify.min.js"></script>
+  <!-- Reader highlights on wiki pages (shared with interpreta/gridar/mentora:
+       keep these three files identical across the apps). -->
+  <script defer src="/static/js/wiki-marks-core.js"></script>
+  <script defer src="/static/js/wiki-marks.js"></script>
   <!-- Claude window/week status bar: the cldBar kit (copy-in from solBench,
        do not edit) plus resman's mount/theme glue. -->
   <script defer src="/static/js/cldbar.js"></script>
   <script defer src="/static/js/cldbar-glue.js"></script>
+  <script defer src="/static/js/bench-signal.js"></script>
   <script defer src="/static/js/app.js"></script>
+  <script defer src="/static/js/wiki-highlights-glue.js"></script>
   {% if use_webterm %}
   <script type="module" src="/static/js/webterm-glue.js"></script>
   {% endif %}
@@ -180,7 +188,8 @@
   <main class="main">
     <div class="tabstrip">
       <div class="tabs" role="tablist">
-        <span class="tab active" id="active-view-tab">
+        <span class="tab active" id="active-view-tab" role="button" tabindex="0"
+              title="Show or hide the vault tree">
           <span class="codicon codicon-home" id="active-view-icon"></span>
           <span id="active-view-label">Home</span>
         </span>
@@ -406,8 +415,11 @@
 <!-- ============================== Status bar ============================== -->
 <footer class="statusbar" id="status-bar">
   <div class="statusbar-side" id="status-left">
-    <span class="statusbar-item remote" id="win-state-item" role="button" tabindex="0"
-          title="Window gate state (green = active window, red = ended) · click to show/hide the vault list">
+    <!-- The window-gate indicator: a plain label standalone; docked in
+         mainBench, bench-signal.js makes it the button that asks the shell
+         for its app bar (the vault tree toggle lives on #active-view-tab). -->
+    <span class="statusbar-item remote" id="win-state-item"
+          title="Window gate state (green = active window, red = ended)">
       <span class="codicon codicon-remote"></span><span>resman</span>
     </span>
     <!-- Window + week meters and the ⟳ sync button are rendered by remdev's

@@ -47,6 +47,8 @@ _WIKILINK_RE = re.compile(r"^!?\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 _MDLINK_RE = re.compile(r"^\[[^\]]*\]\(\s*<?([^)>]+?)>?(?:\s+\"[^\"]*\")?\s*\)")
 # Anything that could end the alias early: a lone bracket is enough.
 _ALIAS_STRIP_RE = re.compile(r"[\[\]|]")
+# <mark …> / </mark> tags, as a highlighted heading carries them.
+_MARK_TAG_RE = re.compile(r"</?mark\b[^<>\n]*>", re.IGNORECASE)
 
 # One lock per vault so two toggles can't interleave their read-modify-write
 # and drop each other's line (Flask serves requests concurrently).
@@ -211,7 +213,8 @@ def _title_of(page: Path) -> str:
     for line in _strip_frontmatter(text).splitlines():
         s = line.strip()
         if s.startswith("# "):
-            return s[2:].strip() or page.stem
+            # Reader highlights (<mark class="hl-…">) are markup, not title.
+            return _MARK_TAG_RE.sub("", s[2:]).strip() or page.stem
     return page.stem
 
 

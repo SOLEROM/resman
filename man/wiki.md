@@ -79,6 +79,43 @@ sidebar tree.
   is refused, as is a page whose name contains `[`, `]`, `|` or `#` (Obsidian
   can't link those either).
 
+## Highlights
+
+Select text on a wiki page and a small palette appears: six colors — yellow,
+green, blue, pink, orange, purple. One click highlights the selection. The
+highlight is **written into the page's markdown** as
+
+```
+<mark class="hl-yellow">the highlighted words</mark>
+```
+
+so it travels with the vault: Obsidian, the other bench apps and any markdown
+viewer show it (the file names the color, the theme picks the shade).
+
+- **Click a highlight** to change its color or remove it (**✕**).
+- **Ctrl+click** (or Alt+click) a sentence to select the whole sentence.
+- **Pen mode** (the pencil in the palette): every selection is highlighted at
+  once with the last color. A **Pen** chip at the bottom right switches the
+  color and turns it off.
+- Keyboard, while the palette is open: **1–6** pick a color, **0** / Delete
+  removes, **Esc** closes.
+- A selection over several paragraphs or list items becomes one highlight per
+  block. Selecting part of a wikilink, a `code span` or a **bold** run takes
+  the whole of it. Highlighting over an existing highlight paints over it.
+- Not highlightable: code blocks, the folded **metadata** (frontmatter and the
+  prose before the first heading), pages outside `wiki/`, search results, the
+  favorites list and the Help tab.
+- resman only ever adds, removes or recolors these tags — the rest of the file
+  stays byte-for-byte. If the page changed on disk while you were reading (an
+  agent, Obsidian, an rsync), nothing is written: the page reloads and you
+  select again.
+- Highlighting does **not** change the page's read/unread state; other pages
+  that changed meanwhile still show up as unread.
+- Search and page titles ignore the tags.
+- Agents rewrite pages: tell them to keep the tags. Add this line to the
+  vault's `CLAUDE.md` conventions:
+  `- <mark class="hl-…">…</mark> is the reader's highlight. Keep the tags around the same words when you edit a note; never add your own.`
+
 ## API
 
 The browser fetches these endpoints:
@@ -91,7 +128,12 @@ GET  /api/vaults/<name>/wiki/random          ← a random unread page
 GET  /api/vaults/<name>/wiki/favorites       ← { file, exists, favorites: [{file, title, exists}] }
 POST /api/vaults/<name>/wiki/favorites       ← { file, favorite } add/remove in .favorites.md
 GET  /api/vaults/<name>/wiki/search?q=…      ← ranked search hits
+POST /api/vaults/<name>/wiki/highlight       ← { file, base_sha, op: add|remove|recolor, … }
 ```
+
+The page GET also returns `sha` (the highlight route's concurrency token:
+a stale one is a 409) and `highlightable`. `dry_run: true` on the highlight
+POST returns the resulting page without writing it.
 
 Path traversal is blocked server-side — the resolved file must live under the
 vault directory. The tree endpoint returns `{"missing": true, "tree": []}` if
@@ -113,9 +155,17 @@ That's the cue to:
 
 ## Editing wiki pages
 
-The Wiki tab is **read-only**. Edit pages either inside Obsidian (click
-the **Obsidian** button in the header) or by editing the file on disk
-directly.
+The Wiki tab does not edit page text — only reader highlights (above). Edit
+pages either inside Obsidian (click the **Obsidian** button in the header) or
+by editing the file on disk directly.
+
+## Safety
+
+Wiki pages are untrusted input (written by Claude sessions, synced from other
+machines): every rendered page — wiki and Help — goes through DOMPurify, so
+scripts, event handlers, iframes, forms and styles in a page are dropped. The
+highlight route never takes markup from the browser: it builds the tag from a
+fixed color list and refuses any edit that would change the page text.
 
 ## Linking between pages
 

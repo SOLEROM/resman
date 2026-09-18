@@ -155,3 +155,58 @@ def test_recent_unread_honors_ignore_by_name_and_path(wiki):
     rels = [r["rel"] for r in wiki_unread.recent_unread(wiki, ignore=["concepts/gguf"])]
     assert "concepts/gguf.md" not in rels
     assert "concepts/cmsis.md" in rels
+
+
+# ----- reader highlights (<mark class="hl-…">) -----
+Y = '<mark class="hl-yellow">'
+
+
+def test_search_ignores_highlight_tags(wiki):
+    (wiki / "concepts" / "gguf.md").write_text(
+        f"# {Y}GGUF{'</mark>'}\n\nA {Y}tensor file{'</mark>'} format.\n")
+    hits = wiki_unread.search(wiki, "tensor file")
+    assert [h["rel"] for h in hits] == ["concepts/gguf.md"]
+    assert hits[0]["title"] == "GGUF"
+    assert "mark" not in hits[0]["snippet"]
+    # a query for the tag itself finds nothing
+    assert wiki_unread.search(wiki, "hl-yellow") == []
+
+
+def test_recent_unread_titles_drop_highlight_tags(wiki):
+    (wiki / "overview.md").write_text(f"# {Y}Over{'</mark>'}view\n")
+    wiki_unread.reconcile(wiki)
+    titles = {r["rel"]: r["title"] for r in wiki_unread.recent_unread(wiki)}
+    assert titles["overview.md"] == "Overview"
+
+
+def _after_baseline():
+    """Edits below land strictly after the reconcile that stamped the baseline."""
+    time.sleep(0.05)
+
+
+def test_settle_after_edit_keeps_a_read_page_read(wiki):
+    wiki_unread.reconcile(wiki)
+    wiki_unread.mark_read(wiki, "concepts/gguf.md")
+    _after_baseline()
+    (wiki / "concepts" / "gguf.md").write_text(f"# GGUF\n\nA {Y}tensor{'</mark>'} file format.\n")
+    wiki_unread.settle_after_edit(wiki, "concepts/gguf.md", was_unread=False)
+    assert "concepts/gguf.md" not in wiki_unread.reconcile(wiki)
+
+
+def test_settle_after_edit_keeps_an_unread_page_unread(wiki):
+    wiki_unread.reconcile(wiki)
+    _after_baseline()
+    (wiki / "overview.md").write_text("# Overview\n\nedited\n")
+    wiki_unread.settle_after_edit(wiki, "overview.md", was_unread=True)
+    assert "overview.md" in wiki_unread.reconcile(wiki)
+
+
+def test_settle_after_edit_still_flags_other_changed_pages(wiki):
+    wiki_unread.reconcile(wiki)
+    for rel in ("overview.md", "concepts/gguf.md", "concepts/cmsis.md"):
+        wiki_unread.mark_read(wiki, rel)
+    _after_baseline()
+    (wiki / "concepts" / "cmsis.md").write_text("# CMSIS-NN\n\nsynced from elsewhere\n")
+    (wiki / "concepts" / "gguf.md").write_text("# GGUF\n\nhighlighted here\n")
+    wiki_unread.settle_after_edit(wiki, "concepts/gguf.md", was_unread=False)
+    assert wiki_unread.reconcile(wiki) == {"concepts/cmsis.md"}

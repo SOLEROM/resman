@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from . import wiki_highlights
+
 log = logging.getLogger(__name__)
 
 BASELINE = ".unrd-scan"
@@ -34,6 +36,10 @@ SEARCH_MAX_FILES = 2000
 SEARCH_LIMIT = 50
 TITLE_WEIGHT = 5
 BODY_WEIGHT = 1
+# Reader highlights (<mark class="hl-…">) are markup in the page, never text
+# to search, rank or show: see wiki_highlights.
+_MARK_TAG_RE = re.compile(r"</?mark\b[^<>\n]*>", re.IGNORECASE)
+_MARK_CLOSE_RE = re.compile(r"</mark", re.IGNORECASE)
 
 
 # ----- path helpers -----
@@ -183,6 +189,22 @@ def reconcile(wiki_dir: Path) -> set[str]:
     return list_unread(wiki_dir)
 
 
+def settle_after_edit(wiki_dir: Path, rel: str, was_unread: bool) -> None:
+    """Keep a page's read state across an edit the reader made in the app.
+
+    A highlight rewrites the page, so its ctime passes the baseline and the
+    next ``reconcile()`` would take it for a freshly synced page and flag it
+    unread. Reconcile right after the write instead — every *other* changed
+    page is still flagged and the baseline moves past this write — then give
+    this page back the state it had before the edit.
+    """
+    reconcile(wiki_dir)
+    if was_unread:
+        mark_unread(wiki_dir, rel)
+    else:
+        mark_read(wiki_dir, rel)
+
+
 def pick_random_unread(wiki_dir: Path) -> Optional[str]:
     """Reconcile, then return a random unread wiki-relative path (or None)."""
     unread = reconcile(wiki_dir)
@@ -270,6 +292,8 @@ def search(wiki_dir: Path, query: str, limit: int = SEARCH_LIMIT) -> list[dict]:
             text = md.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if _MARK_CLOSE_RE.search(text):
+            text = wiki_highlights.strip_marks(text)
         title = _extract_title(text, md)
         score = _score(title, text, tokens)
         if score <= 0:
@@ -290,7 +314,7 @@ def _extract_title(text: str, md: Path) -> str:
     for line in text.splitlines():
         s = line.strip()
         if s.startswith("# "):
-            return s[2:].strip()
+            return _MARK_TAG_RE.sub("", s[2:]).strip()
     return md.stem
 
 

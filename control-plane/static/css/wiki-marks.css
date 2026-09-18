@@ -1,0 +1,140 @@
+/* wiki-marks.css — reader highlights (wiki-marks.js).
+ *
+ * The markdown names a color (<mark class="hl-yellow">); this file decides the
+ * shade per theme, so the same page reads well in dark, light, hc and green.
+ * Backgrounds are translucent and the text keeps the theme's own color; hc
+ * swaps to solid fills with black text. A plain <mark> (hand-written, or any
+ * host without this file) stays the browser's yellow.
+ *
+ * Borrows the 4ColThems tokens every app defines (--bg-elevated, --border…);
+ * the highlight palette itself is the --hl-* tokens below.
+ */
+:root {
+  --hl-yellow: rgba(255, 214, 10, 0.36);
+  --hl-green: rgba(63, 201, 106, 0.34);
+  --hl-blue: rgba(77, 163, 255, 0.38);
+  --hl-pink: rgba(255, 111, 181, 0.38);
+  --hl-orange: rgba(255, 152, 56, 0.40);
+  --hl-purple: rgba(180, 140, 255, 0.40);
+  --hl-text: inherit;
+  /* the palette swatches: one solid tone per color, the same in every theme */
+  --hl-dot-yellow: rgb(242, 194, 0);
+  --hl-dot-green: rgb(63, 185, 80);
+  --hl-dot-blue: rgb(77, 163, 255);
+  --hl-dot-pink: rgb(255, 111, 181);
+  --hl-dot-orange: rgb(255, 152, 56);
+  --hl-dot-purple: rgb(180, 140, 255);
+}
+
+:root[data-theme="light"] {
+  --hl-yellow: rgba(255, 229, 60, 0.62);
+  --hl-green: rgba(130, 224, 150, 0.62);
+  --hl-blue: rgba(140, 200, 255, 0.64);
+  --hl-pink: rgba(255, 168, 210, 0.66);
+  --hl-orange: rgba(255, 192, 120, 0.70);
+  --hl-purple: rgba(208, 180, 255, 0.70);
+}
+
+:root[data-theme="hc"] {
+  --hl-yellow: rgb(255, 238, 0);
+  --hl-green: rgb(93, 255, 143);
+  --hl-blue: rgb(124, 196, 255);
+  --hl-pink: rgb(255, 155, 208);
+  --hl-orange: rgb(255, 180, 94);
+  --hl-purple: rgb(207, 176, 255);
+  --hl-text: rgb(0, 0, 0);
+}
+
+mark.hl-yellow, mark.hl-green, mark.hl-blue, mark.hl-pink, mark.hl-orange, mark.hl-purple {
+  color: var(--hl-text);
+  border-radius: 2px;
+  padding: 0 1px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+mark.hl-yellow { background: var(--hl-yellow); }
+mark.hl-green { background: var(--hl-green); }
+mark.hl-blue { background: var(--hl-blue); }
+mark.hl-pink { background: var(--hl-pink); }
+mark.hl-orange { background: var(--hl-orange); }
+mark.hl-purple { background: var(--hl-purple); }
+/* links and code inside a highlight keep their own look, on the tint */
+mark[class^="hl-"] .wikilink.dead { color: inherit; opacity: 0.75; }   /* muted-on-tint is unreadable */
+:root[data-theme="hc"] mark[class^="hl-"] a,
+:root[data-theme="hc"] mark[class^="hl-"] code { color: rgb(0, 0, 0); background: transparent; }
+
+.hl-on mark[class^="hl-"] { cursor: pointer; }
+.hl-busy { cursor: progress; }
+
+/* ----- palette ----- */
+.hl-pop, .hl-penchip {
+  position: fixed;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  font: 12px/1 var(--vsc-font-ui, system-ui, sans-serif);
+  user-select: none;
+}
+.hl-pop[hidden], .hl-penchip[hidden], .hl-flash[hidden] { display: none; }
+.hl-penchip { right: 20px; bottom: 34px; }
+.hl-penchip-label { color: var(--text-secondary); margin-right: 2px; }
+
+.hl-dot {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.hl-dot-sm { width: 13px; height: 13px; }
+.hl-dot:hover { transform: scale(1.15); }
+.hl-dot:focus-visible, .hl-btn:focus-visible { outline: 2px solid var(--vsc-focus-border); outline-offset: 2px; }
+.hl-dot.active { box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--text-primary); }
+.hl-dot-yellow { background: var(--hl-dot-yellow); }
+.hl-dot-green { background: var(--hl-dot-green); }
+.hl-dot-blue { background: var(--hl-dot-blue); }
+.hl-dot-pink { background: var(--hl-dot-pink); }
+.hl-dot-orange { background: var(--hl-dot-orange); }
+.hl-dot-purple { background: var(--hl-dot-purple); }
+
+.hl-sep { width: 1px; height: 16px; background: var(--border); }
+.hl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.hl-btn[hidden] { display: none; }
+.hl-btn:hover { background: var(--bg-hover); }
+.hl-pen[aria-pressed="true"] { background: var(--accent-bg); }
+
+.hl-flash {
+  position: fixed;
+  z-index: 9001;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  max-width: min(520px, 90vw);
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  font: 12px/1.4 var(--vsc-font-ui, system-ui, sans-serif);
+}

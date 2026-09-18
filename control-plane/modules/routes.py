@@ -17,6 +17,7 @@ from flask import Blueprint, current_app, jsonify, request
 from . import plugin_commands
 from . import vault_hints
 from . import wiki_favorites
+from . import wiki_highlights
 from . import wiki_unread
 from . import window_schedule as window_schedule_mod
 from .session_plan import (
@@ -334,6 +335,15 @@ def umount_vault(name):
 WIKI_HOME = "wiki/overview.md"
 
 
+def highlightable(vault_rel: str) -> bool:
+    """Whether a vault-relative page may carry reader highlights: a markdown
+    page the Wiki tree lists — under ``wiki/``, no dot-named segment (markers,
+    hidden files). ``vault_rel`` must already be resolved and normalized."""
+    parts = vault_rel.split("/")
+    return (len(parts) >= 2 and parts[0] == "wiki" and parts[-1].lower().endswith(".md")
+            and not any(not part or part.startswith(".") for part in parts))
+
+
 @bp.get("/api/vaults/<name>/wiki")
 def vault_wiki(name):
     """Return the raw markdown of a wiki page produced by the Claude wiki plugin.
@@ -366,7 +376,10 @@ def vault_wiki(name):
         content = target.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return jsonify({"error": str(exc)}), 500
-    return jsonify({"file": rel, "content": content})
+    # `sha` is the concurrency token of the highlight route (routes_highlights).
+    return jsonify({"file": rel, "content": content,
+                    "sha": wiki_highlights.content_sha(content),
+                    "highlightable": highlightable(target.relative_to(vault_root).as_posix())})
 
 
 def _build_wiki_tree(wiki_root: Path, vault_root: Path, rel: Path = Path("."),

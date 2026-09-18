@@ -31,6 +31,7 @@ from modules.event_bus import get_bus
 from modules.mount_manager import MountManager
 from modules.obsidian_push import ObsidianPush
 from modules.routes import bp as api_bp
+from modules.routes_highlights import bp as highlights_bp
 from modules.scheduler import Scheduler
 from modules.session_manager import SessionManager
 from modules.task_manager import TaskManager
@@ -310,6 +311,7 @@ def build_app(
                                remdev_url=remdev_url)
 
     app.register_blueprint(api_bp)
+    app.register_blueprint(highlights_bp)
     attach_socketio(socketio, bus)
 
     # Terminal stack: the shared webterm library is the default;

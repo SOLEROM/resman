@@ -803,9 +803,15 @@ a:hover { text-decoration: underline; }
   letter-spacing: .2px;
   white-space: nowrap;
 }
-.activity-item:hover { color: var(--vsc-activitybar-fg); }
+.activity-item:hover {
+  color: var(--vsc-activitybar-fg);
+  background: color-mix(in srgb, var(--vsc-activitybar-active-border) 10%, transparent);
+}
+/* Selected tab: the whole square is tinted with the accent (alpha fill), the
+   2px accent line on the left stays as the VS Code-style anchor. */
 .activity-item.active {
   color: var(--vsc-activitybar-fg);
+  background: color-mix(in srgb, var(--vsc-activitybar-active-border) 22%, transparent);
   box-shadow: inset 2px 0 0 0 var(--vsc-activitybar-active-border);
 }
 .activity-badge {
@@ -2451,3 +2457,10 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
    otherwise the panel overflows and scrollIntoView() silently scrolls the
    toolbar out of view. */
 .tab-panel > .docs, .tab-panel > .terminal-panel { flex: 1; min-height: 0; height: auto; }
+
+/* ----- Footer app-name item -----
+   A plain indicator until bench-signal.js finds a mainBench shell to ask
+   (.is-live): same look, but nothing that promises an action. The gate
+   colours above outrank the hover rule, so the state stays readable. */
+.statusbar-item.remote:not(.is-live) { cursor: default; }
+.statusbar-item.remote:not(.is-live):hover { background: var(--vsc-statusbar-remote-bg); }

@@ -273,3 +273,13 @@ def test_entries_carry_title_and_existence(vault):
 
 def test_entries_without_file(vault):
     assert fav.entries(vault) == []
+
+
+def test_highlight_tags_never_reach_a_title(vault):
+    # A reader's highlight on the H1 (<mark class="hl-…">) is page markup, not
+    # part of the title: neither the list nor a written alias carries it.
+    page = vault / "wiki" / "overview.md"
+    page.write_text('# <mark class="hl-yellow">Over</mark>view <MARK>notes</MARK>\n')
+    fav.add(vault, "wiki/overview.md")
+    assert "mark" not in (vault / fav.FAVORITES_FILE).read_text().lower()
+    assert fav.entries(vault)[0]["title"] == "Overview notes"

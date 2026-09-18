@@ -1597,6 +1597,9 @@ state.wikiPageMissing = false;
 // buttons just walk the pointer without recording a new entry.
 state.wikiHistory = [];
 state.wikiHistoryIdx = -1;
+// Bumped by everything that replaces #wiki-content, so a slow page response
+// never lands over (or binds the highlighter to) a newer view.
+state.wikiReq = 0;
 
 // Rewrite Obsidian wikilinks ([[Page]] or [[Page|alias]]) to inline anchors
 // before marked.parse() runs. We emit a plain <a class="wikilink"> with the
@@ -1605,47 +1608,92 @@ state.wikiHistoryIdx = -1;
 // target is a page name (no .md, no leading wiki/) — resolved on click by
 // loadWikiTarget(). Embeds (![[Foo]]) collapse to a link, which is good
 // enough for v1; nobody embeds in claude-obsidian output today.
+const WIKILINK_RE = /!?\[\[([^\]\|\n]+?)(?:\|([^\]\n]+?))?\]\]/g;
+
+// One [[target|alias]] match → the anchor's markup, in three parts so the
+// highlighter can map the label back to the link (wikiMarksProfile).
+function wikilinkHtml(match) {
+  const [, target, alias] = match;
+  const t = (target || "").trim();
+  const a = (alias || target || "").trim();
+  return { open: `<a href="#" class="wikilink" data-wiki-target="${esc(t)}">`,
+           labelHtml: esc(a), close: "</a>" };
+}
+
 function rewriteWikilinks(md) {
-  return (md || "").replace(/!?\[\[([^\]\|\n]+?)(?:\|([^\]\n]+?))?\]\]/g, (_m, target, alias) => {
-    const t = (target || "").trim();
-    const a = (alias || target || "").trim();
-    return `<a href="#" class="wikilink" data-wiki-target="${esc(t)}">${esc(a)}</a>`;
+  return (md || "").replace(WIKILINK_RE, (...match) => {
+    const html = wikilinkHtml(match);
+    return html.open + html.labelHtml + html.close;
+  });
+}
+
+// Split a page into what renderWikiMarkdown folds and what it shows. The
+// YAML frontmatter (--- ... ---) and any stray prose before the first heading
+// are "metadata"; the body starts at `bodyStart`. The frontmatter is detected
+// first, then the heading in what's left, so a `# comment` line inside the
+// YAML can't be mistaken for the heading. Pre-heading prose only exists (and
+// only folds) when a heading follows it; with no heading the remainder is
+// the body and stays visible.
+function splitWikiMetadata(text) {
+  const fm = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
+  const fmEnd = fm ? fm[0].length : 0;
+  const afterFm = text.slice(fmEnd);
+  const headingIdx = afterFm.search(/^#{1,6}\s/m);
+  const preProse = headingIdx > 0 ? afterFm.slice(0, headingIdx) : "";
+  const bodyStart = fmEnd + (headingIdx > 0 ? headingIdx : 0);
+  return { yaml: fm ? fm[1] : null, preProse, body: text.slice(bodyStart), bodyStart };
+}
+
+// Every marked render goes through DOMPurify: wiki pages are written by Claude
+// sessions and synced from elsewhere, so raw HTML in them is untrusted.
+// data-* attributes (data-wiki-target) survive; <input> stays for GFM task
+// checkboxes; forms and anything that loads a resource are out.
+function sanitizeWikiHtml(html) {
+  return window.DOMPurify.sanitize(html, {
+    ADD_ATTR: ["data-wiki-target", "data-wiki-file"],
+    FORBID_TAGS: ["style", "iframe", "object", "embed", "form", "button", "textarea", "select"],
   });
 }
 
 // Render a markdown page, folding its leading metadata into a collapsed
 // <details> so the page leads with its first heading instead of a wall of
-// `key: value` frontmatter lines. "Metadata" means the YAML frontmatter block
-// (--- ... ---) plus any stray prose that sits before the first heading. We
-// detect the frontmatter first, then look for the heading in what's left, so a
-// `# comment` line inside the YAML can't be mistaken for the heading. Pages
-// with no frontmatter and no pre-heading prose render straight through.
+// `key: value` frontmatter lines (see splitWikiMetadata). Pages with no
+// frontmatter and no pre-heading prose render straight through.
 // `wikilinks` toggles Obsidian [[link]] rewriting (on for the wiki, off for
-// help/man pages, matching the previous per-call behaviour).
+// help/man pages, matching the previous per-call behaviour). Without marked
+// or DOMPurify the page degrades to escaped text, never unsanitized HTML.
 function renderWikiMarkdown(raw, { wikilinks = true } = {}) {
   const text = raw || "";
+  if (!window.marked || !window.DOMPurify
+      || typeof window.marked.parse !== "function" || typeof window.DOMPurify.sanitize !== "function") {
+    return `<pre>${esc(text)}</pre>`;
+  }
   const render = (s) =>
-    window.marked.parse(wikilinks ? rewriteWikilinks(s) : s, { breaks: true });
+    sanitizeWikiHtml(window.marked.parse(wikilinks ? rewriteWikilinks(s) : s, { breaks: true }));
 
-  const fm = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
-  const afterFm = fm ? text.slice(fm[0].length) : text;
-  const headingIdx = afterFm.search(/^#{1,6}\s/m);
-
-  // Pre-heading prose only exists (and only folds) when a heading follows it;
-  // with no heading the remainder is the body and stays visible.
-  const preProse = headingIdx > 0 ? afterFm.slice(0, headingIdx) : "";
-  const body = headingIdx > 0 ? afterFm.slice(headingIdx) : afterFm;
-
+  const { yaml, preProse, body } = splitWikiMetadata(text);
   const foldProse = preProse.trim();
-  if (!fm && !foldProse) return render(body);
+  if (yaml === null && !foldProse) return render(body);
 
   let head = "";
-  if (fm) head += `<pre class="wiki-fm">${esc(fm[1])}</pre>`;
+  if (yaml !== null) head += `<pre class="wiki-fm">${esc(yaml)}</pre>`;
   if (foldProse) head += render(preProse);
 
   return `<details class="wiki-frontmatter"><summary>metadata</summary>`
        + `<div class="wiki-fm-body">${head}</div></details>`
        + render(body);
+}
+
+// This renderer described for the highlighter (wiki-marks-core.js): the body
+// starts after the folded metadata, wikilinks are rewritten everywhere (code
+// included), no callouts, and single newlines are line breaks.
+function wikiMarksProfile() {
+  return {
+    bodyStart: (text) => splitWikiMetadata(text).bodyStart,
+    wikilinks: { re: WIKILINK_RE, split: null, render: wikilinkHtml },
+    callouts: false,
+    breaks: true,
+  };
 }
 
 // Resolve a wikilink target ("Foo Bar" or "subdir/Foo") to a vault-relative
@@ -1836,6 +1884,8 @@ async function loadWiki(file, opts = {}) {
   const fileEl = $("#wiki-file");
   const root = $("#wiki-content");
   if (file) state.wikiFile = file;
+  const token = ++state.wikiReq;
+  if (window.setupWikiHighlights) setupWikiHighlights(root, null);   // off until a page is in
   if (!state.selectedVault) {
     if (ctxEl) {
       ctxEl.textContent = "No vault selected";
@@ -1869,6 +1919,7 @@ async function loadWiki(file, opts = {}) {
   try {
     data = await api(url);
   } catch (err) {
+    if (token !== state.wikiReq) return;   // the reader moved on
     state.wikiPageMissing = err.status === 404;
     updateFavToggle();
     // Distinguish "no wiki yet" (404 on default home) from other errors so the
@@ -1885,11 +1936,9 @@ async function loadWiki(file, opts = {}) {
     }
     return;
   }
-  if (!window.marked) {
-    root.innerHTML = `<pre>${esc(data.content || "")}</pre>`;
-    return;
-  }
+  if (token !== state.wikiReq) return;     // the reader moved on
   root.innerHTML = renderWikiMarkdown(data.content || "", { wikilinks: true });
+  if (window.setupWikiHighlights) setupWikiHighlights(root, data);
 }
 
 // ----- wiki read/unread + random + search -----
@@ -2047,15 +2096,19 @@ async function doWikiSearch(q) {
   if (!state.selectedVault) return;
   if (!q) { loadWiki(state.wikiFile); return; }  // cleared box restores the page
   const root = $("#wiki-content");
+  const token = ++state.wikiReq;
+  if (window.setupWikiHighlights) setupWikiHighlights(root, null);
   root.innerHTML = `<p class="muted">Searching…</p>`;
   let data;
   try {
     data = await api("/api/vaults/" + encodeURIComponent(state.selectedVault)
                      + "/wiki/search?q=" + encodeURIComponent(q));
   } catch (err) {
+    if (token !== state.wikiReq) return;
     root.innerHTML = `<div class="wiki-error">${esc(err.message)}</div>`;
     return;
   }
+  if (token !== state.wikiReq) return;
   renderWikiSearchResults(data);
 }
 
@@ -2178,10 +2231,6 @@ async function loadHelpPage(file) {
     content.innerHTML = `<div class="wiki-empty">
       <p>${esc(err.message)}</p>
     </div>`;
-    return;
-  }
-  if (!window.marked) {
-    content.innerHTML = `<pre>${esc(data.content || "")}</pre>`;
     return;
   }
   content.innerHTML = renderWikiMarkdown(data.content || "", { wikilinks: false });
@@ -3964,13 +4013,22 @@ function setupStatusBar() {
   if (connPill) connPill.addEventListener("click", openSessionsOverview);
   const btnLog = $("#btn-activity-log");
   if (btnLog) btnLog.addEventListener("click", openActivityLog);
-  // The footer "resman" item toggles the vault tree (easy-read mode).
-  const winStateItem = $("#win-state-item");
-  if (winStateItem) {
-    winStateItem.addEventListener("click", toggleSidebar);
-    winStateItem.addEventListener("keydown", (e) => {
+  // The active-view tab toggles the vault tree (easy-read mode). The brand
+  // is resman's Home button, so the tab is the one toggle.
+  const toggleOnActivate = (item) => {
+    if (!item) return;
+    item.addEventListener("click", toggleSidebar);
+    item.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSidebar(); }
     });
+  };
+  toggleOnActivate($("#active-view-tab"));
+  // The footer "resman" item shows the window-gate state. Docked in the
+  // mainBench shell it also asks the shell for its app bar (embed kit,
+  // bench-signal.js); standalone it stays a plain indicator.
+  if (window.benchSignal) {
+    const winItem = $("#win-state-item");
+    benchSignal.setupItem(winItem, { title: winItem && winItem.title });
   }
   // Footer: remdev's Claude window/week bar, mounted by the shared cldBar
   // kit through cldbar-glue.js (no-op when the kit is not copied in). The
