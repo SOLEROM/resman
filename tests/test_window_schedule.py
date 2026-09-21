@@ -309,3 +309,17 @@ def test_automation_summary_counts_and_next_times(tmp_path):
     assert a["next_opener"] == "2026-06-12T15:00:00"   # the next ticked-open start
     assert a["next_sample"] is not None
     assert a["sample_offsets_minutes"] == [295]
+
+
+def test_automation_next_sample_includes_current_window(tmp_path):
+    # 15:00 window, rate 1 → its read lands 19:55; at 16:30 that read is still
+    # ahead, so it (not the 00:55 read of the 20:00 window) is the next sample.
+    s = _sched(tmp_path)
+    s.load()
+    s.update(windows=[
+        {"server_start": 0}, {"server_start": 5}, {"server_start": 10},
+        {"server_start": 15, "collect": True}, {"server_start": 20, "collect": True},
+    ], collection_rate=1)
+    assert s.automation(datetime(2026, 6, 12, 16, 30))["next_sample"] == "2026-06-12T19:55:00"
+    # past the current window's read → the next window's
+    assert s.automation(datetime(2026, 6, 12, 19, 56))["next_sample"] == "2026-06-13T00:55:00"

@@ -361,8 +361,10 @@ class WindowSchedule:
                                             self.collection_rate)
         next_samp = None
         if offsets:
+            # All instances, not just future ones: the window running now
+            # usually still has its reads ahead (rate 1 reads ~5 min before close).
             cands = [i["start"] + timedelta(minutes=off)
-                     for i in future for off in offsets if i["collect"]
+                     for i in insts for off in offsets if i["collect"]
                      if i["start"] + timedelta(minutes=off) > now]
             next_samp = min(cands) if cands else None
         n_open = sum(1 for w in self.windows if w.get("open"))
