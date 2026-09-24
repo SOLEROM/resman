@@ -21,6 +21,7 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 - [Getting started](getting-started.md) — first-run setup, deps, launching
 - [Vaults](vaults.md) — registering, discovering, scaffolding, health; sidebar category tree + filters
 - [Sessions](sessions.md) — Ops tab, Claude vs shell, tabs, renaming, Obsidian
+- [New vault](new-vault.md) — what the New Vault wizard runs: scaffold, register, the claude-obsidian bootstrap; the **Skills** tab shows the installed plugin and warns when a command resman sends is missing from it
 - [Tasks](tasks.md) — operations-first trigger, live logs, scheduling, ALL-vault parent/child, cancel/compaction; sidebar `↘` shortcut for URL ingest
 - [Wiki](wiki.md) — the per-vault Wiki tab, sidebar page tree, read/unread tracking, favorites (`.favorites.md`), search, random, clickable `[[wikilinks]]`
 - [Window state](window-state.md) — when work is allowed to run; the **⊞ Windows** tab (daily-window schedule, per-window open/collect marks, collection rate, usage statistics); openers/collectors automation; footer usage meters + limits

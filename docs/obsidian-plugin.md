@@ -19,11 +19,16 @@ claude plugin install claude-obsidian@claude-obsidian-marketplace
 claude plugin install AgriciDaniel/claude-canvas
 ```
 
+If `~/.claude/settings.json` already declares the marketplace (under
+`extraKnownMarketplaces`, e.g. as `agricidaniel-claude-obsidian`), step 1 is
+refused and the plugin is `claude-obsidian@agricidaniel-claude-obsidian`; resman
+finds it under any marketplace name.
+
 After install, seed a vault's Obsidian workspace with the plugin's visual
 layout (run from inside the vault root):
 
 ```bash
-cp ~/.claude/plugins/cache/claude-obsidian-marketplace/claude-obsidian/<version>/.obsidian/workspace-visual.json \
+cp ~/.claude/plugins/cache/<marketplace>/claude-obsidian/<version>/.obsidian/workspace-visual.json \
    .obsidian/workspace.json
 ```
 

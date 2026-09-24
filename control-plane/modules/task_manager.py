@@ -1002,11 +1002,7 @@ class TaskManager:
                 "--dangerously-skip-permissions",
             ], vault_path
         if op == "wiki-bootstrap":
-            repo_root = self.resman_root
-            prompt = plugin_commands.new_vault_bootstrap_prompt(
-                repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
-                repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
-            )
+            prompt = plugin_commands.new_vault_bootstrap_prompt_for(self.resman_root)
             return [
                 _claude_exe(), "-p", prompt,
                 "--dangerously-skip-permissions",
@@ -1045,11 +1041,7 @@ class TaskManager:
         if op == "wiki-hint":
             return plugin_commands.WIKI_HINT
         if op == "wiki-bootstrap":
-            repo_root = self.resman_root
-            return plugin_commands.new_vault_bootstrap_prompt(
-                repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
-                repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
-            )
+            return plugin_commands.new_vault_bootstrap_prompt_for(self.resman_root)
         if op == "run-prompt":
             prompt = params.get("prompt")
             return prompt if isinstance(prompt, str) and prompt else None

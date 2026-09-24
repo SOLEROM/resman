@@ -79,11 +79,8 @@ def build_session_plan(context: dict, body: dict) -> SessionPlan:
         if plan.initial_command:
             raise SessionPlanError(
                 "bootstrap_new_vault and initial_command are mutually exclusive")
-        repo_root = context["resman_root"]
-        plan.initial_text = plugin_commands.new_vault_bootstrap_prompt(
-            repo_root / plugin_commands.NEW_VAULT_PREFIX_FILE,
-            repo_root / plugin_commands.NEW_VAULT_SUFFIX_FILE,
-        )
+        plan.initial_text = plugin_commands.new_vault_bootstrap_prompt_for(
+            context["resman_root"])
     return plan
 
 

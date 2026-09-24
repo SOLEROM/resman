@@ -85,6 +85,9 @@ Legacy: `file=system.yaml` still accepted as an alias for `resman.yaml`.
 |--------|------|-------|
 | GET | `/api/help/tree` | Walk `man/`, return nested dirs + .md files |
 | GET | `/api/help/page?file=…` | Read one page; default `index.md` |
+| GET | `/api/skills/summary` | Installed claude-obsidian plugin: version, skills, commands, resman's uses of it, `warnings` (the Skills badge) |
+| GET | `/api/skills/file?path=…` | Read one `.md` file inside the plugin install (traversal-safe) |
+| GET | `/api/skills/new-vault` | `man/new-vault.md` plus the exact bootstrap message, plugin folder filled in |
 
 ## Socket.IO events (server → client)
 

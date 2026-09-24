@@ -15,6 +15,7 @@ from typing import Any
 from flask import Blueprint, current_app, jsonify, request
 
 from . import plugin_commands
+from . import plugin_info
 from . import vault_hints
 from . import wiki_favorites
 from . import wiki_highlights
@@ -750,6 +751,50 @@ def help_page():
     except OSError as exc:
         return jsonify({"error": str(exc)}), 500
     return jsonify({"file": rel, "content": content})
+
+
+# ----- Skills (read-only view of the installed claude-obsidian plugin) -----
+NEW_VAULT_DOC = "new-vault.md"
+
+
+@bp.get("/api/skills/summary")
+def skills_summary():
+    """The installed plugin, its skills/commands, and resman's uses of it.
+
+    ``warnings`` lists what resman needs but the install lacks (the Skills
+    activity badge counts them).
+    """
+    return jsonify(plugin_info.summary())
+
+
+@bp.get("/api/skills/file")
+def skills_file():
+    """Raw markdown of one file inside the plugin install (traversal-safe)."""
+    rel = request.args.get("path") or ""
+    try:
+        content = plugin_info.read_file(rel)
+    except plugin_info.PluginFileError as exc:
+        return jsonify({"error": str(exc)}), exc.status
+    return jsonify({"path": rel, "content": content})
+
+
+@bp.get("/api/skills/new-vault")
+def skills_new_vault():
+    """The new-vault process: man/new-vault.md plus the exact bootstrap
+    message resman pastes, with the installed plugin's folder filled in."""
+    try:
+        doc = (_man_root() / NEW_VAULT_DOC).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        doc = ""
+    root = _ctx()["resman_root"]
+    folder = plugin_info.plugin_dir()
+    return jsonify({
+        "doc": doc,
+        "prompt": plugin_commands.new_vault_bootstrap_prompt_for(root),
+        "plugin_dir": str(folder) if folder else None,
+        "prefix_file": plugin_commands.NEW_VAULT_PREFIX_FILE,
+        "suffix_file": plugin_commands.NEW_VAULT_SUFFIX_FILE,
+    })
 
 
 @bp.post("/api/vaults/<name>/open")

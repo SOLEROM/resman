@@ -9,6 +9,35 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+# The Claude Code plugin every command below belongs to: its registry key in
+# ~/.claude/plugins/installed_plugins.json after `claude plugin marketplace add`.
+# plugin_info.py also finds it under any other marketplace name
+# (e.g. claude-obsidian@agricidaniel-claude-obsidian); commands use only the
+# plugin name, so they work either way.
+PLUGIN_ID = "claude-obsidian@claude-obsidian-marketplace"
+
+# Every claude-obsidian skill/command resman sends, and where from. The Skills
+# tab checks each name against the installed plugin and warns on a miss;
+# tests/test_plugin_info.py fails when a new `claude-obsidian:<name>` appears in
+# resman without an entry here.
+PLUGIN_USES = {
+    "wiki": "new-vault wizard bootstrap session and the wiki-bootstrap task",
+    "wiki-ingest": "wiki-ingest tasks (tools/ingest.sh)",
+    "wiki-lint": "wiki-lint task",
+    "update-hot-cache": "wiki-update-hot-cache task",
+    "autoresearch": "wiki-autoresearch task",
+    "canvas": "wiki-canvas task and ingest's canvas update",
+    "wiki-query": "wiki-hint task (vault card description)",
+}
+
+# Written in tools/newValPrefix.md / newValSuffix.md where the plugin's install
+# folder is meant; replaced with the resolved folder of whatever version is
+# installed, so the prompt files never pin a version.
+PLUGIN_DIR_PLACEHOLDER = "{plugin_dir}"
+PLUGIN_DIR_FALLBACK = ("<the claude-obsidian install folder: the newest version "
+                       "folder under ~/.claude/plugins/cache/<marketplace>/"
+                       "claude-obsidian/>")
+
 WIKI_LINT = "/claude-obsidian:wiki-lint"
 WIKI_UPDATE_HOT_CACHE = "/claude-obsidian:update-hot-cache"
 
@@ -85,6 +114,7 @@ def _read_optional_text(p: Optional[Path]) -> str:
 def new_vault_bootstrap_prompt(
     prefix_path: Optional[Path] = None,
     suffix_path: Optional[Path] = None,
+    plugin_dir: Optional[Path] = None,
 ) -> str:
     """Combined prompt that wraps /claude-obsidian:wiki with prefix/suffix.
 
@@ -92,6 +122,8 @@ def new_vault_bootstrap_prompt(
     sandwiches the bootstrap slash command between them as a single
     natural-language instruction block. Missing files are skipped silently
     so the bootstrap still works on checkouts that don't ship these files.
+    ``{plugin_dir}`` in either file becomes ``plugin_dir`` (the installed
+    plugin's folder), or a findable description of it when that is unknown.
     """
     parts: list[str] = []
     prefix = _read_optional_text(prefix_path)
@@ -104,4 +136,16 @@ def new_vault_bootstrap_prompt(
     suffix = _read_optional_text(suffix_path)
     if suffix:
         parts.append(suffix)
-    return "\n\n".join(parts)
+    where = str(plugin_dir) if plugin_dir else PLUGIN_DIR_FALLBACK
+    return "\n\n".join(parts).replace(PLUGIN_DIR_PLACEHOLDER, where)
+
+
+def new_vault_bootstrap_prompt_for(repo_root: Path) -> str:
+    """The bootstrap prompt from the repo's prefix/suffix files, with the
+    installed plugin's folder filled in (whatever version is installed now)."""
+    from . import plugin_info  # plugin_info imports this module
+    return new_vault_bootstrap_prompt(
+        repo_root / NEW_VAULT_PREFIX_FILE,
+        repo_root / NEW_VAULT_SUFFIX_FILE,
+        plugin_info.plugin_dir(),
+    )

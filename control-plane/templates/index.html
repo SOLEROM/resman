@@ -43,6 +43,7 @@
   <script defer src="/static/js/cldbar-glue.js"></script>
   <script defer src="/static/js/bench-signal.js"></script>
   <script defer src="/static/js/app.js"></script>
+  <script defer src="/static/js/skills.js"></script>
   <script defer src="/static/js/wiki-highlights-glue.js"></script>
   {% if use_webterm %}
   <script type="module" src="/static/js/webterm-glue.js"></script>
@@ -116,6 +117,12 @@
       </button>
     </div>
     <div class="activity-group activity-bottom">
+      <button class="activity-item" data-tab="skills"
+              title="Skills — the claude-obsidian plugin resman drives, and the new-vault process">
+        <span class="codicon codicon-extensions"></span>
+        <span class="activity-badge" id="skills-badge" hidden></span>
+        <span class="activity-label">Skills</span>
+      </button>
       <button class="activity-item" data-tab="help" title="Help">
         <span class="codicon codicon-question"></span>
         <span class="activity-label">Help</span>
@@ -392,6 +399,21 @@
           <div id="cfg-content" class="cfg-content"></div>
         </div>
         <textarea id="config-editor" spellcheck="false" hidden></textarea>
+      </section>
+
+      <section id="tab-skills" class="tab-panel">
+        <div class="docs help-layout">
+          <aside class="docs-tree help-tree skills-tree" id="skills-tree">
+            <div class="docs-tree-header">
+              <span>Skills</span>
+              <button id="btn-skills-refresh" class="icon-btn" title="Re-read the installed plugin"><span class="codicon codicon-refresh"></span></button>
+            </div>
+            <div id="skills-tree-list"></div>
+          </aside>
+          <div class="docs-body markdown-body wiki-body skills-content" id="skills-content">
+            <p class="muted">Loading…</p>
+          </div>
+        </div>
       </section>
 
       <section id="tab-help" class="tab-panel">

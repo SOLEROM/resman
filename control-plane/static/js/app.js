@@ -568,7 +568,7 @@ function renderVaultContext() {
   if (actions) actions.classList.toggle("empty", !state.selectedVault);
 }
 
-// Show one panel. tabName is "wiki" | "ops" | "tasks" | "config" | "help".
+// Show one panel. tabName is "wiki" | "ops" | "tasks" | "config" | "skills" | "help".
 // "ops" is the terminal-sessions view (live ttyd iframes for the current
 // vault). It has its own header tab — clicking the vault-name label in
 // the header is an equivalent shortcut.
@@ -586,6 +586,7 @@ const VIEW_META = {
   ops:     { icon: "codicon-terminal",      label: "Ops" },
   tasks:   { icon: "codicon-checklist",     label: "Tasks" },
   config:  { icon: "codicon-settings-gear", label: "Config" },
+  skills:  { icon: "codicon-extensions",    label: "Skills" },
   help:    { icon: "codicon-question",      label: "Help" },
 };
 
@@ -616,14 +617,14 @@ function showPanel(tabName) {
   if (tabName === "config") loadConfigTab();
   if (tabName === "tasks") loadTasks();
   if (tabName === "help") loadHelp();
+  if (tabName === "skills") loadSkillsTab();
   if (tabName === "home") loadLanding();
   if (tabName === "inbox") loadInbox();
   if (tabName === "wiki" && state.selectedVault) loadWikiTree();
-  // "home", "help" and "inbox" are vault-independent global views — don't pin
-  // them as a vault's remembered panel (would dump the user back onto the
-  // landing / help / inbox screen the next time they re-select that vault).
-  if (state.selectedVault && tabName !== "help" && tabName !== "home" &&
-      tabName !== "inbox") {
+  // "home", "help", "skills" and "inbox" are vault-independent global views —
+  // don't pin them as a vault's remembered panel (would dump the user back onto
+  // the landing / help / inbox screen the next time they re-select that vault).
+  if (state.selectedVault && !["help", "skills", "home", "inbox"].includes(tabName)) {
     state.lastPanelByVault[state.selectedVault] = tabName;
     saveLastPanelByVault();
   }

@@ -1693,3 +1693,32 @@ def test_wiki_favorites_unknown_vault(tmp_path):
     rv = client.post("/api/vaults/ghost/wiki/favorites", headers=_csrf(),
                      json={"file": "wiki/x.md", "favorite": True})
     assert rv.status_code == 404
+
+
+# ----- Skills tab (claude-obsidian plugin view) -----
+
+def test_skills_routes_without_the_plugin(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    s = client.get("/api/skills/summary").get_json()
+    assert s["plugin"]["installed"] is False and len(s["warnings"]) == 1
+    assert client.get("/api/skills/file?path=README.md").status_code == 404
+    nv = client.get("/api/skills/new-vault").get_json()
+    assert nv["plugin_dir"] is None and "/claude-obsidian:wiki" in nv["prompt"]
+
+
+def test_skills_routes_with_the_plugin(tmp_path, make_plugin):
+    root = make_plugin()
+    app, ctx, _ = make_test_app(tmp_path)
+    (ctx["resman_root"] / "tools").mkdir(parents=True)
+    (ctx["resman_root"] / "tools" / "newValSuffix.md").write_text("cp {plugin_dir}/a b")
+    (ctx["resman_root"] / "man").mkdir()
+    (ctx["resman_root"] / "man" / "new-vault.md").write_text("# New vault\n")
+    client = app.test_client()
+    assert client.get("/api/skills/summary").get_json()["plugin"]["version"] == "1.6.0"
+    rv = client.get("/api/skills/file?path=skills/wiki/SKILL.md")
+    assert rv.status_code == 200 and "name: wiki" in rv.get_json()["content"]
+    assert client.get("/api/skills/file?path=../../x.md").status_code == 400
+    nv = client.get("/api/skills/new-vault").get_json()
+    assert nv["doc"] == "# New vault\n" and nv["plugin_dir"] == str(root)
+    assert f"cp {root}/a b" in nv["prompt"]
