@@ -20,6 +20,7 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 |--------|------|-------------|
 | GET | `/api/health` | Server health: config, tmux, ttyd, scheduler, task replay status |
 | GET | `/api/vaults` | List all registered vaults with status (registered + discovered). Each vault carries its `category` (or `null`); the response also includes `categories` — the top-level ordering list from resman.yaml — so the sidebar can build its group tree, and `vault_default_root` — the optional `app.vault_default_root_path`, or `null` — so the New Vault wizard can pre-fill its path input and seed the Browse picker without a second round-trip |
+| POST | `/api/vaults/<name>/archive` | Body `{"archived": true\|false}`. Sets (or drops) the vault's `archived` key in resman.yaml via `ConfigManager.set_vault_archived`; the sidebar shows archived vaults in its ARCHIVE folder. 400 on a non-boolean, 404 on an unknown vault. `GET /api/vaults` and `GET /api/landing` carry `archived` per vault |
 | POST | `/api/vaults` | Register a vault in `resman.yaml` (name, path, tags, optional category — validated + normalized). Does not create the directory |
 | POST | `/api/vaults/scaffold` | Run `tools/new-vault.sh` to create the directory tree (path, `.obsidian/`, `inbox/`, `_resman/`, README, gitignore). Body: `{name, path}` |
 | GET | `/api/vaults/{name}/health` | Vault health check: path, .obsidian/, wiki home (`wiki/overview.md`), last session, last completed task, tags |

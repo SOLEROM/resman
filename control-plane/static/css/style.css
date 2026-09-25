@@ -1828,6 +1828,19 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 .tree-row:hover .play, .tree-row .play:focus-visible { visibility: visible; }
 .tree-row .btn { height: 18px; padding: 0 6px; font-size: 11px; flex: none; }
 .discovered { padding: 4px 0; border-top: 1px solid var(--border-light); flex: none; }
+/* ARCHIVE folder — its own section under the tree, above the tag filter.
+   Capped with its own scroll so an open archive never crowds out the tree. */
+.sidebar-archive {
+  flex: none;
+  border-top: 1px solid var(--border);
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.sidebar-archive .tree { overflow: visible; padding-bottom: 0; }
+.archive-row .codicon-archive { font-size: 14px; color: var(--text-secondary); flex: none; }
+.archive-vaults .vault-row .tree-label { color: var(--text-secondary); }
+.archive-vaults .vault-row.selected .tree-label { color: var(--vsc-list-active-fg); }
 
 /* Tag filter — pinned to the sidebar bottom. The header row is always shown;
    the chip list below it collapses/expands. Capped in height with its own
@@ -2158,6 +2171,8 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 }
 .cfg-field { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 8px; }
 .cfg-field span { color: var(--text-secondary); font-size: 11.5px; }
+.cfg-check { display: inline-flex; align-items: center; gap: 8px; }
+.cfg-check input[type="checkbox"] { width: auto; margin: 0; }
 .cfg-add-card { margin-top: 10px; }
 #config-editor {
   flex: 1; width: 100%;

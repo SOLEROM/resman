@@ -104,6 +104,29 @@ to reclaim vertical space.
 - While a filter is active, groups are force-expanded and non-toggleable,
   and groups left empty by the filter disappear
 
+**Archive folder:**
+- A vault whose resman.yaml entry carries `archived: true` leaves the tree
+  and sits in the **ARCHIVE** folder, a separate section (`#archive-section`)
+  that is always the last part of the tree, just above the tag filter; it
+  is hidden while nothing is archived
+- The folder is folded by default; its open state persists per browser
+  (`resman-archive-open`). Folded, its header shows the archived count and
+  one aggregated status dot; open, the archived vaults render with the same
+  category grouping as the tree
+- The header's archive button (`codicon-archive`, right of *Obsidian*)
+  toggles the selected vault: `POST /api/vaults/<name>/archive`. It is lit
+  (`.active`) while the selected vault is archived. Archiving opens the
+  folder so the vault stays in sight
+- Search / status / tag filters apply to the folder too; while one is
+  active the folder is forced open and non-toggleable, like the groups
+- The **Home** grid shows no card for an archived vault; its count reads
+  `N vaults · M archived`, and when every vault is archived it points to
+  the folder instead
+- The Config form's vault card has an **Archived** checkbox (unchecked drops
+  the key, like the header button); the card subtitle adds `archived`
+- Archiving is display-only: files, tasks, sessions and cron entries are
+  unchanged
+
 **Vault list:**
 - Each row: status dot, vault name, tags (dimmed), `[↘]` button
 - Clicking vault name selects the vault and switches main panel to the vault's remembered panel; on first visit, **Ops** if the vault has live sessions, otherwise **Wiki**. The header's vault-action buttons become visible either way
@@ -271,6 +294,7 @@ without leaving the browser.
 ## Key Decisions
 
 - **Vanilla JS + CDN** — no build step; no npm; dark terminal aesthetic
+- **Sidebar ARCHIVE folder** — the flag lives in config (`archived` per vault), not in browser state; only the folder's open/closed state is client-local
 - **Sidebar category tree** — grouping lives in config (`category` per vault), not in browser state; only the collapsed set is client-local. Closing the filter bar clears the filters so hidden state can't shrink the list
 - **Config form over raw YAML** — a schema-driven settings editor (`CFG_SECTIONS`) with the raw editor one toggle away; parsed documents travel over `/api/config/structured` so the no-build frontend never needs a YAML parser
 - **ttyd iframes** — xterm.js is not loaded by the SPA; ttyd serves its own xterm.js internally

@@ -65,6 +65,25 @@ four buttons: `⌕` opens the search + status filter bar (closing it clears
 the filters), `⊟`/`⊞` collapses or expands all groups, `+` opens the New
 Vault wizard, `↻` refreshes.
 
+### Archiving a vault
+
+Select a vault and click the archive button in the header (the box icon
+right of *Obsidian*). The vault leaves the tree and moves to the **ARCHIVE**
+folder — its own section at the bottom of the tree, just above *Filter by
+tag*. The folder starts folded (its header shows how many vaults it holds);
+click it to open it, and resman remembers that per browser. To bring a vault
+back, select it inside the folder and click the button again (it is lit
+while the selected vault is archived).
+
+You can also tick **Archived** on the vault's card in the Config tab (Vaults
+section) and save. An archived vault gets no card on the Home page; the
+count at the top says how many are archived.
+
+Archiving only writes `archived: true` on the vault's entry in resman.yaml.
+Nothing on disk changes, and the vault's tasks, sessions and cron entries
+keep working. A search, status or tag filter also searches the archive and
+opens the folder while it is active.
+
 ## Vault dot — what does the colour mean?
 
 Beside each vault name in the sidebar:

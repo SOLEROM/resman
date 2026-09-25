@@ -19,7 +19,7 @@ are rendered straight from disk — edit them and hit ↻ to reload.
 ## Where to start
 
 - [Getting started](getting-started.md) — first-run setup, deps, launching
-- [Vaults](vaults.md) — registering, discovering, scaffolding, health; sidebar category tree + filters
+- [Vaults](vaults.md) — registering, discovering, scaffolding, health; sidebar category tree + filters; the ARCHIVE folder
 - [Sessions](sessions.md) — Ops tab, Claude vs shell, tabs, renaming, Obsidian
 - [New vault](new-vault.md) — what the New Vault wizard runs: scaffold, register, the claude-obsidian bootstrap; the **Skills** tab shows the installed plugin and warns when a command resman sends is missing from it
 - [Skills](skills.md) — the **Skills** tab: the claude-obsidian plugin resman drives, resman's own skills (`skills/`), and the rule they share: skills write `wiki/` pages, resman renders them

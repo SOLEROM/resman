@@ -166,6 +166,7 @@ def landing():
             "path_exists": v.path_exists,
             "is_obsidian": v.is_obsidian,
             "mount": v.mount,
+            "archived": v.archived,
             "has_wiki": has_wiki,
             "hint": hint,
         })
@@ -195,6 +196,28 @@ def register_vault():
         return jsonify({"error": str(exc)}), 400
     _activity(f"vault registered: {name}", source="vault", detail=path)
     return jsonify({"ok": True, "name": name})
+
+
+@bp.post("/api/vaults/<name>/archive")
+@_csrf_required
+def archive_vault(name):
+    """Set or clear a vault's ``archived`` flag in resman.yaml.
+
+    Body ``{"archived": true|false}``. An archived vault moves to the
+    sidebar's ARCHIVE section; nothing on disk changes, and tasks, sessions
+    and cron entries keep working.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    archived = body.get("archived")
+    if not isinstance(archived, bool):
+        return jsonify({"error": "archived must be true or false"}), 400
+    try:
+        _ctx()["config"].set_vault_archived(name, archived)
+    except ConfigError as exc:
+        _activity(f"vault archive failed: {name} — {exc}", level="warn", source="vault")
+        return jsonify({"error": str(exc)}), 404
+    _activity(f"vault {'archived' if archived else 'unarchived'}: {name}", source="vault")
+    return jsonify({"ok": True, "name": name, "archived": archived})
 
 
 @bp.post("/api/vaults/scaffold")

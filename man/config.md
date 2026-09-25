@@ -76,6 +76,7 @@ scan_paths:
 | `path` | yes | Absolute path to the vault directory |
 | `tags` | no | List of string labels (display only) |
 | `category` | no | Sidebar group. `/` nests (`hw/edge`, max 3 levels); segments allow letters, numbers, spaces, `. _ -`. Uncategorized vaults sit at the tree root. |
+| `archived` | no | `true` moves the vault to the sidebar's ARCHIVE folder (set by the header archive button or the vault card's *Archived* checkbox; hides it from Home). Display only; omit it for a normal vault. |
 | `mount` | no | Absolute host path to bind-mount the vault onto at startup. Requires root or a sudoers rule — see [Mounts](mounts.md). |
 
 ### Categories

@@ -70,6 +70,8 @@
       <button id="btn-shell" class="btn secondary"><span class="codicon codicon-terminal"></span>Shell</button>
       <button id="btn-claude" class="btn"><span class="codicon codicon-add"></span>Claude</button>
       <button id="btn-obsidian" class="btn secondary"><span class="codicon codicon-link-external"></span>Obsidian</button>
+      <button id="btn-archive" class="icon-btn" title="Archive this vault"
+              aria-label="Archive this vault"><span class="codicon codicon-archive"></span></button>
       {% if not use_webterm %}
       <span class="ttyd-warning" id="ttyd-warning" hidden>ttyd not installed</span>
       {% endif %}
@@ -165,6 +167,14 @@
     <div id="discovered-section" class="discovered" hidden>
       <div class="divider">Unregistered</div>
       <div id="discovered-list"></div>
+    </div>
+    <!-- Archive — vaults flagged `archived: true` in resman.yaml (header
+         archive button). One folded ARCHIVE folder, always the last section
+         of the tree, just above the tag filter; open/closed is remembered,
+         folded by default. Filters apply to it too; while one is active the
+         folder is forced open so a match is never hidden. -->
+    <div id="archive-section" class="sidebar-archive" hidden>
+      <div id="archive-list" class="tree" role="tree"></div>
     </div>
     <!-- Tag filter — pinned to the sidebar bottom. The "Filter by tag" header
          row is always visible; clicking it expands/collapses the chips below

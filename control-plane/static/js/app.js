@@ -31,6 +31,9 @@ const state = {
   // plus the set of collapsed category paths (persisted — default expanded).
   categoryOrder: [],
   collapsedCats: loadCollapsedCats(),
+  // Sidebar ARCHIVE folder (vaults with `archived: true`): folded by
+  // default, open state persisted.
+  archiveOpen: loadStored("resman-archive-open", "0") === "1",
   // sessionId -> custom display label (set by user via tab click-to-rename).
   // Persisted to localStorage so labels survive reload as long as the
   // session_id does — which it does, since SessionManager keeps sessions
@@ -399,17 +402,106 @@ function renderVaultList() {
   if (state.vaults.length === 0) {
     root.innerHTML =
       `<div class="muted" style="padding:14px">Add your first vault to get started →</div>`;
+    renderArchiveSection([], false);
     return;
   }
+  // Archived vaults leave the main tree for the ARCHIVE folder below it.
+  const active = filtered.filter((v) => !v.archived);
+  const archived = filtered.filter((v) => v.archived);
   const out = [];
   // Tree built from the FILTERED list — groups left empty by a filter
   // disappear instead of rendering dead headers.
-  renderCatChildren(buildCategoryTree(filtered), "", 0, out, filtering);
+  renderCatChildren(buildCategoryTree(active), "", 0, out, filtering);
   if (!filtered.length) {
     out.push(`<div class="muted" style="padding:14px">No vaults match.</div>`);
   }
   root.innerHTML = out.join("");
-  root.querySelectorAll(".cat-row:not(.static)").forEach((row) => {
+  wireVaultRows(root);
+  renderArchiveSection(archived, filtering);
+  renderDiscovered();
+}
+
+// ARCHIVE folder: one header row (folded by default) over the archived
+// vaults, grouped by category like the main tree. Hidden while no vault —
+// or no filter match — is archived.
+function renderArchiveSection(archived, filtering) {
+  const section = $("#archive-section");
+  const list = $("#archive-list");
+  if (!section || !list) return;
+  section.hidden = archived.length === 0;
+  if (!archived.length) { list.innerHTML = ""; return; }
+  const open = filtering || state.archiveOpen;
+  const out = [`
+    <div class="tree-row cat-row archive-row ${open ? "" : "collapsed"} ${filtering ? "static" : ""}"
+         style="--depth:0" role="treeitem" aria-expanded="${open}"
+         title="Archived vaults — ${archived.length}. Select one and use the header archive button to bring it back.">
+      <span class="tree-twisty"><span class="codicon codicon-chevron-down cat-chevron"></span></span>
+      <span class="codicon codicon-archive"></span>
+      <span class="tree-label cat-name">Archive</span>
+      ${open ? "" : `<span class="tree-dot ${DOT_CLASS[subtreeColor(buildCategoryTree(archived))] || "idle"} cat-dot"></span>`}
+      <span class="tree-tag cat-count">${archived.length}</span>
+    </div>`];
+  if (open) {
+    out.push(`<div class="archive-vaults">`);
+    renderCatChildren(buildCategoryTree(archived), "", 1, out, filtering);
+    out.push(`</div>`);
+  }
+  list.innerHTML = out.join("");
+  const head = list.querySelector(".archive-row:not(.static)");
+  if (head) head.addEventListener("click", toggleArchiveOpen);
+  wireVaultRows(list);
+}
+
+function toggleArchiveOpen() {
+  state.archiveOpen = !state.archiveOpen;
+  saveStored("resman-archive-open", state.archiveOpen ? "1" : "0");
+  renderVaultList();
+}
+
+function selectedVaultEntry() {
+  return state.vaults.find((v) => v.name === state.selectedVault) || null;
+}
+
+// Header archive button: flag the selected vault archived (or bring it
+// back). Only resman.yaml changes — files, tasks, sessions and cron stay.
+async function toggleArchiveSelected() {
+  const v = selectedVaultEntry();
+  if (!v) return;
+  const want = !v.archived;
+  try {
+    await api(`/api/vaults/${encodeURIComponent(v.name)}/archive`, {
+      method: "POST",
+      body: JSON.stringify({ archived: want }),
+    });
+  } catch (e) {
+    alert(`${want ? "Archive" : "Unarchive"} failed: ${e.message}`);
+    return;
+  }
+  v.archived = want;
+  // Open the folder so the vault just archived stays in sight.
+  if (want && !state.archiveOpen) {
+    state.archiveOpen = true;
+    saveStored("resman-archive-open", "1");
+  }
+  renderVaultList();
+  renderVaultContext();
+  await loadVaults();
+}
+
+function updateArchiveButton() {
+  const btn = $("#btn-archive");
+  if (!btn) return;
+  const v = selectedVaultEntry();
+  const archived = !!(v && v.archived);
+  const label = archived ? "Unarchive this vault (back to the tree)" : "Archive this vault (move to the ARCHIVE folder)";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.classList.toggle("active", archived);
+  btn.disabled = !v;
+}
+
+function wireVaultRows(root) {
+  root.querySelectorAll(".cat-row:not(.static):not(.archive-row)").forEach((row) => {
     row.addEventListener("click", () => toggleCategory(row.dataset.cat));
   });
   root.querySelectorAll(".vault-row").forEach((row) => {
@@ -431,7 +523,9 @@ function renderVaultList() {
       ingestUrlForVault(btn.dataset.vault);
     });
   });
-  // Discovered
+}
+
+function renderDiscovered() {
   if (state.discovered.length) {
     $("#discovered-section").hidden = false;
     $("#discovered-list").innerHTML = state.discovered.map((v) => `
@@ -589,6 +683,7 @@ function renderVaultContext() {
   // until a vault is selected so the header doesn't show dangling buttons
   // that act on nothing.
   if (actions) actions.classList.toggle("empty", !state.selectedVault);
+  updateArchiveButton();
 }
 
 // Show one panel. tabName is "wiki" | "ops" | "tasks" | "config" | "skills" | "help".
@@ -673,10 +768,22 @@ function renderLanding() {
   const root = $("#landing-grid");
   if (!root) return;
   const count = $("#landing-count");
-  const vaults = state.landing;
+  // Archived vaults live in the sidebar ARCHIVE folder only; Home counts
+  // them but shows no card.
+  const vaults = state.landing.filter((v) => !v.archived);
+  const nArchived = state.landing.length - vaults.length;
   if (count) {
-    count.textContent = vaults.length
-      ? `${vaults.length} vault${vaults.length > 1 ? "s" : ""}` : "";
+    const parts = [];
+    if (vaults.length) parts.push(`${vaults.length} vault${vaults.length > 1 ? "s" : ""}`);
+    if (nArchived) parts.push(`${nArchived} archived`);
+    count.textContent = parts.join(" · ");
+    count.title = nArchived ? "Archived vaults are in the sidebar's ARCHIVE folder" : "";
+  }
+  if (!vaults.length && nArchived) {
+    root.innerHTML =
+      `<div class="landing-empty muted">Every vault is archived — open the ` +
+      `<strong>ARCHIVE</strong> folder in the sidebar to reach them.</div>`;
+    return;
   }
   if (!vaults.length) {
     root.innerHTML =
@@ -2629,8 +2736,8 @@ function cfgSelectHtml(kind, name, label, value, options) {
 
 function cfgVaultCardHtml(v, i) {
   const open = cfgState.openCards.has(`vault:${i}`);
-  const sub = [v.path, v.category].filter(Boolean).join(" · ");
-  const search = `vaults vault ${v.name || ""} ${v.path || ""} ${v.category || ""} ${(v.tags || []).join(" ")}`.toLowerCase();
+  const sub = cfgVaultSub(v);
+  const search = `vaults vault ${v.name || ""} ${v.path || ""} ${v.category || ""} ${(v.tags || []).join(" ")}${v.archived ? " archived" : ""}`.toLowerCase();
   return `<div class="cfg-card ${open ? "open" : ""}" data-kind="vault" data-idx="${i}" data-search="${esc(search)}">
       <div class="cfg-card-head">
         <span class="codicon codicon-chevron-down cfg-card-chev"></span>
@@ -2644,8 +2751,15 @@ function cfgVaultCardHtml(v, i) {
         ${cfgFieldHtml("vfield", "category", "Category", v.category, 'list="cfg-cat-list" placeholder="sidebar group — \'/\' nests (hw/edge)"')}
         ${cfgFieldHtml("vfield", "tags", "Tags", (v.tags || []).join(", "), 'placeholder="comma, separated"')}
         ${cfgFieldHtml("vfield", "mount", "Mount", v.mount, 'placeholder="optional bind-mount host path"')}
+        <label class="cfg-field cfg-field-check"><span>Archived</span>
+          <span class="cfg-check"><input type="checkbox" data-vfield="archived" ${v.archived ? "checked" : ""}>
+          <span class="muted small">in the sidebar ARCHIVE folder, not the tree or Home</span></span></label>
       </div>
     </div>`;
+}
+
+function cfgVaultSub(v) {
+  return [v.path, v.category, v.archived ? "archived" : ""].filter(Boolean).join(" · ");
 }
 
 function cfgCronCardHtml(t, i) {
@@ -2823,7 +2937,7 @@ function cfgUpdateCardHead(card) {
   if (!item) return;
   card.querySelector(".cfg-card-title").textContent = item.name || "(unnamed)";
   card.querySelector(".cfg-card-sub").textContent = isVault
-    ? [item.path, item.category].filter(Boolean).join(" · ")
+    ? cfgVaultSub(item)
     : [item.cron, item.vault, item.operation].filter(Boolean).join(" · ");
 }
 
@@ -2852,6 +2966,9 @@ function onCfgInput(e) {
     if (field === "tags") {
       const tags = t.value.split(",").map((s) => s.trim()).filter(Boolean);
       if (tags.length) v.tags = tags; else delete v.tags;
+    } else if (field === "archived") {
+      // Unchecked drops the key, as the header archive button does.
+      if (t.checked) v.archived = true; else delete v.archived;
     } else if (field === "category" || field === "mount") {
       if (t.value.trim()) v[field] = t.value.trim(); else delete v[field];
     } else {
@@ -3250,6 +3367,7 @@ async function loadVaults() {
   state.categoryOrder = data.categories || [];
   renderVaultList();
   renderTagsBar();
+  updateArchiveButton();
   renderTriggerForm();
 }
 
@@ -3954,6 +4072,8 @@ function setupToolbar() {
   if (btnRename) btnRename.addEventListener("click", renameActiveTab);
   const btnObs = $("#btn-obsidian");
   if (btnObs) btnObs.addEventListener("click", openVaultInObsidian);
+  const btnArchive = $("#btn-archive");
+  if (btnArchive) btnArchive.addEventListener("click", toggleArchiveSelected);
   const btnCompact = $("#btn-task-compact");
   if (btnCompact) btnCompact.addEventListener("click", compactTasksLog);
   const btnClean = $("#btn-task-clean");

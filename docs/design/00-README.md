@@ -211,3 +211,10 @@ Skills tree) is phases 1–3 of the plan.
 | **Phase 4:** the first resman skill **deepList** — `skills/skills/deep-list/SKILL.md` + `settings.yaml` (11 settings), operation `rs-deep-list` (Research, optional per-task `focus`); `effective_settings` ignores empty overrides | 17, `docs/deepList-plan.md` |
 | Helper skill **grilling** — `skills/skills/grilling/SKILL.md`: the one-question-at-a-time plan interview the other resman skills call before they act; no operation, no `settings.yaml`, listed under *Not wired yet* on purpose; `tests/test_resman_skills.py` pins it | 17 |
 | Browser suites `tests/test_tasks_browser.py`, `tests/test_skills_browser.py`; `tests/browser_app.serve(config_files=, resman_root=)` | 10 |
+
+### 2026-09-25 — Sidebar ARCHIVE folder
+
+| Addition | File |
+|----------|------|
+| Optional `archived: true` on a resman.yaml vault entry (validated as a boolean); `ConfigManager.set_vault_archived()`; `Vault.archived` in the registry; `POST /api/vaults/<name>/archive`; `archived` in `GET /api/vaults` and `GET /api/landing` | 02, 09 |
+| Sidebar **ARCHIVE** folder (`#archive-section`) under the tree, above the tag filter: folded by default (`resman-archive-open`), archived vaults grouped by category; header archive button toggles the selected vault; Home hides archived vaults (count `· M archived`); Config vault card **Archived** checkbox; browser suite `tests/test_vault_archive_browser.py` | 10 |

@@ -16,6 +16,7 @@ mutating endpoints (`POST` / `DELETE` / `PATCH`) require the
 |--------|------|-------|
 | GET | `/api/vaults` | List registered + discovered vaults; also returns `vault_default_root` (the optional `app.vault_default_root_path`, or `null`) for the New Vault wizard |
 | POST | `/api/vaults` | Register a vault |
+| POST | `/api/vaults/<name>/archive` | `{"archived": true\|false}` — move a vault to the sidebar ARCHIVE folder, or back |
 | POST | `/api/vaults/scaffold` | Create `.obsidian/` for a path that lacks it |
 | GET | `/api/vaults/<name>/health` | Health summary (path, .obsidian, wiki home, …) |
 | GET | `/api/vaults/<name>/wiki?file=…` | Read a wiki page; default `wiki/overview.md` (toolbar buttons: Hot / Index / Overview) |

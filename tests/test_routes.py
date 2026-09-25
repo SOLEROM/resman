@@ -1840,3 +1840,27 @@ def test_config_structured_exposes_operation_providers_and_rejects_unknown_ops(t
                      headers={"X-Requested-With": "resman"})
     assert rv.status_code == 400 and "wiki-gone" in rv.get_json()["error"]
     assert ctx["config"].cron_tasks == []
+
+
+def test_archive_vault_sets_and_clears_the_flag(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    c = app.test_client()
+    h = {"X-Requested-With": "resman"}
+    alpha = lambda: next(v for v in c.get("/api/vaults").get_json()["vaults"] if v["name"] == "alpha")
+    assert alpha()["archived"] is False
+    rv = c.post("/api/vaults/alpha/archive", json={"archived": True}, headers=h)
+    assert rv.status_code == 200 and rv.get_json()["archived"] is True
+    assert alpha()["archived"] is True
+    assert ctx["config"].get_vault("alpha")["archived"] is True
+    rv = c.post("/api/vaults/alpha/archive", json={"archived": False}, headers=h)
+    assert rv.status_code == 200
+    assert alpha()["archived"] is False
+
+
+def test_archive_vault_validates(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    c = app.test_client()
+    h = {"X-Requested-With": "resman"}
+    assert c.post("/api/vaults/alpha/archive", json={"archived": True}).status_code == 403
+    assert c.post("/api/vaults/alpha/archive", json={"archived": "yes"}, headers=h).status_code == 400
+    assert c.post("/api/vaults/ghost/archive", json={"archived": True}, headers=h).status_code == 404

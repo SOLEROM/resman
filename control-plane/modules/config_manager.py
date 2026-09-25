@@ -118,6 +118,11 @@ def validate_resman_yaml(data: Any, resman_root: Optional[Path] = None) -> dict:
         category = entry.get("category")
         if category is not None:
             _validate_category(category, f"vault {name!r} category")
+        archived = entry.get("archived")
+        if archived is not None and not isinstance(archived, bool):
+            raise ConfigError(
+                f"resman.yaml: vault {name!r} archived must be true or false"
+            )
         mount = entry.get("mount")
         if mount is not None:
             if not isinstance(mount, str) or not mount:
@@ -441,6 +446,27 @@ class ConfigManager:
         data["vaults"] = vaults
         text = yaml.safe_dump(data, sort_keys=False)
         self.save_resman_yaml(text)
+
+    def set_vault_archived(self, name: str, archived: bool) -> None:
+        """Flag a vault archived (sidebar ARCHIVE section) or bring it back.
+
+        Unarchiving drops the key rather than writing ``archived: false`` so
+        the yaml stays as it was before the vault was ever archived.
+        """
+        if self.get_vault(name) is None:
+            raise ConfigError(f"vault {name!r} not registered")
+        data = dict(self._system)
+        vaults = []
+        for entry in self.vaults:
+            entry = dict(entry)
+            if entry.get("name") == name:
+                if archived:
+                    entry["archived"] = True
+                else:
+                    entry.pop("archived", None)
+            vaults.append(entry)
+        data["vaults"] = vaults
+        self.save_resman_yaml(yaml.safe_dump(data, sort_keys=False))
 
     def _save_to(self, path: Path, logical_name: str, content: str, validator) -> dict:
         if len(content.encode("utf-8")) > MAX_CONFIG_BYTES:

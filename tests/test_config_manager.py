@@ -630,3 +630,33 @@ def test_save_skill_settings_merges_into_the_live_file(cfg_dir, tmp_path):
     with pytest.raises(ConfigError, match="demo.n"):
         cm.save_skill_settings("demo", {"n": 99})
     assert cm.skill_settings("demo") == {"n": 7}     # rejected save changed nothing
+
+
+# ----- archived vaults (sidebar ARCHIVE folder) -----
+
+def test_set_vault_archived_round_trip(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults:\n  - name: a\n    path: /tmp/a\n    category: hw\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    cm.set_vault_archived("a", True)
+    assert cm.get_vault("a")["archived"] is True
+    assert "archived: true" in (cfg_dir / "resman.yaml").read_text()
+    # Unarchiving drops the key; the rest of the entry is untouched.
+    cm.set_vault_archived("a", False)
+    assert "archived" not in cm.get_vault("a")
+    assert cm.get_vault("a")["category"] == "hw"
+
+
+def test_set_vault_archived_unknown_vault_raises(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults:\n  - name: a\n    path: /tmp/a\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    with pytest.raises(ConfigError, match="not registered"):
+        cm.set_vault_archived("nope", True)
+
+
+def test_vault_archived_rejects_non_bool(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults:\n  - name: a\n    path: /tmp/a\n    archived: yes please\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="archived must be true or false"):
+        cm.load()

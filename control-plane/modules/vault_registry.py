@@ -31,6 +31,7 @@ class Vault:
     tags: List[str] = field(default_factory=list)
     category: Optional[str] = None  # sidebar group; "/" nests, e.g. "hw/edge"
     mount: Optional[str] = None   # bind-mount target path, if configured
+    archived: bool = False        # shown in the sidebar ARCHIVE section
     registered: bool = True
     path_exists: bool = True
     is_obsidian: bool = True
@@ -65,6 +66,7 @@ class VaultRegistry:
                 tags=list(entry.get("tags") or []),
                 category=normalize_category(raw_category) if raw_category else None,
                 mount=entry.get("mount") or None,
+                archived=entry.get("archived") is True,
                 registered=True,
             )
             v.path_exists = Path(v.path).exists()
