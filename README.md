@@ -63,6 +63,7 @@ resman/
 ├── prompts/
 │   └── urlInjestPrefix.md    # constructive-extraction prefix for URL ingest
 ├── man/                      # operator manual — rendered live in the Help tab
+├── skills/             # resman's own Claude Code plugin (skills, loaded with --plugin-dir)
 ├── deploy/systemd/           # systemd unit + installer
 ├── docs/                     # design spec, remote-agent + plugin reference
 ├── tests/                    # pytest suite (542 tests, ~25s)
@@ -100,7 +101,15 @@ The suite covers:
 See [`docs/design/`](docs/design/) for the authoritative subsystem documents:
 01-architecture, 02-configuration, 03-vault-registry, 04-terminal-sessions,
 05-obsidian-push, 06-task-management, 07-window-state, 08-scheduler,
-09-api, 10-frontend, 11-security, 12-error-handling.
+09-api, 10-frontend, 11-security, 12-error-handling, 13-window-schedule,
+14-wiki-read-unread, 15-activity-log, 16-wiki-favorites, 17-skills.
+
+Skills come from two providers — the claude-obsidian plugin and resman's own
+[`skills/`](skills/README.md) plugin folder — and every skill
+writes markdown pages under a vault's `wiki/`; resman renders them. The
+design is [`docs/design/17-skills.md`](docs/design/17-skills.md), the
+rollout [`docs/custom-skills-plan.md`](docs/custom-skills-plan.md), and
+[`CLAUDE.md`](CLAUDE.md) holds the rules for working in this repo.
 
 Operator-facing docs live in [`man/`](man/) (also served in the Help tab);
 the remote-agent contract is in [`docs/remote-agent.md`](docs/remote-agent.md)

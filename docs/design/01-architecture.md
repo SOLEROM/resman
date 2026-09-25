@@ -35,6 +35,8 @@ resman/
 │       ├── obsidian_push.py      # push _resman/status.md into each vault
 │       ├── event_bus.py          # internal pub/sub; breaks circular coupling
 │       ├── plugin_commands.py    # centralized claude-obsidian command strings
+│       ├── operations.py         # the operation registry: provider, kind, params, builder per key
+│       ├── resman_skills.py      # the skills/ provider: --plugin-dir, /resman:<skill>, settings.yaml
 │       ├── routes.py             # REST API
 │       └── websocket_handlers.py # Socket.IO events
 ├── docs/                    # system documentation (editable in browser)
@@ -42,6 +44,7 @@ resman/
 ├── tools/
 │   ├── ingest.sh
 │   └── new-vault.sh
+├── skills/            # resman's own Claude Code plugin (skills), loaded per run with --plugin-dir
 ├── wikValTemplate/
 └── .ref/                    # reference repos (dev only)
 ```

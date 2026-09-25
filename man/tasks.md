@@ -19,10 +19,12 @@ The top of the Tasks tab is a form, not a modal. To run something:
 1. **Pick the vault.** Defaults to the vault you have selected in the
    sidebar. Toggle **`all vaults`** to fan the task out across every
    registered vault.
-2. **Pick the operation.** The dropdown is grouped Wiki / Research / Custom.
-   The form below adjusts to show only the fields that operation needs —
-   URL for ingest, topic for autoresearch, prompt for `run-prompt`, argv
-   lines for `run-shell`.
+2. **Pick the operation.** The cards on the left are grouped Research / Wiki
+   / Custom; the **source switch** above them (All · claude-obsidian · resman
+   skills · ad hoc) narrows them to one source. The form on the right adjusts
+   to show only the fields that operation needs — URL for ingest, topic for
+   autoresearch, prompt for `run-prompt`, argv lines for `run-shell`, an
+   optional focus for deepList.
 3. **Pick a priority.** `high` by default; lower to `medium` or `low` if the
    task is best-effort.
 4. **Pick when to run.** Leave **When** empty to run immediately. Set a
@@ -59,6 +61,9 @@ Filters live in the queue toolbar:
 - **State** filter — `active` (default) shows running + pending + deferred
   + scheduled; `recent (24h)` adds anything updated in the last day; `all`
   shows everything in memory.
+- **Source** filter — all sources, or only claude-obsidian / resman skills /
+  ad hoc tasks. Every card also carries a small source pill before its
+  operation name.
 
 When a vault is selected in the sidebar, the queue is automatically
 filtered to its tasks plus any `ALL`-vault tasks that include it.
@@ -109,17 +114,35 @@ instructions interactively.
 
 ## Operations
 
-| Group | Operation | What it does |
-|---|---|---|
-| Wiki | **Lint wiki** | Runs `/claude-obsidian:wiki-lint` against the vault |
-| Wiki | **Update canvas (visual map)** | Runs `/claude-obsidian:canvas [description]` to create or update the wiki's visual canvas. Description is optional. |
-| Wiki | **Update hot cache** | Runs `/claude-obsidian:update-hot-cache` |
-| Wiki | **Re-run wiki bootstrap** | Runs `/claude-obsidian:wiki` non-interactively, wrapped with `tools/newValPrefix.md` (plugin check) and `tools/newValSuffix.md` (copy visual `workspace.json`) when those files exist. Only safe for re-runs — first-time bootstrap must use the wizard. |
-| Research | **Ingest a URL** | Runs `tools/ingest.sh <vault> <url>` with optional canvas update. Check **"Update canvas after ingest"** to refresh `wiki/canvases/main.canvas` after ingesting. |
-| Research | **Ingest URL + prefix** | Runs `tools/ingest.sh <vault> <url> --prefix <prompts/urlInjestPrefix.md>` to apply constructive-extraction guidance before ingesting. Optional canvas update available. |
-| Research | **Autoresearch a topic** | Runs `/claude-obsidian:autoresearch <topic>` |
-| Custom | **Run a Claude prompt** | Runs `claude -p '<prompt>'` |
-| Custom | **Run shell command** | Runs an explicit argv list (one argument per line) in the vault directory. **Argument list only, not a shell string.** Confirms before submitting. |
+| Source | Group | Operation | What it does |
+|---|---|---|---|
+| claude-obsidian | Wiki | **Lint wiki** | Runs `/claude-obsidian:wiki-lint` against the vault |
+| claude-obsidian | Wiki | **Update canvas (visual map)** | Runs `/claude-obsidian:canvas [description]` to create or update the wiki's visual canvas. Description is optional. |
+| claude-obsidian | Wiki | **Update hot cache** | Runs `/claude-obsidian:update-hot-cache` |
+| claude-obsidian | Wiki | **Generate hint** | Inspects the wiki with `/claude-obsidian:wiki-query` and writes `wiki/hint.json` — the label, summary and tags on the vault's landing-page card |
+| claude-obsidian | Wiki | **Re-run wiki bootstrap** | Runs `/claude-obsidian:wiki` non-interactively, wrapped with `tools/newValPrefix.md` (plugin check) and `tools/newValSuffix.md` (copy visual `workspace.json`) when those files exist. Only safe for re-runs — first-time bootstrap must use the wizard. |
+| claude-obsidian | Research | **Ingest a URL** | Runs `tools/ingest.sh <vault> <url>` with optional canvas update. Check **"Update canvas after ingest"** to refresh `wiki/canvases/main.canvas` after ingesting. |
+| claude-obsidian | Research | **Ingest URL + prefix** | Runs `tools/ingest.sh <vault> <url> --prefix <prompts/urlInjestPrefix.md>` to apply constructive-extraction guidance before ingesting. Optional canvas update available. |
+| claude-obsidian | Research | **Autoresearch a topic** | Runs `/claude-obsidian:autoresearch <topic>` |
+| resman skills | Research | **deepList: research values** | Runs `/resman:deep-list …` with the settings from **Skills → resman skills → deep-list**: writes `wiki/meta/deep-list.md`, the ranked list of values worth a deep-research run, retiring values the wiki has since filled. Optional per-run *Focus*. See [Skills](skills.md). |
+| ad hoc | Custom | **Run a Claude prompt** | Runs `claude -p '<prompt>'` |
+| ad hoc | Custom | **Run shell command** | Runs an explicit argv list (one argument per line) in the vault directory. **Argument list only, not a shell string.** Confirms before submitting. |
+
+### Where operations come from
+
+Every operation belongs to one **source**, shown in the first column above:
+
+- **claude-obsidian** — the plugin installed per user (`claude plugin install`);
+  the **Skills** tab shows its version and warns when a skill resman sends is
+  missing from it. Operation keys start with `wiki-`.
+- **resman skills** — resman's own skills in the repo's `skills/` folder,
+  loaded into every Claude run with `--plugin-dir` (no install). Operation keys
+  start with `rs-`. Their settings are edited in the **Skills** tab and stored
+  in `resman.yaml`.
+- **ad hoc** — `run-prompt` and `run-shell`: you typed the command yourself.
+
+Whatever the source, a skill runs inside the vault and writes markdown pages
+under `wiki/`; read them in the [Wiki](wiki.md) tab. See [Skills](skills.md).
 
 ## ALL-vault tasks
 

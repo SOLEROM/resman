@@ -31,6 +31,7 @@ planning iterations preserved in git history.
 | 14 | [14-wiki-read-unread.md](14-wiki-read-unread.md) | Wiki read/unread markers, reconcile, search ranking, random-unread |
 | 15 | [15-activity-log.md](15-activity-log.md) | Volatile activity log, footer Log window, bus auto-capture, logging bridge |
 | 16 | [16-wiki-favorites.md](16-wiki-favorites.md) | Per-vault `.favorites.md` link list, lenient parser, ☆/★ toggle, favorites view |
+| 17 | [17-skills.md](17-skills.md) | Skill providers: the claude-obsidian plugin and resman's own `skills/` plugin folder; the operation registry; provider separation in the Tasks and Skills views; the golden rule (skills write `wiki/` pages, resman renders them) |
 
 ---
 
@@ -147,6 +148,8 @@ visible. Spawning sessions is now exclusively through the header buttons.
 | Ops tab promoted to first-class header tab between Wiki and Tasks; panel id `tab-terminal` → `tab-ops` | 10 |
 | Per-vault panel memory in `localStorage` (`resman-last-panel-by-vault`); legacy `"terminal"` → `"ops"` migration on load | 10 |
 | `+ Shell` / `+ Claude` auto-switch to Ops on spawn | 10 |
+| Wiki toolbar errors (refused favorite / read toggle, Random) shown in the inline `#wiki-notice` instead of `alert()`, which a cross-origin iframe (mainBench docking) drops silently; the favorites route logs refusals | 16 |
+| Wiki toolbar keeps only the ☆/★ toggle; the favorites list opens from the pinned ★ Favorites row of the page tree (the duplicate toolbar button is gone) | 16 |
 | Sidebar `↘` button — single-click URL ingest shortcut; queues `wiki-ingest` task and jumps to Tasks tab | 06, 10 |
 
 ### Phase 8 — Tasks UX redesign (operations-first, live logs, scheduling)
@@ -178,3 +181,33 @@ shortcut (see 2026-05-12 block above).
 | Live **usage limits** ported from cld20 (`modules/claude_usage.py`): read-only `GET claude.ai/api/oauth/usage` with the operator's OAuth token → session (`five_hour`) + weekly (`seven_day`) utilization. `WindowSchedule.sync()` caches it; `POST /api/window/sync` (⟳) fetches on demand | 13 |
 | `tools/window-status.sh` — shell mirror of the window/week derivation **and** the limit fetch (via the same `claude_usage` module), for on-demand checks without the server | 13 |
 | **Volatile activity log** (`modules/activity_log.py`) — RAM ring buffer + `/tmp/resman/activity-<pid>.log`, created on start, deleted on stop (with dead-PID sweep). Auto-captures existing bus events, an explicit `"activity"` bus channel, and a `logging.Handler` for WARNING+. Footer **📋 Log** button opens a live, level-filterable window. `GET /api/logs`, `POST /api/logs/clear`, Socket.IO `activity_logged` | 15 |
+
+### 2026-09-24 — Skills: two providers (phase 0 of `docs/custom-skills-plan.md`)
+
+resman's operations all came from the claude-obsidian plugin. We now add a
+second **provider**: resman's own Claude Code plugin folder `skills/`
+(plugin name `resman`, `/resman:<skill>`), loaded per run with `--plugin-dir`,
+never installed. Both providers obey one rule — a skill runs inside a vault
+and writes markdown pages under `wiki/`; resman renders them — so a new skill
+is one folder plus one registry entry, never a new tab. Phase 0 shipped the
+design, the plan, the empty plugin container and the docs; the code work
+(backend operation registry, provider switch/pill/filter in Tasks, per-provider
+Skills tree) is phases 1–3 of the plan.
+
+| Addition | File |
+|----------|------|
+| `17-skills.md` — providers (`obsidian` / `resman` / `adhoc`), the `skills/` plugin folder, the operation registry (`modules/operations.py`, `GET /api/operations`), Tasks/Skills view separation, security constraints | 17 |
+| `skills/` — `.claude-plugin/plugin.json` (name `resman`), `README.md` (authoring contract), `CLAUDE.md` (rules), `skills/` (empty); `tests/test_resman_skills.py` pins the folder | 17 |
+| Operation namespace by provider: `wiki-` / `rs-` / `run-`; `provider` derived in `Task.to_dict()`, JSONL unchanged | 06 |
+| Existing `GET /api/skills/*` endpoints documented; planned `GET /api/operations`, `GET /api/tasks?provider=` | 09 |
+| Skills tab documented; planned per-provider tree and *Custom skill guide* | 10 |
+| **Phase 1 (same day):** `modules/operations.py` — `Operation` / `Param` / `RunContext`, `REGISTRY`, `validate`, `public`, `provider_of`; `task_manager` validates, builds and attends through it; `Task.to_dict()` gains `provider`; `list(provider=)` | 06, 17 |
+| `modules/resman_skills.py` — the `skills/` provider: `plugin_dir_args`, `skill_prompt`, `list_skills`, and per-skill `settings.yaml` schemas (`load_settings_schema`, `validate_settings`, `effective_settings`, `render_args`, `args_for`, `validate_skills_section`) | 17 |
+| `--plugin-dir <root>/skills` appended to every `claude -p` prompt run and to every Claude session resman opens (`session_plan._claude_cmd`), when the folder exists | 06, 04, 17 |
+| `GET /api/operations`; `GET /api/tasks?provider=`; `/api/config/structured` adds `operation_providers` + `providers` | 09 |
+| `schedule.yaml` rejects an operation the registry lacks; resman.yaml gains an optional `skills:` section validated against each skill's schema (`ConfigManager(resman_root=)`, `.skills`, `.skill_settings()`, `.save_skill_settings()`) | 02, 08 |
+| **Phase 2:** the SPA reads `GET /api/operations` (`loadOperations` first in `init()`, `opMeta`), `static/js/tasks-core.js` holds the pure grouping/filter helpers; Tasks gets the **source switch** above the cards, a **source pill** on every card, a **source** queue filter; no operation key literal in JS (grep test) | 10, 17 |
+| **Phase 3:** `plugin_info.describe(root)` / `read_file_from(root, rel)` (provider-agnostic reader), `resman_skills.summary()`; `GET /api/skills/summary` → `providers: [obsidian, resman]` + union `warnings`; `GET /api/skills/file?provider=`; `GET`/`POST /api/skills/settings`; the Skills tree per provider, *Custom skill guide*, the **Settings** card | 09, 10, 17 |
+| **Phase 4:** the first resman skill **deepList** — `skills/skills/deep-list/SKILL.md` + `settings.yaml` (11 settings), operation `rs-deep-list` (Research, optional per-task `focus`); `effective_settings` ignores empty overrides | 17, `docs/deepList-plan.md` |
+| Helper skill **grilling** — `skills/skills/grilling/SKILL.md`: the one-question-at-a-time plan interview the other resman skills call before they act; no operation, no `settings.yaml`, listed under *Not wired yet* on purpose; `tests/test_resman_skills.py` pins it | 17 |
+| Browser suites `tests/test_tasks_browser.py`, `tests/test_skills_browser.py`; `tests/browser_app.serve(config_files=, resman_root=)` | 10 |

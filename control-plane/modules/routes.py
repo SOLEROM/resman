@@ -14,8 +14,10 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
+from . import operations
 from . import plugin_commands
 from . import plugin_info
+from . import resman_skills
 from . import vault_hints
 from . import wiki_favorites
 from . import wiki_highlights
@@ -549,11 +551,13 @@ def vault_wiki_set_favorite(name):
         if want:
             page = wiki_favorites.page_path(vault_root, rel)
             if not page or not page.is_file():
+                log.info("favorites: refused %s in %s: page not found", rel, name)
                 return jsonify({"error": f"not found: {rel}", "file": rel}), 404
             wiki_favorites.add(vault_root, rel)
         else:
             wiki_favorites.remove(vault_root, rel)
-    except ValueError:
+    except ValueError as exc:
+        log.info("favorites: refused %s in %s: %s", rel, name, exc)
         return jsonify({"error": "invalid path"}), 400
     except OSError as exc:
         log.warning("favorites write failed for %s: %s", name, exc)
@@ -753,29 +757,125 @@ def help_page():
     return jsonify({"file": rel, "content": content})
 
 
-# ----- Skills (read-only view of the installed claude-obsidian plugin) -----
+# ----- Skills: the two providers (docs/design/17-skills.md) -----
 NEW_VAULT_DOC = "new-vault.md"
+SKILL_PROVIDERS = ("obsidian", "resman")
+
+
+def _resman_uses() -> dict:
+    """skill name → where resman runs it, from the registry's resman operations."""
+    return {op.skill: f"{op.key} task" for op in operations.for_provider("resman") if op.skill}
 
 
 @bp.get("/api/skills/summary")
 def skills_summary():
-    """The installed plugin, its skills/commands, and resman's uses of it.
-
-    ``warnings`` lists what resman needs but the install lacks (the Skills
-    activity badge counts them).
+    """Both skill providers, same shape each: the claude-obsidian plugin
+    (installed per user) and resman's own skills/ folder. Per provider:
+    ``plugin`` (installed, version, path, how it was found), ``skills``,
+    ``commands``, ``docs``, ``uses`` (what resman sends, with ``provided``)
+    and ``warnings``. The top-level ``warnings`` is the union — what the
+    Skills activity badge counts.
     """
-    return jsonify(plugin_info.summary())
+    ctx = _ctx()
+    labels = dict((p["id"], p["label"]) for p in operations.providers())
+    obsidian = plugin_info.summary()
+    stored = list((ctx["config"].skills or {}).keys()) if ctx.get("config") else []
+    resman = resman_skills.summary(ctx["resman_root"], _resman_uses(), stored)
+    providers = [{"id": "obsidian", "label": labels["obsidian"], **obsidian},
+                 {"id": "resman", "label": labels["resman"], **resman}]
+    return jsonify({"providers": providers,
+                    "warnings": obsidian["warnings"] + resman["warnings"]})
 
 
 @bp.get("/api/skills/file")
 def skills_file():
-    """Raw markdown of one file inside the plugin install (traversal-safe)."""
+    """Raw markdown of one file inside a provider's folder (traversal-safe).
+    ``provider`` is ``obsidian`` (default: the installed plugin) or ``resman``
+    (the repo's skills/)."""
     rel = request.args.get("path") or ""
+    provider = request.args.get("provider") or "obsidian"
+    if provider not in SKILL_PROVIDERS:
+        return jsonify({"error": f"unknown provider {provider!r}"}), 400
     try:
-        content = plugin_info.read_file(rel)
+        if provider == "resman":
+            root = _ctx()["resman_root"]
+            if not resman_skills.is_present(root):
+                return jsonify({"error": "skills/ is not present in this checkout"}), 404
+            content = plugin_info.read_file_from(resman_skills.plugin_dir(root), rel)
+        else:
+            content = plugin_info.read_file(rel)
     except plugin_info.PluginFileError as exc:
         return jsonify({"error": str(exc)}), exc.status
-    return jsonify({"path": rel, "content": content})
+    return jsonify({"provider": provider, "path": rel, "content": content})
+
+
+def _skill_settings_payload(cm, root, skill: str, schema) -> dict:
+    values = cm.skill_settings(skill)
+    return {
+        "skill": skill,
+        "schema": [s.public() for s in schema],
+        "defaults": resman_skills.defaults(schema),
+        "values": values,
+        "effective": resman_skills.effective_settings(schema, values),
+        "args": resman_skills.render_args(schema, resman_skills.effective_settings(schema, values)),
+        **_resman_meta(cm),
+    }
+
+
+def _settings_target(skill: str):
+    """(root, schema) for a resman skill with settings, or a (json, status) error."""
+    root = _ctx()["resman_root"]
+    if not skill or skill not in resman_skills.list_skills(root):
+        return None, (jsonify({"error": f"no resman skill named {skill!r}"}), 404)
+    try:
+        schema = resman_skills.load_settings_schema(root, skill)
+    except resman_skills.SettingsError as exc:
+        return None, (jsonify({"error": str(exc)}), 400)
+    if not schema:
+        return None, (jsonify({"error": f"skill {skill!r} has no settings"}), 400)
+    return (root, schema), None
+
+
+@bp.get("/api/skills/settings")
+def get_skill_settings():
+    """A resman skill's settings: the schema from its settings.yaml, the
+    stored values (skills.<skill> in resman.yaml), the defaults, the
+    effective merge, the rendered invocation tokens, and which file a save
+    writes."""
+    skill = request.args.get("skill") or ""
+    target, err = _settings_target(skill)
+    if err:
+        return err
+    root, schema = target
+    return jsonify(_skill_settings_payload(_ctx()["config"], root, skill, schema))
+
+
+@bp.post("/api/skills/settings")
+@_csrf_required
+def save_skill_settings():
+    """Replace a resman skill's stored settings. Body ``{skill, values}``;
+    ``values`` is validated against the schema (400 names the key), then
+    written to the live resman.yaml through the structured save. An empty
+    mapping removes the entry (back to defaults)."""
+    body = request.get_json(force=True, silent=True) or {}
+    skill = str(body.get("skill") or "")
+    values = body.get("values")
+    target, err = _settings_target(skill)
+    if err:
+        return err
+    root, schema = target
+    if not isinstance(values, dict):
+        return jsonify({"error": "values must be a mapping"}), 400
+    cm = _ctx()["config"]
+    try:
+        clean = resman_skills.validate_settings(schema, values, where=f"{skill}.")
+        cm.save_skill_settings(skill, clean)
+    except (resman_skills.SettingsError, ConfigError) as exc:
+        _activity(f"skill settings rejected: {skill} — {exc}", level="warn", source="skills")
+        return jsonify({"error": str(exc)}), 400
+    _activity(f"skill settings saved: {skill}", source="skills",
+              detail=", ".join(f"{k}={v!r}" for k, v in clean.items()) or "defaults")
+    return jsonify({"ok": True, **_skill_settings_payload(cm, root, skill, schema)})
 
 
 @bp.get("/api/skills/new-vault")
@@ -933,6 +1033,19 @@ def delete_session(sid):
     return jsonify({"ok": ok})
 
 
+# ----- Operations (the registry; docs/design/17-skills.md) -----
+@bp.get("/api/operations")
+def list_operations():
+    """Every operation a task can run, minus the builders: key, label, group,
+    provider, kind, attendable, params (with their validation rules), icon,
+    note, confirm, remote — what the Tasks picker renders — plus the provider
+    list with labels."""
+    return jsonify({
+        "operations": [operations.public(op) for op in operations.REGISTRY.values()],
+        "providers": operations.providers(),
+    })
+
+
 # ----- Tasks -----
 @bp.get("/api/tasks")
 def list_tasks():
@@ -942,6 +1055,7 @@ def list_tasks():
         vault=args.get("vault"),
         priority=args.get("priority"),
         state=args.get("state"),
+        provider=args.get("provider"),
         include_archived=args.get("include_archived") == "true",
         limit=int(args["limit"]) if args.get("limit") else None,
         offset=int(args.get("offset", 0)),
@@ -1307,12 +1421,13 @@ def get_config_structured():
     Returns both files at once plus the metadata the form needs to build
     its controls (valid operations for cron entries, vault names)."""
     cm = _ctx()["config"]
-    from .task_manager import OPERATIONS
 
     body = {
         "resman": cm.system,
         "schedule": cm.schedule,
-        "operations": list(OPERATIONS),
+        "operations": list(operations.REGISTRY),
+        "operation_providers": {k: op.provider for k, op in operations.REGISTRY.items()},
+        "providers": operations.providers(),
         "vault_names": [v.get("name") for v in cm.vaults if v.get("name")],
     }
     body.update(_resman_meta(cm))

@@ -1981,6 +1981,31 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .task-detail { min-width: 0; }
+/* Tasks: the source switch above the operation cards, and the source pill on
+   every task card (docs/design/17-skills.md). One colour per provider, from
+   the theme tokens so all four themes carry it. */
+.kind-column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.provider-switch { display: flex; flex-wrap: wrap; gap: 4px; }
+.provider-switch[hidden] { display: none; }
+.provider-btn {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-secondary);
+}
+.provider-btn:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.provider-btn.active {
+  color: var(--accent); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.kind-empty { padding: 8px 2px; }
+.pill.provider-pill { font-size: 10px; text-transform: none; }
+.pill.provider-obsidian { color: var(--info);    background: color-mix(in srgb, var(--info) 12%, transparent);    border-color: color-mix(in srgb, var(--info) 35%, transparent); }
+.pill.provider-resman   { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.pill.provider-adhoc    { color: var(--text-secondary); background: rgba(127, 127, 127, 0.12); border-color: rgba(127, 127, 127, 0.3); }
+.pill.provider-unknown  { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+:root[data-theme="hc"] .pill.provider-obsidian,
+:root[data-theme="hc"] .pill.provider-resman,
+:root[data-theme="hc"] .pill.provider-unknown,
+:root[data-theme="hc"] .provider-btn.active { background: none; }
 .task-detail-title { margin: 0 0 4px; font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .task-detail-summary { margin: 0 0 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.4; }
 .task-form { display: flex; flex-direction: column; gap: 16px; }
@@ -2227,6 +2252,13 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 .wiki-fm { margin: 8px 0; white-space: pre-wrap; color: var(--text-secondary); }
 .wiki-fm-body > :last-child { margin-bottom: 0; }
 .wiki-error { padding: 14px; color: var(--danger); font-size: 12px; }
+/* #wiki-notice: a refused toolbar action (favorite / read toggle, random page)
+   reported inline between the toolbar and the page — never a dialog, which a
+   cross-origin iframe (mainBench docking) would drop silently. */
+.wiki-notice {
+  flex: none; padding: 6px 12px; font-size: 12px; color: var(--danger);
+  background: var(--bg-surface); border-bottom: 1px solid var(--border);
+}
 .wiki-empty { padding: 24px; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
 .wiki-empty code {
   background: var(--vsc-code-bg); padding: 1px 5px; border-radius: 3px;
@@ -2480,3 +2512,14 @@ input[type="url"]:focus { border-color: var(--vsc-focus-border); }
 .skills-prompt { white-space: pre-wrap; word-break: break-word; }
 .skills-files a { text-decoration: none; }
 .skills-files a.active { font-weight: 600; text-decoration: underline; }
+/* A resman skill's Settings card under its SKILL.md (values in resman.yaml). */
+.skills-settings { margin-top: 28px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated); }
+.skills-settings h2 { margin-top: 0; }
+.skills-settings-form { max-width: 560px; }
+.skills-settings-form input[type="text"], .skills-settings-form input[type="number"],
+.skills-settings-form select, .skills-settings-form textarea { width: 100%; }
+.skills-settings-form textarea { min-height: 64px; }
+.skills-settings .form-help { font-size: 11px; color: var(--text-muted); }
+.skills-settings .skills-check { display: flex; align-items: center; gap: 8px; }
+.skills-settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.skills-args { white-space: pre-wrap; word-break: break-word; }

@@ -1,0 +1,10 @@
+{
+  "name": "resman",
+  "version": "0.1.0",
+  "description": "resman's own vault skills: Claude Code skills that write markdown pages under a vault's wiki/, run by resman tasks next to the claude-obsidian plugin's skills.",
+  "author": {
+    "name": "SOLEROM",
+    "url": "https://github.com/SOLEROM"
+  },
+  "keywords": ["obsidian", "wiki", "resman", "vault"]
+}

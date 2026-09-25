@@ -21,14 +21,20 @@ races. ALL-vault tasks spawn per-vault child tasks and aggregate their state via
 |-------|--------|
 | `id` | `t-<uuid4>` |
 | `vault` | vault name or `ALL` |
-| `operation` | `wiki-ingest`, `wiki-ingest-prefix`, `wiki-lint`, `wiki-autoresearch`, `wiki-canvas`, `wiki-update-hot-cache`, `wiki-bootstrap`, `run-prompt`, `run-shell` |
+| `operation` | `wiki-ingest`, `wiki-ingest-prefix`, `wiki-lint`, `wiki-autoresearch`, `wiki-canvas`, `wiki-update-hot-cache`, `wiki-bootstrap`, `wiki-hint`, `run-prompt`, `run-shell`; planned `rs-<skill>` for resman's own skills ([17-skills.md](17-skills.md)) |
 | `priority` | `high` / `medium` / `low` |
 | `schedule` | `immediate`, `background`, `deferred` |
 | `parent_id` | UUID of parent task or `null` |
 | `pid` | OS process PID while running, else `null` |
 | `scheduled_for` | optional ISO 8601 time when the task should fire, else `null` |
 
-Operation namespace: all plugin operations use the `wiki-` prefix; ad-hoc execution uses `run-prompt` or `run-shell`.
+Operation namespace: every operation belongs to one **provider** ([17-skills.md](17-skills.md)):
+claude-obsidian plugin operations use the `wiki-` prefix, resman's own skills
+(`skills/`) use `rs-`, ad-hoc execution uses `run-prompt` or `run-shell`.
+The provider is an attribute of the operation in the registry, not the prefix;
+the prefix keeps `tasks.jsonl` and `schedule.yaml` readable. `Task.to_dict()`
+exposes it as a derived `provider` field once the registry lands; nothing is
+added to the JSONL events.
 
 ## JSONL Event Log
 
@@ -199,6 +205,24 @@ Plugin command strings come exclusively from `plugin_commands.py`.
 | `run-shell` | `[params.cmd_parts[0], *params.cmd_parts[1:]]` in vault dir |
 
 `run-shell` is privileged: requires explicit UI acknowledgment before first use.
+
+**Since 2026-09-24** this table is code in `modules/operations.py`: one
+`Operation` per row with `provider`, `kind` (`prompt` | `shell`), `Param`
+specs (the validation rules that used to be `_validate_params`) and a builder.
+`_build_command` resolves the entry and, for `kind == "prompt"`, runs
+`[claude, -p, <build_prompt(params, ctx)>, --dangerously-skip-permissions]`
+followed by `--plugin-dir RESMAN_ROOT/skills` whenever that folder
+exists (17-skills.md, D3), so every Claude resman spawns can run `/resman:<skill>`.
+A `shell` entry's argv runs as-is. `build_attend_prompt` is the same builder
+for `prompt` entries and `None` otherwise. The builder's `RunContext` carries
+`resman_root`, `vault_path`, `claude_exe` and `settings` — the `skills.<skill>`
+mapping from resman.yaml for the entry's skill, read through
+`TaskManager.set_skill_settings` (the server wires `ConfigManager.skill_settings`).
+A resman skill therefore runs as `[claude, -p, "/resman:<skill> key=value …",
+--dangerously-skip-permissions, --plugin-dir, RESMAN_ROOT/skills]`.
+`Task.to_dict()` adds the derived `provider`; `list(provider=)` filters by it;
+an operation the registry no longer has reports `provider: "unknown"` and is
+not attendable, but its old events still replay.
 
 `wiki-bootstrap` is **non-interactive** because the task runner uses `claude -p`.
 That means it cannot answer prompts the bootstrap command may ask, so it is

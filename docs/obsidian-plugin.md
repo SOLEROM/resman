@@ -62,3 +62,17 @@ resman never edits vault files directly. The task queue maps operations
 commands — see [`docs/design/06-task-management.md`](design/06-task-management.md)
 for the operation → command mapping and
 [`man/tasks.md`](../man/tasks.md) for the operator-facing view.
+
+## resman's own skills
+
+claude-obsidian is one of two skill **providers**. The other is resman's own
+plugin folder, [`skills/`](../skills/README.md) (plugin name
+`resman`, invoked as `/resman:<skill>`), loaded into every `claude` process
+resman spawns with `--plugin-dir`, never installed. Both follow the same rule:
+a skill runs inside a vault and writes markdown pages under `wiki/` in the
+vault's conventions; resman renders them. Operations are keyed `wiki-*`
+(claude-obsidian), `rs-*` (resman) and `run-*` (ad hoc), and the Tasks and
+Skills views separate the providers. Design:
+[`docs/design/17-skills.md`](design/17-skills.md); rollout:
+[`docs/custom-skills-plan.md`](custom-skills-plan.md). Nothing here changes
+how the claude-obsidian plugin is installed, updated or bootstrapped.

@@ -55,8 +55,13 @@ def test_a_shell_session_opens_in_the_vault(resolver, tmp_path):
 
 def test_a_claude_session_launches_the_configured_command(resolver):
     spec = resolver({"vault": "alpha", "type": "claude"}).validate()
-    # the configured claude_cmd is a shell-style string, so it keeps its shell
-    assert spec.initial_command == ["sh", "-c", "claude"]
+    # the configured claude_cmd is a shell-style string, so it keeps its shell;
+    # build_app runs from the real repo root, whose skills/ folder rides
+    # along on every Claude session (docs/design/17-skills.md, D3).
+    import shlex
+    from server import RESMAN_ROOT
+    flag = shlex.join(["--plugin-dir", str(RESMAN_ROOT / "skills")])
+    assert spec.initial_command == ["sh", "-c", f"claude {flag}"]
     assert spec.command is None               # typed into a fresh shell
 
 
@@ -258,3 +263,33 @@ def test_the_legacy_stack_is_still_reachable_behind_the_flag(tmp_path):
     assert client.get("/webterm/api/config").status_code == 404
     page = client.get("/").get_data(as_text=True)
     assert "webterm-root" not in page
+
+
+# ----- the resman plugin folder rides along on every Claude session (D3) -----
+def test_a_claude_session_loads_the_resman_plugin_from_a_root_that_has_it(tmp_path):
+    import json, shlex
+    from modules.session_plan import build_session_plan
+    from modules.config_manager import ConfigManager
+    from modules.event_bus import EventBus
+    from modules.vault_registry import VaultRegistry
+    root = tmp_path / "resman"
+    (root / "skills" / ".claude-plugin").mkdir(parents=True)
+    (root / "skills" / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "resman", "version": "0.1.0"}))
+    cfg = tmp_path / "config"; cfg.mkdir()
+    vault = tmp_path / "alpha"; vault.mkdir(); (vault / ".obsidian").mkdir()
+    (cfg / "resman.yaml").write_text(
+        f"app:\n  claude_cmd: claude --dangerously-skip-permissions\n"
+        f"vaults:\n  - name: alpha\n    path: {vault}\n")
+    bus = EventBus()
+    cm = ConfigManager(cfg, bus); cm.load()
+    reg = VaultRegistry(cm, bus); reg.reload()
+    ctx = {"config": cm, "vault_registry": reg, "resman_root": root}
+    plan = build_session_plan(ctx, {"vault": "alpha", "type": "claude"})
+    flag = shlex.join(["--plugin-dir", str(root / "skills")])
+    assert plan.claude_cmd == f"claude --dangerously-skip-permissions {flag}"
+    assert wi.spec_for(plan).initial_command == ["sh", "-c", plan.claude_cmd]
+    # a root without the folder leaves the configured command alone
+    ctx["resman_root"] = tmp_path / "elsewhere"
+    plan = build_session_plan(ctx, {"vault": "alpha", "type": "claude"})
+    assert plan.claude_cmd == "claude --dangerously-skip-permissions"

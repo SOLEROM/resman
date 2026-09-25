@@ -1,0 +1,69 @@
+# deep-list settings — shown as a form on the skill's page in the Skills tab,
+# stored under skills.deep-list in resman.yaml (or ~/.resman.yaml), rendered
+# as key=value tokens after /resman:deep-list on every run. Spec:
+# docs/deepList-plan.md. The table in SKILL.md mirrors these defaults.
+- key: list_size
+  type: int
+  default: 15
+  min: 3
+  max: 50
+  help: open values kept after ranking
+- key: candidates_per_run
+  type: int
+  default: 30
+  min: 5
+  max: 100
+  help: new candidates considered per run before pruning
+- key: min_score
+  type: int
+  default: 40
+  min: 0
+  max: 100
+  help: values scoring below this are dropped
+- key: w_importance
+  type: int
+  default: 40
+  min: 0
+  max: 100
+  help: weight of "importance to the objective"
+- key: w_gap
+  type: int
+  default: 30
+  min: 0
+  max: 100
+  help: weight of "how thin the coverage is"
+- key: w_leverage
+  type: int
+  default: 20
+  min: 0
+  max: 100
+  help: weight of "how much it unblocks / how often it is mentioned"
+- key: w_urgency
+  type: int
+  default: 10
+  min: 0
+  max: 100
+  help: weight of "time sensitivity"
+- key: filled_min_pages
+  type: int
+  default: 2
+  min: 1
+  max: 10
+  help: pages needed before a value counts as filled
+- key: filled_min_words
+  type: int
+  default: 300
+  min: 50
+  max: 5000
+  help: body words a page needs to count toward "filled"
+- key: focus
+  type: text
+  default: ""
+  max_len: 200
+  help: extra objective hint, appended to what the vault says about itself
+- key: exclude
+  type: list
+  default: []
+  item_max_len: 80
+  max_items: 50
+  help: values never to propose (one per line)

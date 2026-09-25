@@ -85,8 +85,11 @@ Legacy: `file=system.yaml` still accepted as an alias for `resman.yaml`.
 |--------|------|-------|
 | GET | `/api/help/tree` | Walk `man/`, return nested dirs + .md files |
 | GET | `/api/help/page?file=…` | Read one page; default `index.md` |
-| GET | `/api/skills/summary` | Installed claude-obsidian plugin: version, skills, commands, resman's uses of it, `warnings` (the Skills badge) |
-| GET | `/api/skills/file?path=…` | Read one `.md` file inside the plugin install (traversal-safe) |
+| GET | `/api/operations` | The operation registry: every operation with its provider (`obsidian` / `resman` / `adhoc`), kind, params and labels, plus the provider list |
+| GET | `/api/skills/summary` | Both skill providers (`providers: [obsidian, resman]`), each with its plugin/folder facts, skills, commands, docs, resman's uses of it and `warnings`; top-level `warnings` is the union (the Skills badge) |
+| GET | `/api/skills/file?provider=…&path=…` | Read one `.md` file inside a provider's folder (traversal-safe); `provider` defaults to `obsidian` |
+| GET | `/api/skills/settings?skill=…` | A resman skill's settings: schema (from its `settings.yaml`), stored values, defaults, effective values, the rendered `key=value` line, and the yaml file a save writes |
+| POST | `/api/skills/settings` | `{skill, values}` → validated against the schema (400 names the key) and stored under `skills.<skill>` in the live resman.yaml; `{}` removes the entry. CSRF header required |
 | GET | `/api/skills/new-vault` | `man/new-vault.md` plus the exact bootstrap message, plugin folder filled in |
 
 ## Socket.IO events (server → client)

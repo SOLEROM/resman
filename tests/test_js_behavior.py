@@ -25,4 +25,4 @@ def test_js_behavior_suite(suite):
 
 def test_every_js_suite_is_collected():
     # a new tests/js/*.test.mjs must not sit there unrun
-    assert {p.stem for p in SUITES} >= {"wiki-marks-core.test"}
+    assert {p.stem for p in SUITES} >= {"wiki-marks-core.test", "tasks-core.test"}

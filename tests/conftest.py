@@ -92,6 +92,39 @@ def _write_registry(plugins: dict) -> None:
     reg.write_text(json.dumps({"version": 2, "plugins": plugins}))
 
 
+DEMO_SETTINGS = ("- key: n\n  type: int\n  default: 1\n  min: 0\n  max: 9\n  help: how many\n"
+                 "- key: focus\n  type: text\n  default: ''\n  max_len: 40\n  help: a hint\n")
+
+
+def _make_resman_skills(root: Path, skills=("demo",), settings=DEMO_SETTINGS,
+                        version="0.1.0", include_wired=True) -> Path:
+    """A skills/ folder under `root` (a fake resman_root): the manifest,
+    a README, and one folder per skill with SKILL.md (+ settings.yaml). With
+    `include_wired` every skill the registry's resman operations invoke gets a
+    folder too, so the fake folder is as complete as the real one."""
+    if include_wired:
+        from modules import operations
+        wired = [op.skill for op in operations.for_provider("resman") if op.skill]
+        skills = tuple(skills) + tuple(s for s in wired if s not in skills)
+    plugin = root / "skills"
+    (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(json.dumps(
+        {"name": "resman", "version": version, "description": "test skills"}))
+    (plugin / "README.md").write_text("# Custom skill guide\n")
+    for name in skills:
+        d = plugin / "skills" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: does {name}\n---\n# {name}\n")
+        if settings:
+            (d / "settings.yaml").write_text(settings)
+    return plugin
+
+
+@pytest.fixture
+def make_resman_skills():
+    return _make_resman_skills
+
+
 @pytest.fixture
 def claude_dir():
     return _claude_dir

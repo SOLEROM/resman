@@ -39,7 +39,7 @@ def make_test_app(tmp_path: Path):
     )
     bus = get_bus()
     bus.clear()
-    cm = ConfigManager(cfg_dir, bus)
+    cm = ConfigManager(cfg_dir, bus, resman_root=tmp_path / "resman")
     cm.load()
     tmux = TmuxManager()
     reg = VaultRegistry(cm, bus)
@@ -1695,30 +1695,148 @@ def test_wiki_favorites_unknown_vault(tmp_path):
     assert rv.status_code == 404
 
 
-# ----- Skills tab (claude-obsidian plugin view) -----
+# ----- Skills tab: two providers (docs/design/17-skills.md, plan phase 3) -----
+H = {"X-Requested-With": "resman"}
 
-def test_skills_routes_without_the_plugin(tmp_path):
+
+def test_skills_summary_without_either_provider(tmp_path):
     app, _, _ = make_test_app(tmp_path)
     client = app.test_client()
     s = client.get("/api/skills/summary").get_json()
-    assert s["plugin"]["installed"] is False and len(s["warnings"]) == 1
+    assert [p["id"] for p in s["providers"]] == ["obsidian", "resman"]
+    ob, rs = s["providers"]
+    assert ob["label"] == "claude-obsidian" and rs["label"] == "resman skills"
+    assert ob["plugin"]["installed"] is False and len(ob["warnings"]) == 1
+    assert rs["plugin"]["installed"] is False and len(rs["warnings"]) == 1
+    assert "skills" in rs["warnings"][0]
+    assert s["warnings"] == ob["warnings"] + rs["warnings"]
     assert client.get("/api/skills/file?path=README.md").status_code == 404
+    assert client.get("/api/skills/file?provider=resman&path=README.md").status_code == 404
     nv = client.get("/api/skills/new-vault").get_json()
     assert nv["plugin_dir"] is None and "/claude-obsidian:wiki" in nv["prompt"]
 
 
-def test_skills_routes_with_the_plugin(tmp_path, make_plugin):
+def test_skills_routes_with_both_providers(tmp_path, make_plugin, make_resman_skills):
     root = make_plugin()
     app, ctx, _ = make_test_app(tmp_path)
+    make_resman_skills(ctx["resman_root"])
     (ctx["resman_root"] / "tools").mkdir(parents=True)
     (ctx["resman_root"] / "tools" / "newValSuffix.md").write_text("cp {plugin_dir}/a b")
     (ctx["resman_root"] / "man").mkdir()
     (ctx["resman_root"] / "man" / "new-vault.md").write_text("# New vault\n")
     client = app.test_client()
-    assert client.get("/api/skills/summary").get_json()["plugin"]["version"] == "1.6.0"
+    s = client.get("/api/skills/summary").get_json()
+    ob, rs = s["providers"]
+    assert ob["plugin"]["version"] == "1.6.0"
+    assert rs["plugin"] | {"installed": True, "version": "0.1.0", "located_by": "repo"} == rs["plugin"]
+    demo = next(k for k in rs["skills"] if k["name"] == "demo")
+    assert (demo["used"], demo["has_settings"], demo["invoke"]) == (False, True, "/resman:demo")
+    assert rs["docs"] == ["README.md"] and s["warnings"] == []
+    # every resman operation's skill is in the (fake, complete) folder
+    assert rs["uses"] and all(u["provided"] for u in rs["uses"])
+    assert {u["name"] for u in rs["uses"]} == {k["name"] for k in rs["skills"] if k["used"]}
     rv = client.get("/api/skills/file?path=skills/wiki/SKILL.md")
     assert rv.status_code == 200 and "name: wiki" in rv.get_json()["content"]
-    assert client.get("/api/skills/file?path=../../x.md").status_code == 400
+    rv = client.get("/api/skills/file?provider=resman&path=skills/demo/SKILL.md")
+    assert rv.status_code == 200 and rv.get_json()["provider"] == "resman"
+    assert client.get("/api/skills/file?provider=resman&path=../CLAUDE.md").status_code == 400
+    assert client.get("/api/skills/file?provider=resman&path=skills/demo/settings.yaml").status_code == 400
+    assert client.get("/api/skills/file?provider=nope&path=README.md").status_code == 400
     nv = client.get("/api/skills/new-vault").get_json()
     assert nv["doc"] == "# New vault\n" and nv["plugin_dir"] == str(root)
     assert f"cp {root}/a b" in nv["prompt"]
+
+
+def test_skills_summary_warns_about_a_wired_skill_without_a_folder(
+        tmp_path, make_plugin, make_resman_skills, monkeypatch):
+    from modules import operations
+    from modules.operations import Operation
+    make_plugin()
+    app, ctx, _ = make_test_app(tmp_path)
+    make_resman_skills(ctx["resman_root"])
+    monkeypatch.setitem(operations.REGISTRY, "rs-ghost", Operation(
+        key="rs-ghost", label="Ghost", group="Wiki", provider="resman", kind="prompt",
+        skill="ghost", build_prompt=lambda p, c: "/resman:ghost"))
+    rs = app.test_client().get("/api/skills/summary").get_json()["providers"][1]
+    ghost = [u for u in rs["uses"] if u["name"] == "ghost"]
+    assert ghost == [{"name": "ghost", "where": "rs-ghost task", "provided": False, "kind": None}]
+    assert len(rs["warnings"]) == 1 and "ghost" in rs["warnings"][0]
+
+
+def test_skill_settings_round_trip(tmp_path, make_resman_skills):
+    import yaml
+    app, ctx, _ = make_test_app(tmp_path)
+    make_resman_skills(ctx["resman_root"])
+    make_resman_skills(ctx["resman_root"], skills=("plain",), settings=None)
+    client = app.test_client()
+    g = client.get("/api/skills/settings?skill=demo").get_json()
+    assert [s["key"] for s in g["schema"]] == ["n", "focus"]
+    assert g["values"] == {} and g["effective"] == {"n": 1, "focus": ""}
+    assert g["args"] == 'n=1 focus=""' and "resman_display_path" in g
+    rv = client.post("/api/skills/settings", json={"skill": "demo", "values": {"n": 5}}, headers=H)
+    assert rv.status_code == 200, rv.get_data(as_text=True)
+    assert rv.get_json()["effective"] == {"n": 5, "focus": ""} and rv.get_json()["values"] == {"n": 5}
+    assert ctx["config"].skill_settings("demo") == {"n": 5}
+    on_disk = yaml.safe_load(ctx["config"].resman_path.read_text())
+    assert on_disk["skills"] == {"demo": {"n": 5}} and on_disk["vaults"][0]["name"] == "alpha"
+    # a bad value is refused, names the key, changes nothing
+    rv = client.post("/api/skills/settings", json={"skill": "demo", "values": {"n": 50}}, headers=H)
+    assert rv.status_code == 400 and "demo.n" in rv.get_json()["error"]
+    assert ctx["config"].skill_settings("demo") == {"n": 5}
+    rv = client.post("/api/skills/settings", json={"skill": "demo", "values": {"nope": 1}}, headers=H)
+    assert rv.status_code == 400 and "nope" in rv.get_json()["error"]
+    rv = client.post("/api/skills/settings", json={"skill": "demo", "values": "x"}, headers=H)
+    assert rv.status_code == 400
+    # reset: an empty mapping removes the entry
+    rv = client.post("/api/skills/settings", json={"skill": "demo", "values": {}}, headers=H)
+    assert rv.status_code == 200 and ctx["config"].skill_settings("demo") == {}
+    assert "skills" not in yaml.safe_load(ctx["config"].resman_path.read_text())
+    # guards
+    assert client.post("/api/skills/settings", json={"skill": "demo", "values": {}}).status_code == 403
+    assert client.get("/api/skills/settings?skill=ghost").status_code == 404
+    assert client.get("/api/skills/settings").status_code == 404
+    rv = client.get("/api/skills/settings?skill=plain")
+    assert rv.status_code == 400 and "no settings" in rv.get_json()["error"]
+
+
+# ----- operation registry (docs/design/17-skills.md, plan phase 1) -----
+
+def test_operations_endpoint_serves_the_registry(tmp_path):
+    app, _, _ = make_test_app(tmp_path)
+    body = app.test_client().get("/api/operations").get_json()
+    assert [p["id"] for p in body["providers"]] == ["obsidian", "resman", "adhoc"]
+    ops = {o["key"]: o for o in body["operations"]}
+    assert ops["wiki-lint"]["provider"] == "obsidian" and ops["wiki-lint"]["attendable"] is True
+    assert ops["run-shell"]["provider"] == "adhoc" and ops["run-shell"]["attendable"] is False
+    assert ops["wiki-ingest"]["params"][0]["key"] == "url"
+    assert ops["run-shell"]["confirm"]
+    assert not any(k.startswith("build_") for k in ops["wiki-lint"])
+
+
+def test_tasks_list_filters_by_provider(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["window"].start_window(2)
+    client = app.test_client()
+    for op, params in (("wiki-lint", {}), ("run-prompt", {"prompt": "hi"})):
+        rv = client.post("/api/tasks", json={"name": "t", "vault": "alpha", "operation": op,
+                                             "params": params, "priority": "high"},
+                         headers={"X-Requested-With": "resman"})
+        assert rv.status_code == 201
+        assert rv.get_json()["provider"] in ("obsidian", "adhoc")
+    tasks = client.get("/api/tasks?provider=adhoc").get_json()["tasks"]
+    assert [t["operation"] for t in tasks] == ["run-prompt"]
+    assert len(client.get("/api/tasks").get_json()["tasks"]) == 2
+
+
+def test_config_structured_exposes_operation_providers_and_rejects_unknown_ops(tmp_path):
+    app, ctx, _ = make_test_app(tmp_path)
+    client = app.test_client()
+    body = client.get("/api/config/structured").get_json()
+    assert body["operation_providers"]["wiki-lint"] == "obsidian"
+    assert set(body["operations"]) == set(body["operation_providers"])
+    bad = {"cron_tasks": [{"name": "n", "cron": "0 9 * * 1", "vault": "ALL",
+                           "operation": "wiki-gone", "priority": "medium"}]}
+    rv = client.post("/api/config/structured", json={"file": "schedule.yaml", "data": bad},
+                     headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 400 and "wiki-gone" in rv.get_json()["error"]
+    assert ctx["config"].cron_tasks == []

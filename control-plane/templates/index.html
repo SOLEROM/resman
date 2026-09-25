@@ -42,6 +42,7 @@
   <script defer src="/static/js/cldbar.js"></script>
   <script defer src="/static/js/cldbar-glue.js"></script>
   <script defer src="/static/js/bench-signal.js"></script>
+  <script defer src="/static/js/tasks-core.js"></script>
   <script defer src="/static/js/app.js"></script>
   <script defer src="/static/js/skills.js"></script>
   <script defer src="/static/js/wiki-highlights-glue.js"></script>
@@ -118,7 +119,7 @@
     </div>
     <div class="activity-group activity-bottom">
       <button class="activity-item" data-tab="skills"
-              title="Skills — the claude-obsidian plugin resman drives, and the new-vault process">
+              title="Skills — the claude-obsidian plugin and resman's own skills (skills/), and the new-vault process">
         <span class="codicon codicon-extensions"></span>
         <span class="activity-badge" id="skills-badge" hidden></span>
         <span class="activity-label">Skills</span>
@@ -239,7 +240,7 @@
         <div class="terminal-panel">
           {% if not use_webterm %}
           <!-- Legacy ttyd mode renders its session tabs here; webterm draws
-               its own tab strip inside #webterm-root, so this row is omitted
+               its own tab strip inside the webterm root element, so this row is omitted
                (it would be a 35px bar holding only the "Terminal" label). -->
           <div class="term-header">
             <span class="panel-title active">Terminal</span>
@@ -266,8 +267,7 @@
                  placeholder="Search wiki…" autocomplete="off" spellcheck="false" />
           <button id="btn-wiki-random" class="btn secondary btn-sm" title="Open a random unread page">Random</button>
           <button id="btn-wiki-read" class="btn secondary btn-sm" title="Toggle read/unread for this page" hidden>read</button>
-          <button id="btn-wiki-fav" class="btn secondary btn-sm" title="Toggle favorite for this page" hidden>☆ Favorite</button>
-          <button class="btn secondary btn-sm" data-wiki-page=".favorites.md" title="Open the favorites list (<vault>/.favorites.md)">★ Favorites</button>
+          <button id="btn-wiki-fav" class="btn secondary btn-sm" title="Toggle favorite for this page (the list is the ★ Favorites row of the page tree)" hidden>☆ Favorite</button>
           <button class="btn secondary btn-sm" data-wiki-page="wiki/hot.md" title="Load wiki/hot.md">Hot</button>
           <button class="btn secondary btn-sm" data-wiki-page="wiki/index.md" title="Load wiki/index.md">Index</button>
           <button class="btn secondary btn-sm" data-wiki-page="wiki/overview.md" title="Load wiki/overview.md">Overview</button>
@@ -275,6 +275,7 @@
           <button id="btn-wiki-fwd" class="icon-btn" title="Forward" disabled><span class="codicon codicon-arrow-right"></span></button>
           <button id="btn-wiki-refresh" class="icon-btn" title="Reload current page"><span class="codicon codicon-refresh"></span></button>
         </div>
+        <div id="wiki-notice" class="wiki-notice" role="alert" hidden></div>
         <div class="docs wiki-layout">
           <aside class="docs-tree wiki-tree" id="wiki-tree">
             <div class="docs-tree-header">
@@ -302,7 +303,10 @@
         <div class="task-trigger" id="task-trigger">
           <h2 class="new-task-heading">New task</h2>
           <div class="new-task-layout">
-            <ul class="kind-list" id="t-op-list" role="radiogroup" aria-label="Operation"></ul>
+            <div class="kind-column">
+              <div class="provider-switch" id="t-provider" role="radiogroup" aria-label="Source" hidden></div>
+              <ul class="kind-list" id="t-op-list" role="radiogroup" aria-label="Operation"></ul>
+            </div>
 
             <div class="task-detail">
               <input type="hidden" id="t-op">
@@ -369,6 +373,9 @@
               <option value="active" selected>active</option>
               <option value="recent">recent (24h)</option>
               <option value="all">all</option>
+            </select>
+            <select id="task-source-filter" title="Source of the operation's skill: the claude-obsidian plugin, resman's own skills, or ad hoc">
+              <option value="">all sources</option>
             </select>
             <div class="spacer"></div>
             <button id="btn-task-clean" class="btn secondary btn-sm" title="Archive all finished tasks (completed/failed/cancelled/interrupted) so they drop out of the queue. Kept in the log."><span class="codicon codicon-clear-all"></span>Clean finished</button>

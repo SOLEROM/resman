@@ -18,14 +18,20 @@ Validation rules:
 - resman.yaml: each vault entry must contain `name` and `path`; vault names
   match [a-zA-Z0-9_-]
 - schedule.yaml: each cron entry must contain `name`, `cron`, `vault`,
-  `operation`, `priority`; cron string must parse via CronTrigger.from_crontab
+  `operation`, `priority`; cron string must parse via CronTrigger.from_crontab;
+  `operation` must be a key of the operation registry (modules/operations.py)
+- resman.yaml `skills:` — optional mapping skill name → settings; with a
+  `resman_root` the values are checked against the skill's settings.yaml
+  (modules/resman_skills.py); a skill the folder lacks is kept, not refused
 """
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import Any, Optional
 
@@ -86,7 +92,7 @@ def _validate_category(value: Any, where: str) -> None:
             )
 
 
-def validate_resman_yaml(data: Any) -> dict:
+def validate_resman_yaml(data: Any, resman_root: Optional[Path] = None) -> dict:
     if not isinstance(data, dict):
         raise ConfigError("resman.yaml: top-level value must be a mapping")
     vaults = data.get("vaults") or []
@@ -173,6 +179,20 @@ def validate_resman_yaml(data: Any) -> dict:
             raise ConfigError(
                 "resman.yaml: inbox.ignore_pages entries must be non-empty strings"
             )
+    skills = data.get("skills")
+    if skills is None:
+        skills = {}
+    if not isinstance(skills, dict):
+        raise ConfigError("resman.yaml: 'skills' must be a mapping of skill name → settings")
+    for name, values in skills.items():
+        if not isinstance(values, dict):
+            raise ConfigError(f"resman.yaml: skills.{name} must be a mapping")
+    if resman_root is not None and skills:
+        from . import resman_skills  # local: keeps this module importable alone
+        try:
+            resman_skills.validate_skills_section(resman_root, skills)
+        except resman_skills.SettingsError as exc:
+            raise ConfigError(f"resman.yaml: skills: {exc}") from exc
     return data
 
 
@@ -195,6 +215,12 @@ def validate_schedule_yaml(data: Any) -> dict:
             if k not in entry:
                 raise ConfigError(f"schedule.yaml: cron entry missing '{k}'")
         _validate_cron_string(entry["cron"])
+        from . import operations  # local: operations never imports this module
+        if entry["operation"] not in operations.REGISTRY:
+            raise ConfigError(
+                f"schedule.yaml: cron entry {entry['name']!r} has unknown operation "
+                f"{entry['operation']!r} (known: {', '.join(operations.REGISTRY)})"
+            )
         if entry["priority"] not in ("high", "medium", "low"):
             raise ConfigError(
                 f"schedule.yaml: priority must be high/medium/low (got {entry['priority']!r})"
@@ -212,8 +238,14 @@ class ConfigManager:
         config_dir: Path,
         bus: Optional[EventBus] = None,
         user_override_path: Optional[Path] = None,
+        resman_root: Optional[Path] = None,
     ) -> None:
         self.config_dir = Path(config_dir)
+        # With the repo root, the `skills:` section is checked against each
+        # skill's settings.yaml in <root>/skills; without it (tests,
+        # tools) only the section's shape is checked.
+        self.resman_root = Path(resman_root) if resman_root else None
+        self._validate_resman = partial(validate_resman_yaml, resman_root=self.resman_root)
         # Resolved at load() time so we know which file is actually live.
         self.resman_path = self.config_dir / "resman.yaml"
         self.schedule_path = self.config_dir / "schedule.yaml"
@@ -267,7 +299,7 @@ class ConfigManager:
                 f"Copy resman.yaml.example to resman.yaml and edit it, "
                 f"or place a ~/.resman.yaml."
             )
-        self._system = self._load_yaml(self.resman_path, validate_resman_yaml)
+        self._system = self._load_yaml(self.resman_path, self._validate_resman)
         if self.schedule_path.exists():
             self._schedule = self._load_yaml(self.schedule_path, validate_schedule_yaml)
         else:
@@ -330,6 +362,33 @@ class ConfigManager:
     def cron_tasks(self) -> list[dict]:
         return list(self._schedule.get("cron_tasks") or [])
 
+    @property
+    def skills(self) -> dict:
+        """The `skills:` section: skill name → its stored settings (a partial
+        mapping; missing keys mean the skill's schema defaults)."""
+        return copy.deepcopy(self._system.get("skills") or {})
+
+    def skill_settings(self, skill: str) -> dict:
+        return dict(self.skills.get(skill) or {})
+
+    def save_skill_settings(self, skill: str, values: dict) -> dict:
+        """Replace `skills.<skill>` in the live resman.yaml (structured save:
+        validated against the skill's schema, then dumped without comments,
+        like the Config tab's form). An empty mapping removes the entry."""
+        if not isinstance(values, dict):
+            raise ConfigError("skill settings must be a mapping")
+        data = copy.deepcopy(self._system)
+        skills = dict(data.get("skills") or {})
+        if values:
+            skills[skill] = dict(values)
+        else:
+            skills.pop(skill, None)
+        if skills:
+            data["skills"] = skills
+        else:
+            data.pop("skills", None)
+        return self.save_resman_data(data)
+
     def get_vault(self, name: str) -> Optional[dict]:
         for entry in self.vaults:
             if entry.get("name") == name:
@@ -339,7 +398,7 @@ class ConfigManager:
     def save_resman_yaml(self, content: str) -> dict:
         # Write back to whichever file load() selected so the user override
         # at ~/.resman.yaml stays authoritative across edits.
-        return self._save_to(self.resman_path, "resman.yaml", content, validate_resman_yaml)
+        return self._save_to(self.resman_path, "resman.yaml", content, self._validate_resman)
 
     # Back-compat alias. Existing routes still call save_system_yaml.
     def save_system_yaml(self, content: str) -> dict:
@@ -354,7 +413,7 @@ class ConfigManager:
     # safe_dump, so YAML comments do not survive — same trade-off add_vault
     # already makes. The raw-YAML editor remains for comment-preserving edits.
     def save_resman_data(self, data: dict) -> dict:
-        validate_resman_yaml(data)
+        self._validate_resman(data)
         return self.save_resman_yaml(yaml.safe_dump(data, sort_keys=False))
 
     def save_schedule_data(self, data: dict) -> dict:

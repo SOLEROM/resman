@@ -34,7 +34,8 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | POST | `/api/sessions/orphans/kill` | Kill every tmux session matching the resman prefix that is not in the live registry. CSRF-required. Returns `{killed: [name...], failed: [{name, error}...]}` — best-effort, partial success is OK |
 | POST | `/api/sessions` | Spawn terminal session (vault, type: `claude`\|`shell`, optional `initial_command`, optional `bootstrap_new_vault: true`); 503 if ttyd missing |
 | DELETE | `/api/sessions/{id}` | Kill a terminal session (terminate ttyd AND its underlying tmux session — closing the `×` on the tab is treated as a full "done with this terminal" so no orphan tmux accumulates) |
-| GET | `/api/tasks` | List tasks (filters: vault, priority, status, limit, offset) |
+| GET | `/api/operations` | The operation registry (`modules/operations.py`) minus its builders: per operation `key`, `label`, `group`, `provider` (`obsidian` \| `resman` \| `adhoc`), `kind` (`prompt` \| `shell`), `attendable`, `skill`, `params` (key, type, label, required, max_len, placeholder), `desc`, `note`, `icon`, `confirm`, `remote`; plus `providers: [{id, label}]`. What the Tasks picker renders from phase 2 on ([17-skills.md](17-skills.md)) |
+| GET | `/api/tasks` | List tasks (filters: vault, priority, status, `provider`, limit, offset). Each task carries a derived `provider` |
 | POST | `/api/tasks` | Create a task. Optional `scheduled_for: ISO8601` parks the task in `scheduled` state for one-shot future firing; rejected if combined with `vault: ALL` or with a past timestamp. Optional `force: true` bypasses window-gating for this task (used by the sidebar `↘` shortcut and `tools/remoteAgent.sh`); ignored when `scheduled_for` is also set |
 | GET | `/api/tasks/{id}` | Get single task state |
 | GET | `/api/tasks/{id}/log` | Get task execution log (full backlog; live tail is via the `task_log_appended` Socket.IO event) |
@@ -48,12 +49,18 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | GET | `/api/cron` | List cron tasks with `last_fired_at`, `skip_count` |
 | GET | `/api/config/yaml?file=…` | Read raw YAML for `resman.yaml` or `schedule.yaml`; returns extra fields for resman.yaml: `resman_path`, `resman_display_path` (tildified, e.g. `~/.resman.yaml`), `using_user_override` (bool). Accepts legacy `file=system.yaml` alias |
 | POST | `/api/config/yaml` | Save resman.yaml or schedule.yaml (body: `{file, content}`); accepts legacy `file=system.yaml` alias |
-| GET | `/api/config/structured` | Parsed config for the Config-tab settings form: `{resman, schedule}` documents plus the metadata the form's controls need — `operations` (valid cron operations from `task_manager.OPERATIONS`), `vault_names`, and the same `resman_path` / `resman_display_path` / `using_user_override` fields as the raw endpoint |
+| GET | `/api/config/structured` | Parsed config for the Config-tab settings form: `{resman, schedule}` documents plus the metadata the form's controls need — `operations` (the registry's keys, the valid cron operations), `operation_providers` (key → provider), `providers`, `vault_names`, and the same `resman_path` / `resman_display_path` / `using_user_override` fields as the raw endpoint. A schedule save with an operation the registry lacks is a 400 naming it |
 | POST | `/api/config/structured` | Save one file from a parsed document (body: `{file, data}`). Validated with the same rules as the raw editor, then dumped via `yaml.safe_dump` and written atomically (comments are dropped — the form warns about this). 400 on validation failure without writing |
 | GET | `/api/help/tree` | Walk the `man/` directory tree (root: `<repo>/man` or `app.man_path`) and return nested `.md` files. Used by the **Help** tab. Returns `{root, missing, tree:[…]}` |
 | GET | `/api/help/page?file=…` | Read one help page; default `index.md`. Only `.md` files served. Path-traversal blocked |
+| GET | `/api/skills/summary` | Both skill providers ([17-skills.md](17-skills.md)): `providers: [{id, label, plugin, skills, commands, docs, uses, warnings}, …]` for `obsidian` (`plugin_info.summary()`: version, install path and how it was found, `companion`) and `resman` (`resman_skills.summary()`: the `skills/` folder, `located_by: repo`; each skill has `used`, `has_settings`, `invoke`); top-level `warnings` is the union — what the **Skills** badge counts |
+| GET | `/api/skills/file?provider=…&path=…` | Raw markdown of one `.md` file inside a provider's folder (`plugin_info.read_file_from`); traversal-safe, 512 KB cap; `provider` defaults to `obsidian`; 404 when that provider is absent |
+| GET | `/api/skills/settings?skill=…` | A resman skill's `settings.yaml` schema (`resman_skills.load_settings_schema`), the stored `skills.<skill>` values, defaults, the effective merge, the rendered `key=value` tokens, and the resman.yaml path fields. 404 for an unknown skill, 400 for one without settings |
+| POST | `/api/skills/settings` | `{skill, values}` → `resman_skills.validate_settings` (400 names `<skill>.<key>`) → `ConfigManager.save_skill_settings` (structured save of the live resman.yaml; `{}` removes the entry). Returns the same payload as the GET plus `ok`. CSRF required |
+| GET | `/api/skills/new-vault` | `man/new-vault.md` plus the exact bootstrap message resman pastes (prefix + `/claude-obsidian:wiki` + suffix) with the installed plugin's folder filled in |
 
 `/api/window` actions: `start` | `end` | `start_weekly` | `end_weekly`
+
 
 ### POST /api/sessions body
 

@@ -550,3 +550,83 @@ def test_save_schedule_data_rejects_bad_cron(cfg_dir):
             "name": "x", "cron": "not-cron", "vault": "ALL",
             "operation": "wiki-lint", "priority": "low"}]})
     assert not cm.schedule_path.exists()
+
+
+# ----- operation registry + per-skill settings (plan phase 1) -----
+
+def test_schedule_rejects_an_operation_the_registry_lacks(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\n")
+    write(cfg_dir / "schedule.yaml", """
+        cron_tasks:
+          - name: x
+            cron: "0 9 * * 1"
+            vault: ALL
+            operation: wiki-gone
+            priority: low
+    """)
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="wiki-gone"):
+        cm.load()
+
+
+def _plugin_root(tmp_path, schema="- key: n\n  type: int\n  default: 1\n  min: 0\n  max: 9\n"):
+    root = tmp_path / "resman"
+    (root / "skills" / ".claude-plugin").mkdir(parents=True)
+    (root / "skills" / ".claude-plugin" / "plugin.json").write_text('{"name":"resman","version":"0.1.0"}')
+    d = root / "skills" / "skills" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n")
+    (d / "settings.yaml").write_text(schema)
+    return root
+
+
+def test_skills_section_is_validated_against_the_skill_schemas(cfg_dir, tmp_path):
+    root = _plugin_root(tmp_path)
+    write(cfg_dir / "resman.yaml", """
+        vaults: []
+        skills:
+          demo:
+            n: 500
+    """)
+    cm = ConfigManager(cfg_dir, EventBus(), resman_root=root)
+    with pytest.raises(ConfigError, match="demo.n"):
+        cm.load()
+    write(cfg_dir / "resman.yaml", """
+        vaults: []
+        skills:
+          demo:
+            n: 4
+          gone:
+            anything: 1
+    """)
+    cm = ConfigManager(cfg_dir, EventBus(), resman_root=root)
+    cm.load()                                        # unknown skill: allowed
+    assert cm.skills == {"demo": {"n": 4}, "gone": {"anything": 1}}
+    assert cm.skill_settings("demo") == {"n": 4}
+    assert cm.skill_settings("nope") == {}
+
+
+def test_skills_section_must_be_a_mapping_even_without_a_root(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\nskills: [1, 2]\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="skills"):
+        cm.load()
+    write(cfg_dir / "resman.yaml", "vaults: []\nskills:\n  demo: 3\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    with pytest.raises(ConfigError, match="demo"):
+        cm.load()
+
+
+def test_save_skill_settings_merges_into_the_live_file(cfg_dir, tmp_path):
+    root = _plugin_root(tmp_path)
+    write(cfg_dir / "resman.yaml", "vaults: []\ncategories: [work]\n")
+    cm = ConfigManager(cfg_dir, EventBus(), resman_root=root)
+    cm.load()
+    cm.save_skill_settings("demo", {"n": 7})
+    assert cm.skill_settings("demo") == {"n": 7}
+    assert cm.categories == ["work"]                 # the rest of the file survives
+    import yaml
+    assert yaml.safe_load((cfg_dir / "resman.yaml").read_text())["skills"] == {"demo": {"n": 7}}
+    with pytest.raises(ConfigError, match="demo.n"):
+        cm.save_skill_settings("demo", {"n": 99})
+    assert cm.skill_settings("demo") == {"n": 7}     # rejected save changed nothing

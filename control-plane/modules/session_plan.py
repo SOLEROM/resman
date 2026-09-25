@@ -11,9 +11,10 @@ actually runs and where.
 """
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 
-from . import plugin_commands
+from . import plugin_commands, resman_skills
 
 MAX_INITIAL_COMMAND = 200
 SESSION_TYPES = ("claude", "shell")
@@ -40,6 +41,17 @@ class SessionPlan:
     initial_text: "str | None" = None
 
 
+def _claude_cmd(context: dict) -> str:
+    """The configured ``claude_cmd`` plus ``--plugin-dir <root>/skills``
+    when the repo has that folder (docs/design/17-skills.md, D3), so
+    ``/resman:<skill>`` works in every session resman opens. The flag is
+    appended shell-quoted because ``claude_cmd`` is a shell-style string."""
+    cmd = str(context["config"].app.get("claude_cmd", "claude"))
+    root = context.get("resman_root")
+    suffix = resman_skills.plugin_dir_suffix(root) if root else ""
+    return f"{cmd} {suffix}" if suffix else cmd
+
+
 def build_session_plan(context: dict, body: dict) -> SessionPlan:
     """Validate a session request and resolve everything it refers to."""
     vault_name = body.get("vault")
@@ -54,7 +66,7 @@ def build_session_plan(context: dict, body: dict) -> SessionPlan:
 
     plan = SessionPlan(
         vault=vault.name, vault_path=vault.path, session_type=session_type,
-        claude_cmd=context["config"].app.get("claude_cmd", "claude"))
+        claude_cmd=_claude_cmd(context))
 
     # Optional: type a slash command into the Claude prompt once it's ready.
     # Used by the new-vault wizard to send /claude-obsidian:wiki so the user
@@ -106,5 +118,5 @@ def build_attend_plan(context: dict, task_id: str) -> SessionPlan:
             f"vault {task.vault!r} is no longer registered")
     return SessionPlan(
         vault=vault.name, vault_path=vault.path, session_type="claude",
-        claude_cmd=context["config"].app.get("claude_cmd", "claude"),
+        claude_cmd=_claude_cmd(context),
         initial_text=prompt)

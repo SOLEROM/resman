@@ -1145,3 +1145,99 @@ def test_clean_terminal_empty_is_zero(tmp_path):
     tm, _, _ = make_tm(tmp_path, active=False)
     tm.create_task("a", "alpha", "wiki-lint", {}, "high")  # deferred, not finished
     assert tm.clean_terminal() == {"cleaned": 0}
+
+
+# ----- operation registry (docs/design/17-skills.md, plan phase 1) -----
+def test_task_payload_carries_the_derived_provider(tmp_path):
+    tm, _, _ = make_tm(tmp_path)
+    lint = tm.create_task("l", "alpha", "wiki-lint", {}, "high")
+    prompt = tm.create_task("p", "alpha", "run-prompt", {"prompt": "hi"}, "high")
+    assert lint.to_dict()["provider"] == "obsidian"
+    assert prompt.to_dict()["provider"] == "adhoc"
+    assert tm.list(provider="adhoc") and all(t["provider"] == "adhoc" for t in tm.list(provider="adhoc"))
+    assert len(tm.list(provider="obsidian")) == 1
+
+
+def test_a_task_whose_operation_left_the_registry_still_lists(tmp_path):
+    """Old tasks.jsonl lines keep replaying after an operation is removed."""
+    log = tmp_path / "tasks.jsonl"
+    log.write_text(json.dumps({"ts": "2026-01-01T00:00:00Z", "event": "created", "task_id": "t-old",
+                               "data": {"name": "old", "vault": "alpha", "operation": "wiki-gone",
+                                        "params": {}, "priority": "low", "schedule": "background"}}) + "\n")
+    tm, _, _ = make_tm(tmp_path)
+    old = [t for t in tm.list(state="pending") if t["id"] == "t-old"]
+    assert old and old[0]["provider"] == "unknown"
+    assert tm.build_attend_prompt(tm.get("t-old")) is None
+
+
+def _install_plugin_folder(tmp_path) -> Path:
+    d = tmp_path / "resman" / "skills" / ".claude-plugin"
+    d.mkdir(parents=True)
+    (d / "plugin.json").write_text('{"name": "resman", "version": "0.1.0"}')
+    return tmp_path / "resman" / "skills"
+
+
+def test_prompt_operations_load_the_resman_plugin_when_the_folder_exists(tmp_path):
+    """D3: every `claude` resman spawns gets --plugin-dir <root>/skills,
+    appended last; shell operations (ingest.sh, run-shell) are untouched."""
+    folder = _install_plugin_folder(tmp_path)
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd)); return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task("l", "alpha", "wiki-lint", {}, "high")
+    tm.create_task("s", "alpha", "run-shell", {"cmd_parts": ["true"]}, "high")
+    tm.create_task("i", "alpha", "wiki-ingest", {"url": "https://a"}, "high")
+    lint, shell, ingest = seen
+    assert lint[-2:] == ["--plugin-dir", str(folder)]
+    assert lint[1:2] == ["-p"] and "--dangerously-skip-permissions" in lint
+    assert "--plugin-dir" not in shell and "--plugin-dir" not in ingest
+
+
+def test_without_the_folder_the_command_lines_are_the_old_ones(tmp_path):
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd)); return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.create_task("l", "alpha", "wiki-lint", {}, "high")
+    assert seen[0][1:] == ["-p", "/claude-obsidian:wiki-lint", "--dangerously-skip-permissions"]
+
+
+def test_a_resman_operation_runs_its_skill_with_the_plugin_loaded(tmp_path, monkeypatch):
+    from modules import operations, resman_skills
+    from modules.operations import Operation, Param
+    folder = _install_plugin_folder(tmp_path)
+    echo = Operation(key="rs-echo", label="Echo", group="Wiki", provider="resman",
+                     kind="prompt", skill="echo", params=(Param("focus", "text", "Focus"),),
+                     build_prompt=lambda p, c: resman_skills.skill_prompt("echo", p.get("focus", "")))
+    monkeypatch.setitem(operations.REGISTRY, "rs-echo", echo)
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd)); return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    t = tm.create_task("e", "alpha", "rs-echo", {"focus": "edge"}, "high")
+    assert t.to_dict()["provider"] == "resman"
+    assert seen[0][1:] == ["-p", "/resman:echo edge", "--dangerously-skip-permissions",
+                           "--plugin-dir", str(folder)]
+    assert tm.build_attend_prompt(t) == "/resman:echo edge"
+    with pytest.raises(ValueError, match="printable ASCII"):
+        tm.create_task("e2", "alpha", "rs-echo", {"focus": "x" * 201}, "high")
+
+
+def test_registry_settings_reach_the_builder_through_the_run_context(tmp_path, monkeypatch):
+    """The stored yaml values for op.skill arrive as RunContext.settings via
+    the skill_settings seam the server wires to ConfigManager.skills."""
+    from modules import operations
+    from modules.operations import Operation
+    _install_plugin_folder(tmp_path)
+    echo = Operation(key="rs-echo", label="Echo", group="Wiki", provider="resman",
+                     kind="prompt", skill="echo",
+                     build_prompt=lambda p, c: f"/resman:echo n={c.settings.get('n')}")
+    monkeypatch.setitem(operations.REGISTRY, "rs-echo", echo)
+    seen = []
+    def runner(cmd, cwd, log_file):
+        seen.append(list(cmd)); return 0
+    tm, _, _ = make_tm(tmp_path, runner=runner)
+    tm.set_skill_settings(lambda skill: {"n": 4} if skill == "echo" else {})
+    tm.create_task("e", "alpha", "rs-echo", {}, "high")
+    assert seen[0][2] == "/resman:echo n=4"

@@ -163,7 +163,10 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 
 **Tasks tab:**
 - Operations-first layout. The top of the tab is a **trigger panel** with: vault selector + `all vaults` toggle, operation dropdown grouped by Wiki / Research / Custom, per-operation parameter fields (URL, topic, prompt, argv, checkbox — no JSON textarea), priority, and a `When` `datetime-local` input (empty = run now). One **Run task** button submits.
-- Operation registry lives client-side in `OPERATIONS` (`app.js`). It mirrors the operation list in `plugin_commands.py` + `task_manager.py`; no `/api/operations` endpoint.
+- The operation registry is server-side (`modules/operations.py`), fetched once at boot from `GET /api/operations` into `state.operations` (`loadOperations`, first thing in `init()`); `opMeta(key)` is the one lookup. `static/js/tasks-core.js` (`tasksCore`) holds the pure helpers — grouping by `group` in Research / Wiki / Custom order, the queue filters — and runs under node in `tests/js/tasks-core.test.mjs`. No operation key is spelled in JS except the sidebar ↘ ingest button's two (`tests/test_operations.py` greps for it).
+- **Source switch** above the cards (`#t-provider`: All, then every provider with at least one operation; hidden while only one exists), remembered in `localStorage` (`resman-task-provider`). Selecting an operation hidden by the switch (a re-run of a task from another source) widens it to All. Each card carries `data-provider`.
+- Every task card carries a **source pill** (`.provider-pill.provider-<id>`: obsidian / resman / ad hoc, `unknown` for an operation the registry no longer has) before the operation label; `attend` is offered when the registry marks the operation `attendable`.
+- The queue toolbar's third select, **source** (`#task-source-filter`, remembered as `resman-task-source`), joins priority and state; `tasksCore.filterTasks` applies all of them plus the selected vault. Browser coverage: `tests/test_tasks_browser.py`.
 - The queue below the trigger renders **task cards** (one card per task; left border tinted by state). Clicking the card head or the `log` button expands the card to reveal params, error, scheduled time, and a **live-tailing log pane** that subscribes to `task_log_appended` Socket.IO chunks. The pane is seeded from `GET /api/tasks/{id}/log` on first open.
 - Queue filters: priority + state (`active` default | `recent (24h)` | `all`). When a vault is selected, the queue is filtered to its tasks plus all `ALL`-vault tasks.
 - Per-card actions vary by state:
@@ -174,6 +177,12 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 - A dismissible **cron-skip banner** at the top of the tab shows up when a `cron_skip_warning` SocketIO event arrives (cron task fired but the window is inactive).
 - **Compact log** button stays in the queue toolbar (snapshots terminal-state tasks > 90 days old via `POST /api/tasks/compact`).
 - See `06-task-management.md` for the live-log streaming, log size cap, and cancel-running semantics.
+
+**Skills tab** (activity-bar item; two providers since 2026-09-24, [17-skills.md](17-skills.md)):
+- `skills.js` over `GET /api/skills/*`. Two-pane layout like Help: a tree on the left — *Overview*, *New vault process*, one node per **provider** (`claude-obsidian <version>` with *Used by resman* / *Other skills* / *Commands* / *Plugin docs*; `resman skills <version>` with *Wired to an operation* / *Not wired yet* / *Commands* / *Docs*), then *Custom skill guide* (`skills/README.md`) — and the rendered page on the right (`renderWikiMarkdown` with wikilinks off; relative `.md` links stay inside the provider's view). Page ids are `<provider>:<relative path>`.
+- *Overview* shows one block per provider (the plugin's version, scope, folder, how it was found, the claude-canvas companion; the folder's version, path, how it is loaded), then one *What resman sends* table with a Source column, then the plugin's update commands with this machine's real marketplace name.
+- A resman skill's page shows its `SKILL.md`, its invoke line, and — when the skill ships `settings.yaml` — a **Settings** card (`renderSkillSettings`): one control per schema entry (number with min/max, text with maxlength, checkbox, select, textarea one-per-line), help text, **Save** (stores only values that differ from the defaults, `POST /api/skills/settings`) and **Reset to defaults** (`{}`); shows which yaml file it writes and the `key=value` line the next run receives; a 400 is shown next to the buttons with the key named.
+- The activity-bar badge counts the union of both providers' `warnings`. Browser coverage: `tests/test_skills_browser.py` (runs the app against a fake `resman_root`, `tests/browser_app.serve(resman_root=)`).
 
 **Config tab:**
 - Two modes, toggled top-right and persisted in `localStorage`

@@ -169,7 +169,7 @@ def build_app(
     bus = get_bus()
     bus.clear()
 
-    config = ConfigManager(config_dir, bus)
+    config = ConfigManager(config_dir, bus, resman_root=RESMAN_ROOT)
     config.load()
     resolved_port = _resolve_port(config, port)
 
@@ -216,6 +216,9 @@ def build_app(
         usage_provider=claude_usage.fetch_usage,
     )
     replay_summary = task_manager.replay()
+    # Stored per-skill settings (skills.<skill> in resman.yaml) reach the
+    # registry builders through the run context.
+    task_manager.set_skill_settings(config.skill_settings)
 
     obsidian_push = ObsidianPush(
         vault_iter=lambda: vault_registry.registered,

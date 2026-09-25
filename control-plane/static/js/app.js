@@ -11,6 +11,17 @@ const state = {
   sessions: [],
   activeSessionId: null,
   tasks: [],
+  // The operation registry (GET /api/operations): every operation a task can
+  // run, each with its provider — the source of its skill (obsidian | resman
+  // | adhoc). Loaded once at boot by loadOperations; nothing in this file
+  // spells an operation key except the sidebar's single-purpose ingest button.
+  // `opProvider` narrows the picker ("" = every source), `taskSource` the
+  // queue; both are remembered per browser.
+  operations: [],
+  opsByKey: {},
+  providers: [],
+  opProvider: loadStored("resman-task-provider", ""),
+  taskSource: loadStored("resman-task-source", ""),
   ttydAvailable: true,
   window: { state: "between" },
   // `tag` is the active sidebar tag filter (null = show all). It lives here
@@ -51,6 +62,18 @@ const state = {
 };
 
 const ACTIVITY_LOG_MAX = 2000;
+
+// One remembered string per key; localStorage may be unavailable (private
+// window, blocked storage), so both directions swallow failures.
+function loadStored(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v == null ? fallback : v;
+  } catch (_) { return fallback; }
+}
+function saveStored(key, value) {
+  try { localStorage.setItem(key, value); } catch (_) { /* ignore */ }
+}
 
 function loadCollapsedCats() {
   try {
@@ -937,69 +960,29 @@ function renderActiveSession() {
 }
 
 // ----- tasks -----
-// Operation registry. This is the single source of truth that the trigger
-// form reads to render per-op fields. Operations are hard-coded in
-// plugin_commands.py + task_manager.py; mirrored here so we don't pay a
-// round-trip just to learn what's next door.
-const OPERATIONS = {
-  "wiki-lint": {
-    label: "Lint wiki", group: "Wiki", params: [],
-    desc: "Find orphans, dead links and gaps.",
-  },
-  "wiki-update-hot-cache": {
-    label: "Update hot cache", group: "Wiki", params: [],
-    desc: "Refresh the hot-cache index.",
-  },
-  "wiki-bootstrap": {
-    label: "Re-run wiki bootstrap", group: "Wiki", params: [],
-    desc: "Re-run the wiki bootstrap.",
-    note: "Non-interactive re-run only; new vaults must use the wizard.",
-  },
-  "wiki-hint": {
-    label: "Generate hint", group: "Wiki", params: [],
-    desc: "Write the vault card's label & tags.",
-    note: "Inspects the wiki and writes wiki/hint.json — the label, summary and tags shown on this vault's landing-page card.",
-  },
-  "wiki-ingest": {
-    label: "Ingest a URL", group: "Research",
-    desc: "Fetch a URL into the wiki.",
-    params: [
-      { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
-      { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
-    ],
-  },
-  "wiki-ingest-prefix": {
-    label: "Ingest URL + prefix", group: "Research",
-    desc: "Ingest a URL, re-framed constructively.",
-    params: [
-      { key: "url", type: "url", required: true, label: "URL", placeholder: "https://…" },
-      { key: "update_canvas", type: "checkbox", required: false, label: "Update canvas after ingest (wiki/canvases/main.canvas)" },
-    ],
-    note: "Runs the URL ingest under prompts/urlInjestPrefix.md — extracts technological substance from sources that discuss harmful applications and re-frames it for constructive use.",
-  },
-  "wiki-autoresearch": {
-    label: "Autoresearch a topic", group: "Research",
-    desc: "Research a topic into new pages.",
-    params: [{ key: "topic", type: "text", required: true, label: "Topic", maxLength: 200, placeholder: "topic to research" }],
-  },
-  "wiki-canvas": {
-    label: "Update canvas", group: "Wiki",
-    desc: "Re-organize the visual canvas.",
-    params: [{ key: "description", type: "text", required: false, label: "Description (optional)", maxLength: 200, placeholder: "leave blank to use plugin defaults" }],
-    note: "Runs /claude-obsidian:canvas. Description is optional — leave it blank and the plugin uses its own defaults.",
-  },
-  "run-prompt": {
-    label: "Run a Claude prompt", group: "Custom",
-    desc: "Run a Claude prompt or command.",
-    params: [{ key: "prompt", type: "text", required: true, label: "Prompt", maxLength: 200, placeholder: "/your-command or free text" }],
-  },
-  "run-shell": {
-    label: "Run shell command", group: "Custom",
-    desc: "Run a shell command in the vault.",
-    params: [{ key: "cmd_parts", type: "argv", required: true, label: "Command (one argument per line)", placeholder: "echo\nhello" }],
-    confirm: "run-shell executes an arbitrary command in the vault directory. Proceed?",
-  },
-};
+// The operation registry lives on the server (modules/operations.py) and
+// arrives through GET /api/operations at boot (loadOperations). opMeta(key)
+// is the one lookup the Tasks view uses: label, group, provider, kind,
+// attendable, params (with their validation rules), icon, note, confirm.
+function opMeta(key) {
+  return state.opsByKey[key] || null;
+}
+
+function providerLabel(id) {
+  const p = state.providers.find((x) => x.id === id);
+  return p ? p.label : (id || "unknown");
+}
+
+async function loadOperations() {
+  const data = await api("/api/operations");
+  state.operations = data.operations || [];
+  state.opsByKey = tasksCore.byKey(state.operations);
+  state.providers = data.providers || [];
+  const list = $("#t-op-list");
+  if (list) list.innerHTML = "";   // rebuilt from the registry on next render
+  renderProviderSwitch();
+  renderSourceFilter();
+}
 
 // Tracks the inline-log subscription state per task_id.
 // { open: bool, seeded: bool, autoscroll: bool }
@@ -1017,17 +1000,8 @@ async function loadTasks() {
 // Both icon helpers return a codicon class; render as
 // `<span class="codicon ${...}"></span>`.
 function operationIcon(op) {
-  if (op === "wiki-ingest")        return "codicon-cloud-download";
-  if (op === "wiki-ingest-prefix") return "codicon-arrow-swap";
-  if (op === "wiki-lint")          return "codicon-checklist";
-  if (op === "wiki-update-hot-cache") return "codicon-sync";
-  if (op === "wiki-bootstrap")     return "codicon-rocket";
-  if (op === "wiki-hint")          return "codicon-info";
-  if (op === "wiki-autoresearch")  return "codicon-search";
-  if (op === "wiki-canvas")        return "codicon-layout";
-  if (op === "run-prompt")         return "codicon-zap";
-  if (op === "run-shell")          return "codicon-terminal";
-  return "codicon-circle-small";
+  const meta = opMeta(op);
+  return (meta && meta.icon) || "codicon-circle-small";
 }
 
 function taskStateIcon(s) {
@@ -1109,20 +1083,6 @@ function usageRowsHTML(t) {
           ${delta ? `<span>limit delta</span><span class="v">${esc(delta)}</span>` : ""}`;
 }
 
-// Operations whose execution is "claude -p <prompt>" — those can be reopened
-// in a live Claude REPL via POST /api/tasks/<id>/attend so the user can
-// answer prompts the original non-interactive run couldn't. Shell-based ops
-// (wiki-ingest, wiki-ingest-prefix, run-shell) aren't attendable.
-const ATTENDABLE_OPERATIONS = new Set([
-  "wiki-lint",
-  "wiki-autoresearch",
-  "wiki-canvas",
-  "wiki-update-hot-cache",
-  "wiki-bootstrap",
-  "wiki-hint",
-  "run-prompt",
-]);
-
 function taskActions(t) {
   const acts = [];
   if (t.state === "scheduled") acts.push("run-now", "cancel");
@@ -1131,7 +1091,10 @@ function taskActions(t) {
   else if (t.state === "running") acts.push("cancel");
   else if (["completed", "failed", "cancelled", "interrupted"].includes(t.state)) {
     acts.push("re-run");
-    if (ATTENDABLE_OPERATIONS.has(t.operation) && t.vault !== "ALL") {
+    // Only a `claude -p` operation can be reopened in a live REPL
+    // (POST /api/tasks/<id>/attend); shell operations have no prompt.
+    const meta = opMeta(t.operation);
+    if (meta && meta.attendable && t.vault !== "ALL") {
       acts.push("attend");
     }
     acts.push("delete");
@@ -1144,20 +1107,10 @@ function renderTasks() {
   if (!root) return;
   const pf = ($("#task-priority-filter") || {}).value || "";
   const sf = ($("#task-state-filter") || {}).value || "active";
-  let items = state.tasks.slice();
-  if (pf) items = items.filter((t) => t.priority === pf);
-  if (state.selectedVault) {
-    items = items.filter((t) => t.vault === state.selectedVault || t.vault === "ALL");
-  }
-  if (sf === "active") {
-    items = items.filter((t) => ["running", "pending", "deferred", "scheduled"].includes(t.state));
-  } else if (sf === "recent") {
-    const cutoff = Date.now() - 24 * 3600 * 1000;
-    items = items.filter((t) => {
-      const updated = new Date(t.updated_at).getTime();
-      return updated && updated >= cutoff;
-    });
-  }
+  const source = ($("#task-source-filter") || {}).value || "";
+  const items = tasksCore.filterTasks(state.tasks, {
+    priority: pf, state: sf, provider: source, vault: state.selectedVault,
+  });
   if (!items.length) {
     root.innerHTML = `<p class="muted" style="padding:18px">No tasks match. Use the trigger above to run one.</p>`;
     return;
@@ -1168,8 +1121,12 @@ function renderTasks() {
 
 function taskCardHTML(t) {
   const tid = esc(t.id);
-  const opMeta = OPERATIONS[t.operation] || { label: t.operation };
-  const opLabel = esc(opMeta.label || t.operation);
+  const meta = opMeta(t.operation) || { label: t.operation };
+  const opLabel = esc(meta.label || t.operation);
+  // Which source the operation's skill comes from (derived server-side).
+  const provider = t.provider || "unknown";
+  const providerPill = `<span class="pill provider-pill provider-${esc(provider)}"
+        title="source: ${esc(providerLabel(provider))}">${esc(tasksCore.providerShort(provider))}</span>`;
   const icon = taskStateIcon(t.state);
   const vault = esc(t.vault) + (t.parent_id ? " ↳" : "");
   const overdue = isOverdueScheduled(t);
@@ -1205,6 +1162,7 @@ function taskCardHTML(t) {
       <span class="task-card-icon codicon ${icon}"></span>
       <span class="pill ${PILL_CLASS[t.state] || "neutral"}">${esc(t.state)}</span>
       <span class="task-card-vault">${vault}</span>
+      ${providerPill}
       <span class="task-card-op">· ${opLabel}</span>
       <span class="task-card-meta">${when ? "· " + when : ""}</span>
       ${t.check_limits ? `<span class="pill neutral task-limit-badge" title="Usage limits are checked before and after this task — expand for the readings."><span class="codicon codicon-law"></span>limits</span>` : ""}
@@ -1365,28 +1323,55 @@ function renderTriggerWindowOptions() {
   if (prev && up.some((w) => w.start === prev)) sel.value = prev;
 }
 
-// Display order of the operation-picker groups (left column): Research first
-// (the most-used ingest/research ops), then Wiki maintenance, then Custom. Any
-// group not listed here is appended afterwards in insertion order.
-const OP_GROUP_ORDER = ["Research", "Wiki", "Custom"];
-
-// Operations grouped by OPERATIONS[].group, with the groups in OP_GROUP_ORDER
-// (any unlisted group appended in insertion order). Returns [[group, ops], …];
-// the single source of truth for both the picker and the default selection.
+// The picker groups the registry by OPERATIONS[].group (tasks-core.js holds
+// the order) and, when a source is chosen in the switch above it, shows that
+// provider's operations only.
 function orderedOpGroups() {
-  const groups = {};
-  for (const [op, meta] of Object.entries(OPERATIONS)) {
-    (groups[meta.group] ||= []).push(op);
-  }
-  const order = OP_GROUP_ORDER.filter((g) => groups[g])
-    .concat(Object.keys(groups).filter((g) => !OP_GROUP_ORDER.includes(g)));
-  return order.map((group) => [group, groups[group]]);
+  return tasksCore.orderedOpGroups(state.operations, state.opProvider);
 }
 
 // The op selected by default / on first render: the first card in display order.
 function firstOpKey() {
-  const grouped = orderedOpGroups();
-  return (grouped[0] && grouped[0][1][0]) || Object.keys(OPERATIONS)[0];
+  return tasksCore.firstOpKey(state.operations, state.opProvider);
+}
+
+// The source switch above the cards: All, then every provider that has at
+// least one operation. Hidden while only one source exists.
+function renderProviderSwitch() {
+  const box = $("#t-provider");
+  if (!box) return;
+  const avail = tasksCore.providersWithOps(state.providers, state.operations);
+  if (state.opProvider && !avail.some((p) => p.id === state.opProvider)) state.opProvider = "";
+  if (avail.length < 2) { box.innerHTML = ""; box.hidden = true; return; }
+  const btn = (id, label) => `<button type="button" role="radio"
+      class="provider-btn ${state.opProvider === id ? "active" : ""}"
+      aria-checked="${state.opProvider === id ? "true" : "false"}"
+      data-provider="${esc(id)}">${esc(label)}</button>`;
+  box.hidden = false;
+  box.innerHTML = btn("", "All") + avail.map((p) => btn(p.id, p.label)).join("");
+}
+
+function setOpProvider(id) {
+  state.opProvider = id || "";
+  saveStored("resman-task-provider", state.opProvider);
+  renderProviderSwitch();
+  renderOpCards();
+  const cur = ($("#t-op") || {}).value;
+  const visible = $$("#t-op-list .kind-card").some((b) => b.dataset.op === cur);
+  selectOp(visible ? cur : firstOpKey());
+}
+
+// The queue's source filter: all sources, then every provider.
+function renderSourceFilter() {
+  const sel = $("#task-source-filter");
+  if (!sel) return;
+  sel.innerHTML = `<option value="">all sources</option>` + state.providers.map((p) =>
+    `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("");
+  if (state.taskSource && state.providers.some((p) => p.id === state.taskSource)) {
+    sel.value = state.taskSource;
+  } else {
+    state.taskSource = "";
+  }
 }
 
 // Build the left-hand operation picker: garage-style cards grouped by
@@ -1395,12 +1380,18 @@ function firstOpKey() {
 function renderOpCards() {
   const list = $("#t-op-list");
   if (!list) return;
-  list.innerHTML = orderedOpGroups().map(([group, ops]) => {
+  const groups = orderedOpGroups();
+  if (!groups.length) {
+    list.innerHTML = `<li class="kind-empty muted small">No operations from this source yet.</li>`;
+    return;
+  }
+  list.innerHTML = groups.map(([group, ops]) => {
     const cards = ops.map((op) => {
-      const meta = OPERATIONS[op];
+      const meta = opMeta(op);
       return `<li>
         <button type="button" role="radio" aria-checked="false"
-                class="card kind-card" data-op="${esc(op)}">
+                class="card kind-card" data-op="${esc(op)}" data-provider="${esc(meta.provider)}"
+                title="source: ${esc(providerLabel(meta.provider))}">
           <span class="kind-card-title">
             <span class="kind-card-icon codicon ${operationIcon(op)}" aria-hidden="true"></span>
             ${esc(meta.label)}
@@ -1417,8 +1408,16 @@ function renderOpCards() {
 // render its parameter fields. `#t-op` (a hidden input) holds the value the
 // rest of the trigger code reads. `prefillParams` re-populates fields on re-run.
 function selectOp(opKey, prefillParams) {
-  const meta = OPERATIONS[opKey];
+  const meta = opMeta(opKey);
   if (!meta) return;
+  // A card the source switch hides (re-run of a task from another source):
+  // widen the switch to every source so the selection is visible.
+  if (state.opProvider && meta.provider !== state.opProvider) {
+    state.opProvider = "";
+    saveStored("resman-task-provider", "");
+    renderProviderSwitch();
+    renderOpCards();
+  }
   const oSel = $("#t-op");
   if (oSel) oSel.value = opKey;
   $$("#t-op-list .kind-card").forEach((btn) => {
@@ -1437,7 +1436,7 @@ function renderOpFields(prefillParams) {
   const root = $("#t-params-row");
   if (!root) return;
   const opKey = $("#t-op").value;
-  const meta = OPERATIONS[opKey];
+  const meta = opMeta(opKey);
   if (!meta) { root.innerHTML = ""; return; }
   const fields = (meta.params || []).map((p) => {
     const id = "t-p-" + p.key;
@@ -1463,7 +1462,7 @@ function renderOpFields(prefillParams) {
     return `<div class="param-row">
       <label for="${esc(id)}">${esc(p.label)}</label>
       <input id="${esc(id)}" type="${esc(type)}" data-key="${esc(p.key)}" data-type="${esc(p.type)}"
-             ${p.maxLength ? `maxlength="${p.maxLength}"` : ""}
+             ${p.max_len ? `maxlength="${p.max_len}"` : ""}
              placeholder="${esc(p.placeholder || "")}"
              value="${esc(String(v))}">
     </div>`;
@@ -1512,7 +1511,7 @@ async function submitTriggerForm() {
   const errEl = $("#t-error");
   if (errEl) errEl.textContent = "";
   const opKey = $("#t-op").value;
-  const meta = OPERATIONS[opKey];
+  const meta = opMeta(opKey);
   if (!meta) return;
 
   const allChecked = $("#t-all").checked;
@@ -1590,6 +1589,32 @@ const WIKI_FAVORITES = ".favorites.md";
 // True after the current page failed to load (404) — hides the ☆ toggle since
 // the server refuses to favorite a page that doesn't exist.
 state.wikiPageMissing = false;
+
+// A refused toolbar action (favorite / read toggle, random page) is reported in
+// #wiki-notice under the toolbar, never through alert(): docked in mainBench,
+// resman runs in a cross-origin iframe where Chromium drops dialogs silently,
+// so the operator would only see that nothing happened. Cleared by the next
+// navigation or after WIKI_NOTICE_MS.
+const WIKI_NOTICE_MS = 8000;
+let wikiNoticeTimer = null;
+
+function showWikiNotice(message) {
+  const box = $("#wiki-notice");
+  if (!box) { console.warn(message); return; }
+  box.textContent = message;
+  box.hidden = false;
+  clearTimeout(wikiNoticeTimer);
+  wikiNoticeTimer = setTimeout(clearWikiNotice, WIKI_NOTICE_MS);
+}
+
+function clearWikiNotice() {
+  const box = $("#wiki-notice");
+  if (!box) return;
+  box.hidden = true;
+  box.textContent = "";
+  clearTimeout(wikiNoticeTimer);
+  wikiNoticeTimer = null;
+}
 
 // Browser-style back/forward history of visited pages, scoped to the current
 // vault (reset on vault switch). wikiHistory is the ordered list of files;
@@ -1885,6 +1910,7 @@ async function loadWiki(file, opts = {}) {
   const fileEl = $("#wiki-file");
   const root = $("#wiki-content");
   if (file) state.wikiFile = file;
+  clearWikiNotice();
   const token = ++state.wikiReq;
   if (window.setupWikiHighlights) setupWikiHighlights(root, null);   // off until a page is in
   if (!state.selectedVault) {
@@ -1975,7 +2001,7 @@ async function toggleReadCurrent() {
     renderWikiTree();
     updateReadToggle();
   } catch (err) {
-    alert("Could not update read state: " + (err.body?.error || err.message));
+    showWikiNotice("Could not update read state: " + (err.body?.error || err.message));
   }
 }
 
@@ -2013,7 +2039,7 @@ async function setFavorite(file, want) {
     updateFavToggle();
     return r.favorites || [];
   } catch (err) {
-    alert("Could not update favorites: " + (err.body?.error || err.message));
+    showWikiNotice("Could not update favorites: " + (err.body?.error || err.message));
     return null;
   }
 }
@@ -2076,11 +2102,11 @@ async function renderWikiFavoritesView(root) {
 }
 
 async function loadRandomWiki() {
-  if (!state.selectedVault) { alert("Select a vault first."); return; }
+  if (!state.selectedVault) { showWikiNotice("Select a vault first."); return; }
   try {
     const r = await api("/api/vaults/" + encodeURIComponent(state.selectedVault) + "/wiki/random");
     if (!r.file) {
-      alert("Nothing unread — every wiki page is marked read.");
+      showWikiNotice("Nothing unread — every wiki page is marked read.");
       return;
     }
     // The random endpoint reconciles server-side, so reload the tree to pick
@@ -2088,7 +2114,7 @@ async function loadRandomWiki() {
     await loadWikiTree();
     loadWiki(r.file);
   } catch (err) {
-    alert("Random page failed: " + (err.body?.error || err.message));
+    showWikiNotice("Random page failed: " + (err.body?.error || err.message));
   }
 }
 
@@ -2878,7 +2904,7 @@ function onCfgClick(e) {
     } else if (act === "cron-add") {
       const arr = (cfgState.working.schedule.cron_tasks ||= []);
       arr.push({ name: "", cron: "0 9 * * 1", vault: "ALL",
-        operation: cfgState.meta.operations[0] || "wiki-lint", priority: "medium" });
+        operation: cfgState.meta.operations[0] || "", priority: "medium" });
       cfgState.openCards.add(`cron:${arr.length - 1}`);
       rerenderCfg(`.cfg-card[data-kind="cron"][data-idx="${arr.length - 1}"] input[data-cfield="name"]`);
     } else if (act === "cron-del") {
@@ -3987,6 +4013,17 @@ function setupToolbar() {
   $("#task-priority-filter").addEventListener("change", renderTasks);
   const stateFilter = $("#task-state-filter");
   if (stateFilter) stateFilter.addEventListener("change", renderTasks);
+  const sourceFilter = $("#task-source-filter");
+  if (sourceFilter) sourceFilter.addEventListener("change", () => {
+    state.taskSource = sourceFilter.value;
+    saveStored("resman-task-source", state.taskSource);
+    renderTasks();
+  });
+  const providerSwitch = $("#t-provider");
+  if (providerSwitch) providerSwitch.addEventListener("click", (e) => {
+    const btn = e.target.closest(".provider-btn");
+    if (btn) setOpProvider(btn.dataset.provider);
+  });
   const btnRun = $("#btn-task-run");
   if (btnRun) btnRun.addEventListener("click", submitTriggerForm);
   const allBox = $("#t-all");
@@ -4289,6 +4326,9 @@ async function init() {
   setupStatusBar();
   setupInbox();
   setupSocket();
+  // The registry first: the trigger form (rendered by loadVaults) and the
+  // task cards (loadTasks) both read it.
+  await loadOperations();
   await Promise.all([loadVaults(), loadTasks(), loadSessions(), loadWindow(),
                      loadWindowSchedule(), loadInbox()]);
   // Home is the default panel on boot — populate the vault grid now that

@@ -12,7 +12,8 @@ inside each vault. The convention is:
 
 resman opens `wiki/overview.md` for the currently selected vault when the tab
 is shown. The toolbar exposes search, random, a read toggle, a favorite
-toggle, the favorites list, three explicit page buttons, plus a reload:
+toggle, three explicit page buttons, plus a reload (the favorites *list* is
+the pinned first row of the page tree, not a toolbar button):
 
 - **Search wiki…** — type a query and press Enter to search every page
   (titles weigh more than body text). Clearing the box restores the page.
@@ -20,7 +21,6 @@ toggle, the favorites list, three explicit page buttons, plus a reload:
 - **Mark read ✓ / Mark unread** — toggle the open page's read state.
 - **☆ Favorite / ★ Favorited** — add or remove the open page in the vault's
   favorites file (see Favorites below).
-- **★ Favorites** — open the favorites list: every entry is a link.
 - **Hot** — loads `wiki/hot.md`
 - **Index** — loads `wiki/index.md`
 - **Overview** — loads `wiki/overview.md`
@@ -59,10 +59,16 @@ sidebar tree.
   resman writes entries as Obsidian wikilinks with the page title as alias —
   `- [[wiki/concepts/gguf.md|GGUF]]` — so the file also works as a link list
   when opened inside Obsidian.
-- **★ Favorites** renders the list in the content pane. Click an entry to open
+- **★ Favorites**, the pinned first row of the page tree, renders the list in
+  the content pane. Click an entry to open
   the page (Back returns to the list); the **✕** on a row removes it. An entry
   whose page no longer exists is struck through and tagged **missing** so you
   can spot and prune it.
+- **When a toggle is refused** (the page vanished from disk, the vault root is
+  not writable, an unsafe path) the reason appears in a red notice right under
+  the toolbar and the button keeps its state. It is never a browser dialog:
+  docked in mainBench, resman runs in an iframe where dialogs are dropped
+  silently. The server logs the refusal too (`journalctl --user -u resman`).
 - **You can edit the file by hand.** Paths are relative to the vault root
   (`wiki/concepts/gguf.md`); a missing `.md` is assumed. Any of these lines is
   a favorite, with or without a list bullet:

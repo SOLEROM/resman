@@ -6,8 +6,9 @@ derived by replaying. An in-memory index is built at startup and maintained
 incrementally. A dispatch mutex prevents concurrent dispatch races.
 
 All subprocess calls use argument-list form. shell=True / sh -c are
-prohibited. params.url is validated as HTTP/HTTPS. params.topic and
-params.prompt are limited to 200 chars of printable ASCII.
+prohibited. Params are validated by each operation's registry entry
+(modules/operations.py): URLs must be http(s), free text is at most 200
+chars of printable ASCII, argv is a list of strings.
 """
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ import os
 import pty
 import re
 import shlex
-import string
 import subprocess
 import threading
 import time
@@ -26,9 +26,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
-from urllib.parse import urlparse
 
-from . import plugin_commands
+from . import operations
 from .claude_usage import find_claude
 from .event_bus import EventBus, get_bus
 
@@ -58,23 +57,14 @@ STATES = (
     "interrupted",
     "archived",
 )
-OPERATIONS = (
-    "wiki-ingest",
-    "wiki-ingest-prefix",
-    "wiki-lint",
-    "wiki-autoresearch",
-    "wiki-canvas",
-    "wiki-update-hot-cache",
-    "wiki-bootstrap",
-    "wiki-hint",
-    "run-prompt",
-    "run-shell",
-)
+# The operation keys in registry order, kept as a name for callers that import
+# it. The registry (modules/operations.py) is the source of truth: it holds each
+# operation's provider, params, validation and builder, and create_task checks
+# it live so a registered-at-runtime operation (tests) is accepted.
+OPERATIONS = tuple(operations.REGISTRY)
 
-URL_INGEST_PREFIX_FILE = "prompts/urlInjestPrefix.md"
+URL_INGEST_PREFIX_FILE = operations.URL_INGEST_PREFIX_FILE
 
-PRINTABLE_ASCII = set(string.printable) - set("\x0b\x0c")
-PRINTABLE_RE = re.compile(r"^[\x20-\x7E\t\n\r]*$")
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 COMPACTION_THRESHOLD = 50000  # lines
@@ -117,52 +107,11 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _validate_params(operation: str, params: dict) -> dict:
-    params = dict(params or {})
-    if operation == "wiki-ingest":
-        url = params.get("url")
-        if not isinstance(url, str) or not url:
-            raise ValueError("wiki-ingest: 'url' required")
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            raise ValueError("wiki-ingest: 'url' must be http or https")
-        params["update_canvas"] = bool(params.get("update_canvas"))
-    elif operation == "wiki-ingest-prefix":
-        url = params.get("url")
-        if not isinstance(url, str) or not url:
-            raise ValueError("wiki-ingest-prefix: 'url' required")
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            raise ValueError("wiki-ingest-prefix: 'url' must be http or https")
-        params["update_canvas"] = bool(params.get("update_canvas"))
-    elif operation == "wiki-autoresearch":
-        topic = params.get("topic", "")
-        if not isinstance(topic, str) or not topic:
-            raise ValueError("wiki-autoresearch: 'topic' required")
-        if len(topic) > 200 or not PRINTABLE_RE.match(topic):
-            raise ValueError("wiki-autoresearch: topic must be ≤200 chars printable ASCII")
-    elif operation == "wiki-canvas":
-        description = params.get("description", "")
-        if description is None:
-            description = ""
-        if not isinstance(description, str):
-            raise ValueError("wiki-canvas: 'description' must be a string")
-        if len(description) > 200 or not PRINTABLE_RE.match(description):
-            raise ValueError("wiki-canvas: description must be ≤200 chars printable ASCII")
-        params["description"] = description
-    elif operation == "run-prompt":
-        prompt = params.get("prompt", "")
-        if not isinstance(prompt, str) or not prompt:
-            raise ValueError("run-prompt: 'prompt' required")
-        if len(prompt) > 200 or not PRINTABLE_RE.match(prompt):
-            raise ValueError("run-prompt: prompt must be ≤200 chars printable ASCII")
-    elif operation == "run-shell":
-        cmd_parts = params.get("cmd_parts")
-        if not isinstance(cmd_parts, list) or not cmd_parts:
-            raise ValueError("run-shell: 'cmd_parts' must be a non-empty list")
-        for p in cmd_parts:
-            if not isinstance(p, str):
-                raise ValueError("run-shell: cmd_parts must all be strings")
-    return params
+    """A task's params checked by the registry entry's Param specs."""
+    op = operations.get(operation)
+    if op is None:
+        raise ValueError(f"unknown operation {operation!r}")
+    return operations.validate(op, params)
 
 
 @dataclass
@@ -197,6 +146,9 @@ class Task:
             "name": self.name,
             "vault": self.vault,
             "operation": self.operation,
+            # Derived from the registry, never stored: which skill source the
+            # operation belongs to (obsidian | resman | adhoc | unknown).
+            "provider": operations.provider_of(self.operation),
             "params": dict(self.params),
             "priority": self.priority,
             "schedule": self.schedule,
@@ -260,6 +212,10 @@ class TaskManager:
         self._usage_provider = usage_provider
         self._procs: Dict[str, subprocess.Popen] = {}
         self._executor: Optional[Callable[[Task], None]] = None
+        # (skill name) -> the stored settings for it (skills.<skill> in
+        # resman.yaml); the server wires ConfigManager.skill_settings. None
+        # means every skill runs with its schema defaults.
+        self._skill_settings: Optional[Callable[[str], dict]] = None
         self.bus.subscribe("window_activated", self._on_window_activated)
 
     # ----- Replay / persistence -----
@@ -455,8 +411,8 @@ class TaskManager:
             raise ValueError("task name must match [a-zA-Z0-9_-]")
         if priority not in PRIORITIES:
             raise ValueError(f"priority must be one of {PRIORITIES}")
-        if operation not in OPERATIONS:
-            raise ValueError(f"operation must be one of {OPERATIONS}")
+        if operations.get(operation) is None:
+            raise ValueError(f"operation must be one of {tuple(operations.REGISTRY)}")
         # vault: ALL allowed only if not a child
         if vault != "ALL":
             if not self.get_vault_path(vault):
@@ -731,6 +687,22 @@ class TaskManager:
         """Inject an executor (the server passes socketio.start_background_task)."""
         self._executor = fn
 
+    def set_skill_settings(self, fn: Optional[Callable[[str], dict]]) -> None:
+        """Inject the reader of a skill's stored settings (ConfigManager.skill_settings)."""
+        self._skill_settings = fn
+
+    def _run_context(self, op: operations.Operation, vault_path: str) -> operations.RunContext:
+        settings: dict = {}
+        if op.skill and self._skill_settings is not None:
+            try:
+                settings = dict(self._skill_settings(op.skill) or {})
+            except Exception:  # a config hiccup must not stop a run
+                log.exception("skill settings for %s unreadable; using defaults", op.skill)
+        return operations.RunContext(
+            resman_root=self.resman_root, vault_path=vault_path,
+            claude_exe=_claude_exe(), settings=settings,
+        )
+
     def _execute(self, task: Task) -> None:
         # "check limits": read usage just before the run. This blocks the
         # dispatch greenlet (a claude.ai GET, a few seconds) but not the request
@@ -961,60 +933,29 @@ class TaskManager:
             self._finalize(task, exit_code=rc, error=f"non-zero exit {rc}")
 
     def _build_command(self, task: Task) -> tuple[Optional[List[str]], Optional[str]]:
+        """The argv for a task, from its registry entry.
+
+        A ``shell`` operation is its builder's argv as-is. A ``prompt``
+        operation is ``claude -p <prompt> --dangerously-skip-permissions``,
+        followed by ``--plugin-dir <root>/skills`` when that folder
+        exists (docs/design/17-skills.md, D3): every Claude resman spawns can
+        run ``/resman:<skill>``. Without the folder the command line is the
+        pre-registry one, byte for byte.
+        """
         vault_path = self.get_vault_path(task.vault)
         if vault_path is None:
             return None, None
-        op = task.operation
-        params = task.params
-        if op == "wiki-ingest":
-            ingest = str(self.resman_root / "tools" / "ingest.sh")
-            cmd = [ingest, vault_path, params["url"]]
-            if params.get("update_canvas"):
-                cmd.append("--can")
-            return cmd, vault_path
-        if op == "wiki-ingest-prefix":
-            ingest = str(self.resman_root / "tools" / "ingest.sh")
-            prefix_file = str(self.resman_root / URL_INGEST_PREFIX_FILE)
-            cmd = [ingest, vault_path, params["url"], "--prefix", prefix_file]
-            if params.get("update_canvas"):
-                cmd.append("--can")
-            return cmd, vault_path
-        if op == "wiki-lint":
-            return [_claude_exe(), "-p", plugin_commands.WIKI_LINT, "--dangerously-skip-permissions"], vault_path
-        if op == "wiki-autoresearch":
-            return [
-                _claude_exe(), "-p", plugin_commands.autoresearch_prompt(params["topic"]),
-                "--dangerously-skip-permissions",
-            ], vault_path
-        if op == "wiki-canvas":
-            return [
-                _claude_exe(), "-p", plugin_commands.canvas_prompt(params.get("description", "")),
-                "--dangerously-skip-permissions",
-            ], vault_path
-        if op == "wiki-update-hot-cache":
-            return [
-                _claude_exe(), "-p", plugin_commands.WIKI_UPDATE_HOT_CACHE,
-                "--dangerously-skip-permissions",
-            ], vault_path
-        if op == "wiki-hint":
-            return [
-                _claude_exe(), "-p", plugin_commands.WIKI_HINT,
-                "--dangerously-skip-permissions",
-            ], vault_path
-        if op == "wiki-bootstrap":
-            prompt = plugin_commands.new_vault_bootstrap_prompt_for(self.resman_root)
-            return [
-                _claude_exe(), "-p", prompt,
-                "--dangerously-skip-permissions",
-            ], vault_path
-        if op == "run-prompt":
-            return [
-                _claude_exe(), "-p", params["prompt"], "--dangerously-skip-permissions",
-            ], vault_path
-        if op == "run-shell":
-            cmd_parts = list(params["cmd_parts"])
-            return cmd_parts, vault_path
-        return None, vault_path
+        op = operations.get(task.operation)
+        if op is None:
+            return None, vault_path
+        ctx = self._run_context(op, vault_path)
+        params = task.params or {}
+        if op.kind == "shell":
+            return list(op.build_argv(params, ctx)), vault_path
+        prompt = str(op.build_prompt(params, ctx))
+        cmd = [ctx.claude_exe, "-p", prompt, "--dangerously-skip-permissions"]
+        cmd += ctx.plugin_dir_args
+        return cmd, vault_path
 
     def build_attend_prompt(self, task: Task) -> Optional[str]:
         """Return the Claude prompt for an interactive re-run, or None.
@@ -1024,28 +965,16 @@ class TaskManager:
         REPL via bracketed paste, so the user can answer any prompts that
         the original one-shot run couldn't.
 
-        Returns None for operations that don't drive Claude with a prompt
-        (shell wrappers like wiki-ingest, wiki-ingest-prefix, run-shell) —
-        those aren't attendable because there's no Claude REPL to attach to.
+        Returns None for ``shell`` operations (wiki-ingest, wiki-ingest-prefix,
+        run-shell): no Claude prompt, nothing to attend. Also None for an
+        operation the registry no longer has.
         """
-        op = task.operation
-        params = task.params or {}
-        if op == "wiki-lint":
-            return plugin_commands.WIKI_LINT
-        if op == "wiki-autoresearch":
-            return plugin_commands.autoresearch_prompt(params.get("topic", ""))
-        if op == "wiki-canvas":
-            return plugin_commands.canvas_prompt(params.get("description", ""))
-        if op == "wiki-update-hot-cache":
-            return plugin_commands.WIKI_UPDATE_HOT_CACHE
-        if op == "wiki-hint":
-            return plugin_commands.WIKI_HINT
-        if op == "wiki-bootstrap":
-            return plugin_commands.new_vault_bootstrap_prompt_for(self.resman_root)
-        if op == "run-prompt":
-            prompt = params.get("prompt")
-            return prompt if isinstance(prompt, str) and prompt else None
-        return None
+        op = operations.get(task.operation)
+        if op is None or op.kind != "prompt":
+            return None
+        vault_path = self.get_vault_path(task.vault) or ""
+        prompt = op.build_prompt(task.params or {}, self._run_context(op, vault_path))
+        return str(prompt) if prompt else None
 
     def _finalize(self, task: Task, exit_code: int, error: Optional[str] = None) -> None:
         # If a cancel raced ahead and already wrote a terminal event, don't
@@ -1126,10 +1055,13 @@ class TaskManager:
         include_archived: bool = False,
         limit: Optional[int] = None,
         offset: int = 0,
+        provider: Optional[str] = None,
     ) -> List[dict]:
         items = list(self._tasks.values())
         if not include_archived:
             items = [t for t in items if t.state != "archived"]
+        if provider:
+            items = [t for t in items if operations.provider_of(t.operation) == provider]
         if vault:
             items = [t for t in items if t.vault == vault or t.parent_id is not None and self._tasks.get(t.parent_id) and self._tasks[t.parent_id].vault == vault]
         if priority:

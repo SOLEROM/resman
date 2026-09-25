@@ -24,9 +24,14 @@ def chromium_shell() -> str:
 
 
 @contextmanager
-def serve(base: Path, pages: dict[str, str]):
+def serve(base: Path, pages: dict[str, str], config_files: dict[str, str] | None = None,
+          resman_root: Path | None = None):
     """Yield (url, vault) for one registered vault `alpha` holding `pages`
-    (vault-relative path → text). A developer's ~/.resman.yaml is kept out."""
+    (vault-relative path → text). A developer's ~/.resman.yaml is kept out.
+    `config_files` (name → text) are written into the config dir before the
+    app starts — e.g. a pre-seeded tasks.jsonl for the Tasks view.
+    `resman_root` replaces the repo root the app sees (its skills/,
+    tools/, man/), for a fake skills folder."""
     from werkzeug.serving import make_server
     from modules import config_manager
     from server import build_app
@@ -40,9 +45,14 @@ def serve(base: Path, pages: dict[str, str]):
     cfg.mkdir()
     (cfg / "system.yaml").write_text(
         f"app:\n  host: 127.0.0.1\n  port: 5090\nvaults:\n  - name: alpha\n    path: {vault}\n")
+    for name, text in (config_files or {}).items():
+        (cfg / name).write_text(text)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(config_manager, "_default_user_override_path",
                    lambda: base / ".no-such-resman.yaml")
+        if resman_root is not None:
+            import server
+            mp.setattr(server, "RESMAN_ROOT", Path(resman_root))
         app, _sio, _ctx = build_app(cfg, async_mode="threading", use_webterm=False)
     srv = make_server("127.0.0.1", 0, app, threaded=True)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)

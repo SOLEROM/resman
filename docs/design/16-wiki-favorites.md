@@ -82,9 +82,19 @@ file best-effort — a broken favorites file never breaks the tree.
   tree response and replaced wholesale by every favorites API reply.
 - **☆ Favorite / ★ Favorited** (`#btn-wiki-fav`) sits next to Mark read. It is
   hidden on the favorites view itself and after a page 404s.
-- **★ Favorites** loads the pseudo-page `.favorites.md`: `loadWiki()` renders
-  the list (`renderWikiFavoritesView`) instead of fetching markdown, so the
-  list takes part in Back/Forward history and the ↻ reload like any page.
+- **A refused toggle is reported inline**, in `#wiki-notice` between the
+  toolbar and the page (`showWikiNotice`, cleared by the next `loadWiki()` or
+  after 8 s), never through `alert()`: docked in mainBench, resman runs in a
+  cross-origin iframe where Chromium drops dialogs silently, so a 404/500 from
+  the route looked like "nothing happened". The read toggle and Random report
+  the same way, and the route logs every refusal (`favorites: refused …`).
+  Pinned by `tests/test_wiki_favorites_browser.py`.
+- **★ Favorites**, the pinned first row of the tree (below), loads the
+  pseudo-page `.favorites.md`: `loadWiki()` renders the list
+  (`renderWikiFavoritesView`) instead of fetching markdown, so the list takes
+  part in Back/Forward history and the ↻ reload like any page. The toolbar
+  carries only the ☆/★ toggle; its ★ Favorites button was dropped on
+  2026-09-24 as a duplicate of the tree row.
   Rows link via `data-wiki-file` (exact path, no wikilink resolution) and carry
   a ✕ that removes the entry in place; missing pages are struck through.
 - Favorite pages show a right-aligned ★ in the sidebar tree (absolutely

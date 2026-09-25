@@ -231,9 +231,17 @@ def _md_files(folder: Path, root: Path) -> list[str]:
     return out
 
 
-def _skills(install: PluginInstall) -> list[dict]:
+def frontmatter(path: Path) -> dict:
+    """The YAML frontmatter of a markdown file, ``{}`` when absent or broken."""
+    return _frontmatter(path)
+
+
+# The reader below works on any folder in the Claude Code plugin format:
+# claude-obsidian's install, and resman's own skills/ (resman_skills.py).
+
+def _skills_in(root: Path) -> list[dict]:
     skills = []
-    base = install.path / "skills"
+    base = root / "skills"
     try:
         folders = sorted(p for p in base.iterdir() if p.is_dir() and not p.is_symlink())
     except OSError:
@@ -242,8 +250,8 @@ def _skills(install: PluginInstall) -> list[dict]:
         skill_md = folder / "SKILL.md"
         if not skill_md.is_file():
             continue
-        files = _md_files(folder, install.path)
-        main = skill_md.relative_to(install.path).as_posix()
+        files = _md_files(folder, root)
+        main = skill_md.relative_to(root).as_posix()
         skills.append({
             "name": folder.name,
             "description": _describe(skill_md),
@@ -253,23 +261,48 @@ def _skills(install: PluginInstall) -> list[dict]:
     return skills
 
 
-def _commands(install: PluginInstall) -> list[dict]:
+def _commands_in(root: Path) -> list[dict]:
     try:
-        files = sorted((install.path / "commands").glob("*.md"))
+        files = sorted((root / "commands").glob("*.md"))
     except OSError:
         return []
     return [{"name": f.stem, "description": _describe(f),
-             "path": f.relative_to(install.path).as_posix()}
+             "path": f.relative_to(root).as_posix()}
             for f in files if f.is_file() and not f.is_symlink()]
 
 
-def _manifest(install: PluginInstall) -> dict:
+def _manifest_in(root: Path) -> dict:
     try:
-        data = json.loads((install.path / ".claude-plugin" / "plugin.json")
-                          .read_text(encoding="utf-8"))
+        data = json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+DOC_NAMES = ("README.md", "CHANGELOG.md", "WIKI.md")
+
+
+def _docs_in(root: Path, names: tuple = DOC_NAMES) -> list[str]:
+    return [n for n in names if (root / n).is_file()]
+
+
+def describe(root: Path, docs: tuple = DOC_NAMES) -> dict:
+    """A plugin folder's contents — manifest, skills (with their markdown
+    files), commands, top-level docs — for any folder in the plugin format."""
+    return {"manifest": _manifest_in(root), "skills": _skills_in(root),
+            "commands": _commands_in(root), "docs": _docs_in(root, docs)}
+
+
+def _skills(install: PluginInstall) -> list[dict]:
+    return _skills_in(install.path)
+
+
+def _commands(install: PluginInstall) -> list[dict]:
+    return _commands_in(install.path)
+
+
+def _manifest(install: PluginInstall) -> dict:
+    return _manifest_in(install.path)
 
 
 def summary(base: Optional[Path] = None) -> dict:
@@ -319,8 +352,7 @@ def summary(base: Optional[Path] = None) -> dict:
                             f"by that name.")
     for s in skills:
         s["used"] = s["name"] in uses_src
-    docs = [n for n in ("README.md", "CHANGELOG.md", "WIKI.md")
-            if (install.path / n).is_file()]
+    docs = _docs_in(install.path)
     return {"plugin": plugin, "companion": _companion(base), "uses": uses,
             "skills": skills, "commands": commands, "docs": docs, "warnings": warnings}
 
@@ -330,10 +362,16 @@ def read_file(rel: str, base: Optional[Path] = None) -> str:
     install = locate(base)
     if install is None:
         raise PluginFileError(f"the {PLUGIN_NAME} plugin is not installed", 404)
+    return read_file_from(install.path, rel)
+
+
+def read_file_from(folder: Path, rel: str) -> str:
+    """Raw text of a markdown file inside ``folder`` (traversal-safe, ``.md``
+    only, size-capped) — the same rules for every provider's folder."""
     rel = (rel or "").strip()
     if not rel:
         raise PluginFileError("path required")
-    root = install.path.resolve()
+    root = Path(folder).resolve()
     try:
         target = (root / rel).resolve()
         target.relative_to(root)
