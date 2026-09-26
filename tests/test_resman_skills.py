@@ -305,6 +305,36 @@ def test_summary_warnings(tmp_path):
     assert "/resman:ghost" in text and "'gone'" in text
 
 
+def test_summary_marks_helper_skills_and_warns_when_one_is_wired(tmp_path):
+    """A helper says so with ``metadata: {role: helper}`` in its frontmatter;
+    the tab lists it under *Helpers*, not *Not wired yet*. A helper with a
+    registry entry contradicts the contract, so that is a warning."""
+    from modules import resman_skills
+    root = _root(tmp_path)
+    _skill(root, "plain")
+    aide = _skill(root, "aide")
+    (aide / "SKILL.md").write_text("---\nname: aide\ndescription: a helper\n"
+                                   "metadata:\n  role: helper\n---\n")
+    s = resman_skills.summary(root, {})
+    by = {k["name"]: k for k in s["skills"]}
+    assert by["aide"]["helper"] is True and by["plain"]["helper"] is False
+    assert s["warnings"] == []
+    s = resman_skills.summary(root, {"aide": "rs-aide task"})
+    assert {k["name"]: k["helper"] for k in s["skills"]} == {"aide": True, "plain": False}
+    assert len(s["warnings"]) == 1
+    assert "helper" in s["warnings"][0] and "rs-aide task" in s["warnings"][0]
+
+
+def test_is_helper_reads_the_metadata_role_only():
+    from modules import resman_skills
+    assert resman_skills.is_helper({"metadata": {"role": "helper"}})
+    assert resman_skills.is_helper({"metadata": {"role": " Helper "}})
+    assert not resman_skills.is_helper({"metadata": {"role": "task"}})
+    assert not resman_skills.is_helper({"metadata": "helper"})
+    assert not resman_skills.is_helper({"helper": True})
+    assert not resman_skills.is_helper({})
+
+
 # ----- the shipped deep-list skill -----
 
 def test_deep_list_skill_folder_matches_its_settings_and_the_spec():
@@ -325,7 +355,12 @@ def test_deep_list_skill_folder_matches_its_settings_and_the_spec():
     # the page table shows one score column, no per-axis scores (decision 8)
     assert "| # | done | value | score | since | why | related | research with |" in skill_md
     assert "| imp |" not in skill_md and "| urg |" not in skill_md
-    assert resman_skills.list_skills(REPO) == ["deep-list", "grilling"]
+    # a researched value carries the tick: the Filled list is a ticked checklist,
+    # a ticked row (by the operator or resman's research stage) counts as filled,
+    # and the skill never clears a mark
+    assert "- [x] <date> — **<value>**" in skill_md
+    assert "research stage" in skill_md and "Never untick" in skill_md
+    assert resman_skills.list_skills(REPO) == ["deep-list", "grilling", "vault-brief"]
 
 
 def test_effective_settings_ignore_empty_overrides(tmp_path):
@@ -337,17 +372,65 @@ def test_effective_settings_ignore_empty_overrides(tmp_path):
     assert eff["focus"] == "yaml" and eff["list_size"] == 15
 
 
+# ----- the shipped vault-brief skill (docs/vaultBrief-plan.md) -----
+
+VAULT_BRIEF_DEFAULT_ARGS = 'interview=short max_questions=25 owner=""'
+
+
+def test_vault_brief_skill_folder_matches_its_settings_and_the_spec():
+    from modules import resman_skills
+    schema = resman_skills.load_settings_schema(REPO, "vault-brief")
+    assert [s.key for s in schema] == ["interview", "max_questions", "owner"]
+    assert resman_skills.defaults(schema) == {"interview": "short", "max_questions": 25, "owner": ""}
+    assert resman_skills.render_args(schema, resman_skills.defaults(schema)) == VAULT_BRIEF_DEFAULT_ARGS
+    assert resman_skills.args_for(REPO, "vault-brief", None, {"interview": "none"}).startswith("interview=none ")
+    folder = PLUGIN / "skills" / "vault-brief"
+    skill_md = (folder / "SKILL.md").read_text(encoding="utf-8")
+    fm = _frontmatter(folder / "SKILL.md")
+    assert fm["name"] == "vault-brief" and "Triggers on:" in fm["description"]
+    for s in schema:                       # the Parameters table names every setting with its default
+        shown = '""' if s.default == "" else str(s.default)
+        assert f"| `{s.key}` | {shown} |" in skill_md, s.key
+    for needle in ("wiki/meta/brief.md", "wiki/hint.json", "===== BEGIN BRIEF =====",
+                   "===== END BRIEF =====", "grilling", "one question at a time",
+                   "content, not", "Purpose:", "Mode:", "interview=none",
+                   "## Seed (verbatim)", "## Interview",
+                   "at the\nterminal", "sibling vaults"):
+        assert needle in skill_md, needle
+    assert "`.raw/`" in skill_md and "CLAUDE.md" in skill_md    # what it never writes
+    assert (folder / "references" / "brief-template.md").is_file()
+    template = (folder / "references" / "brief-template.md").read_text(encoding="utf-8")
+    for section in ("## Purpose", "## Mode", "## Audience", "## Scope", "## Seed domains",
+                    "## Key questions", "## Sources", "## Entities", "## Upkeep cadence",
+                    "## Related vaults", "## Seed (verbatim)", "## Interview"):
+        assert section in template, section
+    assert "Mode A" in template and "Mode F" in template   # the six-mode cheat-sheet
+
+
+def test_the_consumers_read_the_brief_first():
+    """deepList's objective and the wiki-hint prompt start from the brief page
+    when it exists (docs/vaultBrief-plan.md, D8)."""
+    from modules import plugin_commands
+    deep_list = (PLUGIN / "skills" / "deep-list" / "SKILL.md").read_text(encoding="utf-8")
+    objective = deep_list[deep_list.index("### 1. The objective"):deep_list.index("### 2.")]
+    assert "wiki/meta/brief.md" in objective
+    candidates = deep_list[deep_list.index("### 5. Candidates"):deep_list.index("### 6.")]
+    assert "brief" in candidates
+    assert "wiki/meta/brief.md" in plugin_commands.WIKI_HINT
+
+
 # ----- the shipped grilling skill: a helper, never an operation -----
 
 def test_grilling_is_a_helper_skill_without_an_operation():
     """grilling is called by other resman skills (or by the operator in an
-    interactive session); it writes no pages and has no registry entry, so it
-    sits under *Not wired yet* on purpose."""
+    interactive session); it writes no pages and has no registry entry, and
+    its frontmatter says so, which puts it under *Helpers* in the Skills tab."""
     from modules import operations, resman_skills
     skill_md = PLUGIN / "skills" / "grilling" / "SKILL.md"
     assert skill_md.is_file()
     fm = _frontmatter(skill_md)
     assert fm["name"] == "grilling"
+    assert fm["metadata"] == {"role": "helper"} and resman_skills.is_helper(fm)
     assert "Triggers on:" in fm["description"]
     assert resman_skills.load_settings_schema(REPO, "grilling") == ()      # no knobs
     assert not [op.key for op in operations.REGISTRY.values() if op.skill == "grilling"]

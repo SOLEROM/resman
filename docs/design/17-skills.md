@@ -177,8 +177,11 @@ page for its `settings.yaml` knobs (`GET`/`POST /api/skills/settings`,
 values under `skills.<skill>` in resman.yaml; spec in `docs/deepList-plan.md`).
 The first skill, **deepList**, shipped the same day (phase 4), followed by
 the first **helper skill**, `grilling`: called by other skills on their own
-plan, writes nothing, has no operation, so *Not wired yet* is its permanent
-home rather than a to-do.
+plan, writes nothing, has no operation. Since 2026-09-26 a helper says so with
+`metadata: {role: helper}` in its frontmatter (`resman_skills.is_helper`), the
+summary carries `helper` per skill, and the tree lists helpers under
+*Helpers*; *Not wired yet* is left for folders that are neither wired nor
+helpers. A helper with a registry entry is a warning.
 
 The tab becomes a view over **providers**, same page structure for each:
 
@@ -186,7 +189,7 @@ The tab becomes a view over **providers**, same page structure for each:
 Overview                          ← both providers; warnings merged; the badge counts all
 New vault process                 ← unchanged (claude-obsidian bootstrap)
 ▸ claude-obsidian 1.6.0           ← Used by resman · Other skills · Commands · Plugin docs
-▸ resman skills 0.1.0             ← Wired to an operation · Not wired yet · Commands · Docs
+▸ resman skills 0.1.0             ← Wired to an operation · Helpers · Not wired yet · Commands · Docs
 Custom skill guide                ← renders skills/README.md (the authoring contract)
 ```
 
@@ -198,6 +201,50 @@ defaults to `obsidian` so existing links keep working). The Overview's "What
 resman sends" table gains a Source column and lists the resman operations
 too; a registry entry whose skill folder is missing is a warning exactly like a
 plugin command the installed plugin lacks.
+
+## vaultBrief and the new-vault process (2026-09-25)
+
+The second real skill, **vault-brief** (`skills/skills/vault-brief/`,
+operation `rs-vault-brief`, spec `docs/vaultBrief-plan.md`), is the first
+one that runs *before* a wiki exists. It writes `wiki/meta/brief.md` (what
+the vault is for: purpose, mode, audience, scope, domains, key questions,
+sources, entities, cadence, related vaults, the seed verbatim, the interview
+record) after a **grilling** interview at the depth in its `settings.yaml`
+(`interview` none/short/full, `max_questions`, `owner`), creating
+`wiki/meta/` itself on a fresh vault, and writes the sidecar `wiki/hint.json`
+(`source: "brief"`; a hand-written hint wins), which is allowed because resman
+reads that file and the registry entry documents it.
+
+The New Vault form's **Deep interview** tab runs it inside the bootstrap
+session: `modules/new_vault.py` composes prefix → the operator's brief
+between marker lines (validated: cap, control characters, marker lines) →
+`/resman:vault-brief interview=<depth> …` → `/claude-obsidian:wiki` told to
+take Purpose, Mode and Owner from the brief page → suffix. The **Basic** tab
+keeps today's message byte for byte. The *Re-run wiki bootstrap* task pastes
+the deep message with `interview=none`, which is why `RunContext` gained
+`skill_settings`, the reader of *any* skill's stored settings: an obsidian
+entry renders a resman skill's line. deepList's objective and the wiki-hint
+prompt read the brief page first when it exists.
+
+Since 2026-09-26 the Deep interview tab ends with two **stages after the
+scaffold**, both on by default (`new_vault.Stages`, request fields
+`deep_list`, `autoresearch`, `autoresearch_top`): the message gains, after
+the suffix, `/resman:deep-list …` rendered from the stored `skills.deep-list`
+settings (the first ranked list of research values, from the brief and the
+fresh scaffold), then an instruction to run the *research with* line of the
+list's open values with the plugin's autoresearch, every one of them by
+default or the top N (1–50) when the form says so, one run at a time,
+ticking each researched row's *done* box on the page. One pasted message
+thus takes a vault from the operator's summary through grilling, the
+scaffold, deepList and the research runs; the form shows the five as a
+numbered pipeline. The session runs the research lines, not the deep-list
+skill, whose rule "do not start the research yourself" stands. The tick is
+the mark deepList already honoured from the operator: on its next run a
+ticked row counts as filled and moves to the *Filled* list, which is a
+ticked checklist, and the skill never clears a mark, so the page shows what
+was researched at once and after every re-run. The top-N limit stays on the
+form because every autoresearch run spends usage (docs/vaultBrief-plan.md,
+D12–D15).
 
 ## Security
 

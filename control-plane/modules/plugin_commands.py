@@ -25,7 +25,7 @@ PLUGIN_USES = {
     "wiki-ingest": "wiki-ingest tasks (tools/ingest.sh)",
     "wiki-lint": "wiki-lint task",
     "update-hot-cache": "wiki-update-hot-cache task",
-    "autoresearch": "wiki-autoresearch task",
+    "autoresearch": "wiki-autoresearch task and the Deep interview's research stage (modules/new_vault.py)",
     "canvas": "wiki-canvas task and ingest's canvas update",
     "wiki-query": "wiki-hint task (vault card description)",
 }
@@ -40,6 +40,9 @@ PLUGIN_DIR_FALLBACK = ("<the claude-obsidian install folder: the newest version 
 
 WIKI_LINT = "/claude-obsidian:wiki-lint"
 WIKI_UPDATE_HOT_CACHE = "/claude-obsidian:update-hot-cache"
+# One deep-research run on a topic; the wiki-autoresearch task sends it with
+# the operator's topic, and every open value of deepList's page carries one.
+AUTORESEARCH = "/claude-obsidian:autoresearch"
 
 # Generate (or refresh) the vault's wiki/hint.json — the short description the
 # landing page reads to render a vault's thumbnail card. Unlike garage, which
@@ -56,7 +59,10 @@ WIKI_HINT = (
     "render the vault's thumbnail card, and URL classifiers read it to decide "
     "whether an incoming link belongs to this vault. So the summary must "
     "describe the TOPIC of the vault, not the structure of the wiki.\n\n"
-    "Step 1 — inspect. Use the installed Claude Code plugin skill "
+    "Step 1 — inspect. If ./wiki/meta/brief.md exists (resman's vault-brief "
+    "skill writes it), read it first: its Purpose and Scope sections are the "
+    "vault's topic and its Seed domains and Entities are its tags. Then use the "
+    "installed Claude Code plugin skill "
     "`claude-obsidian:wiki-query` to inspect the wiki: read wiki/index.md and a "
     "representative sample of page titles and frontmatter. Invoke the skill "
     "directly; do not re-implement its workflow yourself. If the wiki is empty "
@@ -92,7 +98,7 @@ NEW_VAULT_SUFFIX_FILE = "tools/newValSuffix.md"
 
 
 def autoresearch_prompt(topic: str) -> str:
-    return f"/claude-obsidian:autoresearch {topic}"
+    return f"{AUTORESEARCH} {topic}"
 
 
 def canvas_prompt(description: str = "") -> str:
@@ -115,6 +121,9 @@ def new_vault_bootstrap_prompt(
     prefix_path: Optional[Path] = None,
     suffix_path: Optional[Path] = None,
     plugin_dir: Optional[Path] = None,
+    before_command: tuple = (),
+    command_note: str = "",
+    after_suffix: tuple = (),
 ) -> str:
     """Combined prompt that wraps /claude-obsidian:wiki with prefix/suffix.
 
@@ -124,23 +133,37 @@ def new_vault_bootstrap_prompt(
     so the bootstrap still works on checkouts that don't ship these files.
     ``{plugin_dir}`` in either file becomes ``plugin_dir`` (the installed
     plugin's folder), or a findable description of it when that is unknown.
+
+    ``before_command`` are extra parts placed between the prefix and the
+    command (empty ones skipped); ``command_note`` replaces the command
+    line's trailer ("…exactly: /claude-obsidian:wiki, <note>");
+    ``after_suffix`` are parts placed after the suffix, at the very end (the
+    stages that run once the wiki exists: deepList, the research). All three
+    are how the Deep interview message (modules/new_vault.py) is built; with
+    the defaults the message is the basic one, byte for byte.
     """
     parts: list[str] = []
     prefix = _read_optional_text(prefix_path)
     if prefix:
         parts.append(prefix)
-    parts.append(
-        "Now run this slash command exactly, and answer any prompts it asks: "
-        + WIKI_BOOTSTRAP
-    )
+    parts.extend(str(p) for p in before_command if p)
+    if command_note:
+        parts.append("Now run this slash command exactly: " + WIKI_BOOTSTRAP + ", " + command_note)
+    else:
+        parts.append(
+            "Now run this slash command exactly, and answer any prompts it asks: "
+            + WIKI_BOOTSTRAP
+        )
     suffix = _read_optional_text(suffix_path)
     if suffix:
         parts.append(suffix)
+    parts.extend(str(p) for p in after_suffix if p)
     where = str(plugin_dir) if plugin_dir else PLUGIN_DIR_FALLBACK
     return "\n\n".join(parts).replace(PLUGIN_DIR_PLACEHOLDER, where)
 
 
-def new_vault_bootstrap_prompt_for(repo_root: Path) -> str:
+def new_vault_bootstrap_prompt_for(repo_root: Path, before_command: tuple = (),
+                                   command_note: str = "", after_suffix: tuple = ()) -> str:
     """The bootstrap prompt from the repo's prefix/suffix files, with the
     installed plugin's folder filled in (whatever version is installed now)."""
     from . import plugin_info  # plugin_info imports this module
@@ -148,4 +171,7 @@ def new_vault_bootstrap_prompt_for(repo_root: Path) -> str:
         repo_root / NEW_VAULT_PREFIX_FILE,
         repo_root / NEW_VAULT_SUFFIX_FILE,
         plugin_info.plugin_dir(),
+        before_command=before_command,
+        command_note=command_note,
+        after_suffix=after_suffix,
     )

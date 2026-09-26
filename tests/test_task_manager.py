@@ -372,9 +372,11 @@ def test_wiki_bootstrap_wraps_prefix_and_suffix_when_files_present(tmp_path):
     cmd = runner_calls[0]
     prompt = cmd[cmd.index("-p") + 1]
     pre = prompt.index("PREFIX-CHECK-PLUGIN")
+    # The re-run also normalizes the brief, interview off (docs/vaultBrief-plan.md, D9).
+    brief = prompt.index("/resman:vault-brief interview=none")
     boot = prompt.index("/claude-obsidian:wiki")
     suf = prompt.index("SUFFIX-COPY-WORKSPACE")
-    assert pre < boot < suf
+    assert pre < brief < boot < suf
 
 
 def test_wiki_bootstrap_falls_back_when_prefix_suffix_missing(tmp_path):
@@ -417,6 +419,7 @@ def test_wiki_hint_runs_claude_with_correct_command(tmp_path):
     prompt = cmd[cmd.index("-p") + 1]
     assert "wiki/hint.json" in prompt
     assert "claude-obsidian:wiki-query" in prompt
+    assert "wiki/meta/brief.md" in prompt          # the brief comes first when it exists
     assert "--dangerously-skip-permissions" in cmd
     assert runner_calls[0]["cwd"].endswith("alpha")
 

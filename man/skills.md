@@ -29,12 +29,17 @@ checked by `wiki-lint`, with no per-skill screen in resman.
   is loaded. Then one table of everything resman sends, with a *Source*
   column and whether each provider provides it, and the exact
   `claude plugin …` commands to update the plugin on this machine.
-- **New vault process** — [New vault](new-vault.md) plus the exact message the
-  wizard pastes, with the installed plugin's folder filled in.
+- **New vault process** — [New vault](new-vault.md) plus the exact messages
+  the New Vault form pastes, Basic and Deep interview (with its deepList and
+  autoresearch stages at the form's defaults), with the installed plugin's
+  folder filled in.
 - **claude-obsidian `<version>`** — *Used by resman* / *Other skills* /
   *Commands* / *Plugin docs*: the plugin's files, rendered.
-- **resman skills `<version>`** — *Wired to an operation* / *Not wired yet* /
-  *Commands* / *Docs*: the repo's own skills. A skill's page shows its
+- **resman skills `<version>`** — *Wired to an operation* / *Helpers* /
+  *Not wired yet* / *Commands* / *Docs*: the repo's own skills. *Helpers*
+  are the skills the other skills call on their own plan, never a task;
+  *Not wired yet* holds a folder that has no operation and is not a helper.
+  A skill's page shows its
   `SKILL.md`, the line a task invokes it with (`/resman:<skill>`), and, when
   the skill ships `settings.yaml`, a **Settings** card (below).
 - **Custom skill guide** — `skills/README.md`, the authoring contract.
@@ -62,13 +67,31 @@ research values*): it ranks the research values worth a deep-research run for
 the vault's objective into `wiki/meta/deep-list.md`, retires the values the
 wiki has since filled and re-scores the rest on every run. Its settings are
 the list size, the number of candidates per run, the minimum score, four
-weights, two "filled" thresholds, a `focus` hint and an `exclude` list. Spec
-and decisions: `docs/deepList-plan.md`.
+weights, two "filled" thresholds, a `focus` hint and an `exclude` list. A row
+you tick ✓ on the page counts as filled on the next run, and so does a row
+the research stage ticked; the *Filled* list keeps the ticks and the skill
+never clears one. The **Deep interview** tab of the New Vault form runs it
+as a stage right after a new vault's scaffold, followed by autoresearch on
+the list's open values ([New vault](new-vault.md)). Spec and decisions:
+`docs/deepList-plan.md`.
+
+The second is **vaultBrief** (`/resman:vault-brief`, task *vaultBrief: define
+the vault*): from your seed and what the vault folder holds it runs the
+grilling interview at the chosen depth and writes `wiki/meta/brief.md` (what
+the vault is for: purpose, mode, audience, scope, domains, key questions,
+sources, entities, cadence, related vaults, the seed verbatim, the interview
+record) and `wiki/hint.json`, the vault card's label, summary and tags. Its
+settings are the depth (`none` / `short` / `full`), the question cap for a
+full interview, and the owner name the scaffold writes. The **Deep interview**
+tab of the New Vault form runs it before the plugin scaffolds a new vault
+([New vault](new-vault.md)); the *Re-run wiki bootstrap* task runs it with the
+interview off. Spec and decisions: `docs/vaultBrief-plan.md`.
 
 **grilling** (`/resman:grilling`) is a helper, not a task: it interviews you
 about a plan one question at a time, each with a recommended answer, until
 the plan is shared, and writes nothing. The other resman skills call it on
-their own plan before they act, so it stays under *Not wired yet* by design.
+their own plan before they act (vaultBrief's interview is grilling at the
+chosen depth), so it is listed under *Helpers*, never as a task.
 
 ## Writing a resman skill
 

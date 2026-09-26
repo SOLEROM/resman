@@ -92,7 +92,8 @@ to reclaim vertical space.
 
 **Category tree:**
 - Vaults group under collapsible headers built from each vault's `category`
-  (slash-nested, e.g. `hw/edge`); uncategorized vaults sit at the tree root
+  (slash-nested, e.g. `HW/EDGE`; case-insensitive, always upper case);
+  uncategorized vaults sit at the tree root
   after the groups
 - Group order follows the top-level `categories:` list from resman.yaml;
   unlisted categories sort alphabetically after it
@@ -202,7 +203,7 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 - See `06-task-management.md` for the live-log streaming, log size cap, and cancel-running semantics.
 
 **Skills tab** (activity-bar item; two providers since 2026-09-24, [17-skills.md](17-skills.md)):
-- `skills.js` over `GET /api/skills/*`. Two-pane layout like Help: a tree on the left — *Overview*, *New vault process*, one node per **provider** (`claude-obsidian <version>` with *Used by resman* / *Other skills* / *Commands* / *Plugin docs*; `resman skills <version>` with *Wired to an operation* / *Not wired yet* / *Commands* / *Docs*), then *Custom skill guide* (`skills/README.md`) — and the rendered page on the right (`renderWikiMarkdown` with wikilinks off; relative `.md` links stay inside the provider's view). Page ids are `<provider>:<relative path>`.
+- `skills.js` over `GET /api/skills/*`. Two-pane layout like Help: a tree on the left — *Overview*, *New vault process*, one node per **provider** (`claude-obsidian <version>` with *Used by resman* / *Other skills* / *Commands* / *Plugin docs*; `resman skills <version>` with *Wired to an operation* / *Helpers* / *Not wired yet* / *Commands* / *Docs*), then *Custom skill guide* (`skills/README.md`) — and the rendered page on the right (`renderWikiMarkdown` with wikilinks off; relative `.md` links stay inside the provider's view). Page ids are `<provider>:<relative path>`.
 - *Overview* shows one block per provider (the plugin's version, scope, folder, how it was found, the claude-canvas companion; the folder's version, path, how it is loaded), then one *What resman sends* table with a Source column, then the plugin's update commands with this machine's real marketplace name.
 - A resman skill's page shows its `SKILL.md`, its invoke line, and — when the skill ships `settings.yaml` — a **Settings** card (`renderSkillSettings`): one control per schema entry (number with min/max, text with maxlength, checkbox, select, textarea one-per-line), help text, **Save** (stores only values that differ from the defaults, `POST /api/skills/settings`) and **Reset to defaults** (`{}`); shows which yaml file it writes and the `key=value` line the next run receives; a 400 is shown next to the buttons with the key named.
 - The activity-bar badge counts the union of both providers' `warnings`. Browser coverage: `tests/test_skills_browser.py` (runs the app against a fake `resman_root`, `tests/browser_app.serve(resman_root=)`).
@@ -243,13 +244,30 @@ Hover tooltip: `"{vault-name}: {flag1}, {flag2}, ..."` listing all true conditio
 
 ## New-Vault Wizard
 
-`+ New Vault` opens a modal with three optional steps:
+`+ New Vault` opens a modal with two tabs at the top, **Basic** and **Deep
+interview** (a `.provider-switch` like the Tasks source switch, `#nv-mode`;
+the choice is remembered in `localStorage` `resman-new-vault-tab`, Basic on a
+fresh browser). Both tabs share:
 
 1. **Vault name** + **Vault path** — the path field has a `Browse…` button that opens a stacked, server-side **folder picker** (z-index 300, above the wizard). The picker is rendered by the SPA and walks the filesystem via `GET /api/fs/list`; the user can navigate, jump to home, or type a new directory name to be created under the current folder.
 2. **Scaffold the directory** (checkbox, default on) — calls `POST /api/vaults/scaffold` which runs `tools/new-vault.sh`. Uncheck to register an existing vault.
+
+**Basic** (unchanged from before 2026-09-25):
+
 3. **Bootstrap wiki** (checkbox, default on) — after registering, opens a Claude session via `POST /api/sessions` with `bootstrap_new_vault: true`. The server pastes `tools/newValPrefix.md` + `/claude-obsidian:wiki` + `tools/newValSuffix.md` into the REPL as a single bracketed-paste message — so Claude checks the plugin first, runs the bootstrap (which may ask interactive questions the user answers in the Terminal tab), then copies the visual `workspace.json` into the new vault's `.obsidian/`.
 
-Each step's status (info / ok / error) is reported inside the wizard so a partial failure (e.g., scaffold succeeds, registration fails) is visible without losing context.
+**Deep interview** (docs/vaultBrief-plan.md), no bootstrap checkbox because the tab *is* the session:
+
+3. **What is this vault for?** — `#nv-brief`, a textarea capped at `NEW_VAULT_BRIEF_MAX` (16000, the server's `new_vault.MAX_BRIEF_CHARS`; a test keeps them equal, along with the marker lines and the character rule), with a character count. `briefProblem()` refuses on submit what the server would refuse (the cap, a control or format character, a marker line) before anything is scaffolded or registered. **Load file…** is a browser `<input type="file">` read with `FileReader` into the textarea: no host file-read endpoint, the server only ever sees the text. Every change is saved as a draft in `localStorage` (`resman-new-vault-brief-draft`), restored when the form reopens and cleared once a session has opened with it.
+4. **Interview depth** — `#nv-interview`, `short` (default) or `full`.
+5. **The stages after the scaffold** (2026-09-26) — `#nv-deep-list` **deepList** and `#nv-research` **Autoresearch**, both checked by default. The research's scope is `#nv-research-scope`: *all open values of that list* (default, sends `autoresearch_top: null`) or *the top* `#nv-research-top` *values of that list*, an `<input type="number">` 1–`NEW_VAULT_RESEARCH_TOP_MAX` (50, the server's `new_vault.AUTORESEARCH_TOP_MAX`, pinned by the same test as the brief cap) shown only for *the top*. `syncStages()` keeps the dependency visible: deepList off disables the research and its scope, research off disables the scope, and a stage that will not run gets `.off` (dimmed). `readStages()` sends `{deep_list, autoresearch: deep_list && checked, autoresearch_top: null | Number(...)}`; `researchTopProblem()` refuses a count outside the range before anything is scaffolded, like `briefProblem()`. Not remembered between openings.
+
+   The tab is laid out as a **pipeline** (2026-09-26): `<ol class="nv-flow">` of five `.nv-stage` blocks (`data-stage` brief / interview / scaffold / deep-list / research), each a header (`.nv-stage-num` 1–5, `.nv-stage-title`, a muted hint) over a body with the stage's controls, joined by a short connector (`.nv-stage + .nv-stage::before`); stages 4 and 5 carry their checkbox in the header (`.nv-stage-check`) and stage 3 has no control, it only says the plugin scaffolds from the brief. The control ids are unchanged, so the payload and the browser suite are layout-independent.
+6. Submit refuses up front when `state.ttydAvailable` is false, before scaffold or register. Otherwise scaffold, register, then `spawnBootstrapSession({vault, type: "claude", bootstrap_new_vault: true, brief, interview, ...stages})`; on success the vault is selected with the Ops panel forced (`selectVault(name, {panel: "ops"})`) so the first question is in view, and the status names the stages that follow the scaffold; on failure the status says the draft is kept.
+
+Both tabs open their session through `spawnBootstrapSession(payload)`. On the legacy ttyd stack it is `POST /api/sessions` (plus the theme). Under the shared terminal `webterm-glue.js` replaces it with the library's create call (`POST /webterm/api/sessions`, same payload minus the theme): resman's spawn resolver runs `build_session_plan` on it, so the Basic and Deep messages are pasted by the library's readiness probe, and no ttyd is needed. Before 2026-09-25 the wizard always posted the legacy route, which returned 503 "ttyd not installed" on a webterm host without ttyd, so the vault was scaffolded and registered but its bootstrap session never opened.
+
+Each step's status (info / ok / error) is reported inside the wizard so a partial failure (e.g., scaffold succeeds, registration fails) is visible without losing context. Browser suite: `tests/test_new_vault_browser.py` (the routes are intercepted in the page, nothing runs `new-vault.sh` or `claude`).
 
 ## Theme Toggle
 

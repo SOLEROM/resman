@@ -8,6 +8,12 @@
 > `schedule.yaml`); it writes one markdown page and no sidecar. Its first real
 > run (on `testVault`, from the Tasks tab) spends Claude usage and is the
 > operator's call; a second run should then show a value retired or re-ranked.
+> Since 2026-09-26 the New Vault form's Deep interview tab also runs it as a
+> **stage** right after a new vault's scaffold, followed by autoresearch on
+> the list's open values, which **ticks** each researched row's *done* box
+> (docs/vaultBrief-plan.md, D12–D15). The skill honours any mark in a row's
+> box as *filled*, writes its *Filled* list as a ticked checklist and never
+> unticks a box (decision 5, extended the same day).
 
 ## What it does, in one paragraph
 
@@ -60,9 +66,12 @@ to set `focus` in Skills → deepList.
    (title, aliases, tags, headings) for pages about it. It is **filled** when
    at least `filled_min_pages` pages of at least `filled_min_words` body words
    exist that were created or updated after the value's `first_seen`, or when
-   the operator ticked its row (`- [x]`) or wrote `done` in its status column.
-   Filled values move to *Filled* with the date and links to the pages that
-   filled them. Values the operator marked `dismissed`, and anything in the
+   its row carries a tick (`[x]`, or any mark in the box: the operator's, or
+   the one resman's research stage sets after a new vault's scaffold) or
+   `done` in its status column. Filled values move to *Filled* as ticked
+   entries (`- [x] <date> — **<value>** → [[page]]`) with the date and links
+   to the pages that filled them (*marked done* when a ticked row's pages are
+   not found); a mark is never cleared. Values the operator marked `dismissed`, and anything in the
    `exclude` setting, move to *Dismissed* and are never proposed again.
 4. **Generate candidates**, at most `candidates_per_run`, from: concepts or
    entities mentioned in two or more pages that have no page of their own;
@@ -84,9 +93,9 @@ to set `focus` in Skills → deepList.
    `done` box, value (a `[[wikilink]]` when a page exists, else the page name
    it would get), the combined score with its trend mark (`87 ↑`), `since`
    (first-seen date `×` runs seen), one-line *why*, related pages, and the
-   suggested `/claude-obsidian:autoresearch <topic>` line; *Filled* (newest
-   first, last 50); *Dismissed*; *Run log* (last 10 runs: date, open / filled
-   / new counts). The four axis scores are working values and are **not**
+   suggested `/claude-obsidian:autoresearch <topic>` line; *Filled* (a ticked
+   checklist, newest first, last 50); *Dismissed*; *Run log* (last 10 runs:
+   date, open / filled / new counts). The four axis scores are working values and are **not**
    written to the page (decision 8).
 7. **Bookkeeping.** Prepend one line to `wiki/log.md`
    (`deep-list: N open, M filled, K new`), add the page to `wiki/index.md`
@@ -292,7 +301,11 @@ and nothing else. Acting on a value is the operator's move: open
 `wiki/meta/deep-list.md` in the Wiki tab, copy the suggested
 `/claude-obsidian:autoresearch …` line of the value into a **Run a Claude
 prompt** task, or type the topic into **Autoresearch a topic**. No sidecar, no
-button on the page, no reading of the list by resman (decision 6).
+button on the page, no reading of the list by resman (decision 6). The one
+automated reader is the Deep interview's research stage right after a new
+vault's scaffold (2026-09-26): the bootstrap session, on the operator's
+instruction from the form, runs the lines of the open values and ticks each
+row it has researched; resman itself still never reads the page.
 
 ## Decisions (taken 2026-09-24)
 
@@ -304,7 +317,9 @@ button on the page, no reading of the list by resman (decision 6).
    Approved.
 5. **Operator control through the page** (tick a row, or `done` / `dismissed`
    in the status column, honoured on the next run) is in the first version.
-   Approved.
+   Approved. Extended 2026-09-26: any mark in the box counts, the research
+   stage of the New Vault form sets the same tick, *Filled* is written as a
+   ticked checklist, and the skill never unticks a box.
 6. **No sidecar and no stage 2.** The skill is triggered only from the Tasks
    view; resman never reads the list. Decided.
 7. **Order of work** as in the main plan: phase 1 registry → phase 2 Tasks

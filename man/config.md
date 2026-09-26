@@ -88,6 +88,10 @@ per browser. The optional top-level `categories:` list pins group ordering —
 anything not listed sorts alphabetically after it. Address nested groups by
 full path (`hw/edge`).
 
+Categories are case-insensitive and always shown in capitals: `Drone`,
+`drone` and `DRONE` are the same group, `DRONE` (and `hw/Edge` is `HW/EDGE`).
+Type them however you like; resman upper-cases them.
+
 ### Notes
 
 - `host`/`port` are read at startup. CLI flags `--public` / `--host` /

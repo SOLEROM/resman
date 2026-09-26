@@ -97,6 +97,28 @@ window.spawnSession = async (vaultName, type) => {
   showPanel('ops');
 };
 
+// The New Vault form's bootstrap session (Basic or Deep interview). The
+// payload — vault, type, bootstrap_new_vault, brief, interview — goes to the
+// library's create endpoint as is; resman's spawn resolver turns it into the
+// pasted message with build_session_plan, exactly as /api/sessions would on
+// the legacy stack, which needs ttyd the shared terminal does not.
+window.spawnBootstrapSession = async (payload) => {
+  const { theme, ...request } = payload;   // the shared terminal themes itself
+  let info;
+  try {
+    info = await wt._api('POST', '/api/sessions', request);
+  } catch (err) {
+    throw new Error(err.message || String(err));
+  }
+  wt.openSession(info.id, { label: info.label });
+  await refreshKnown();
+  state.activeSessionId = info.id;
+  state.lastSessionByVault[request.vault] = info.id;
+  wt.activate(info.id);
+  applyVaultScope();
+  return known.get(info.id) || asResmanSession(info);
+};
+
 window.killSession = async (id) => {
   const sess = known.get(id);
   await wt.killSession(id);

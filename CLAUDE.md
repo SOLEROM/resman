@@ -37,8 +37,9 @@ host path literals; solBench is the sibling `../solBench`).
   registry, Config-tab cron select grouped by provider, optional evals) and
   deepList's first real run on a vault (spends usage). A skill folder without
   a registry entry is allowed but inert (listed under *Not wired yet*);
-  **grilling** (`skills/skills/grilling/`) is one on purpose: a helper the
-  other skills call before they act, never an operation.
+  **grilling** (`skills/skills/grilling/`) has none on purpose: a helper the
+  other skills call before they act, never an operation, marked
+  `metadata: {role: helper}` in its frontmatter and listed under *Helpers*.
 
 ## Where things are
 

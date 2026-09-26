@@ -88,6 +88,42 @@ so we cannot use `claude -p`. The user answers prompts in the Terminal tab.
 See `09-api.md` for the API field and `docs/plugin-commands.md` for the
 wizard-vs-task-queue trade-off.
 
+### The Deep interview message (2026-09-25)
+
+`bootstrap_new_vault` alone is the form's **Basic** tab: the message above,
+byte for byte. With `brief` (string) and/or `interview` (`short` | `full`)
+in the same request it is the **Deep interview** tab
+(docs/vaultBrief-plan.md): `session_plan` validates the brief through
+`new_vault.clean_brief` (≤ 16000 characters, line ends normalised, a leading
+BOM dropped, no control, format or line-separator character besides tab and
+newline, no line equal to a marker) and the depth
+through `new_vault.check_interview`, then `new_vault.bootstrap_message(mode=
+"deep")` composes prefix → the brief between `===== BEGIN BRIEF =====` /
+`===== END BRIEF =====` → `/resman:vault-brief interview=<depth> …` (the
+stored `skills.vault-brief` settings, read through `ConfigManager.skill_settings`)
+→ `/claude-obsidian:wiki` with a note to take Purpose, Mode and Owner from
+`wiki/meta/brief.md` → suffix → the **stages** the form checked
+(2026-09-26; `new_vault.check_stages`): with `deep_list: true` a paragraph
+ending in `/resman:deep-list …` (the stored `skills.deep-list` settings),
+and with `autoresearch: true` (needs `deep_list`) a paragraph telling the
+session to run the *research with* line of every open value of
+`wiki/meta/deep-list.md`, or of the top `autoresearch_top` (1–50) when the
+count is given, one at a time, ticking each researched row's *done* box and
+changing nothing else on the page. Absent stage fields mean no stage, so a
+request of 2026-09-25 pastes the same message as then. Same bracketed paste; the tmux
+buffer has no size limit of its own and the Claude REPL collapses a long
+paste on screen but receives it whole. Any of these fields without
+`bootstrap_new_vault` is a 400, and a stage with `bootstrap_new_vault` alone
+(the Basic message) is a 400. The brief is the operator's own text pasted
+into the operator's own session; the skill is told to treat it as content,
+never as instructions.
+
+Under the shared terminal the wizard's request goes to the library's create
+endpoint (`webterm-glue.js` replaces `spawnBootstrapSession`), and
+`make_spawn_resolver` hands the same payload to `build_session_plan`; the
+legacy `/api/sessions` route, which needs ttyd, is only used when
+`RESMAN_WEBTERM=0`.
+
 ## Port Management
 
 `_find_free_port()` scans `TTYD_PORT_BASE` to `TTYD_PORT_MAX`:

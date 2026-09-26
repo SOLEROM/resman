@@ -14,6 +14,7 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
+from . import new_vault
 from . import operations
 from . import plugin_commands
 from . import plugin_info
@@ -911,9 +912,21 @@ def skills_new_vault():
         doc = ""
     root = _ctx()["resman_root"]
     folder = plugin_info.plugin_dir()
+    # Basic is today's message; Deep is the Deep interview tab's, rendered with
+    # a placeholder brief, the stored vault-brief and deep-list settings at
+    # depth short, and the form's default stages (deepList, then the research
+    # of the top values) so the page shows the whole process.
     return jsonify({
         "doc": doc,
-        "prompt": plugin_commands.new_vault_bootstrap_prompt_for(root),
+        "prompt": new_vault.bootstrap_message(root, mode="basic"),
+        "prompt_deep": new_vault.bootstrap_message(
+            root, mode="deep", brief=new_vault.SAMPLE_BRIEF, interview="short",
+            skill_settings=_ctx()["config"].skill_settings, stages=new_vault.FORM_STAGES),
+        "brief_max_chars": new_vault.MAX_BRIEF_CHARS,
+        "interviews": list(new_vault.FORM_INTERVIEWS),
+        "markers": [new_vault.BRIEF_BEGIN, new_vault.BRIEF_END],
+        "stages": new_vault.FORM_STAGES.public(),
+        "autoresearch_top_max": new_vault.AUTORESEARCH_TOP_MAX,
         "plugin_dir": str(folder) if folder else None,
         "prefix_file": plugin_commands.NEW_VAULT_PREFIX_FILE,
         "suffix_file": plugin_commands.NEW_VAULT_SUFFIX_FILE,

@@ -8,7 +8,7 @@ directories for unregistered vaults. It re-derives its state from `config_manage
 on every `config_reloaded` EventBus event, so vault changes made via the Config tab
 (form or YAML) take effect without a server restart. The registry is the single point
 of truth for vault status data consumed by the sidebar, status dots, and ObsidianPush.
-Each `Vault` also carries the normalized `category` from its config entry (or `None`),
+Each `Vault` also carries the normalized (upper-case, so case-insensitive) `category` from its config entry (or `None`),
 which the sidebar uses to build its collapsible group tree.
 
 ## Vault Loading and Validation

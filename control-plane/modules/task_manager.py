@@ -701,6 +701,7 @@ class TaskManager:
         return operations.RunContext(
             resman_root=self.resman_root, vault_path=vault_path,
             claude_exe=_claude_exe(), settings=settings,
+            skill_settings=self._skill_settings,
         )
 
     def _execute(self, task: Task) -> None:

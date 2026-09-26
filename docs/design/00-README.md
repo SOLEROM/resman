@@ -218,3 +218,30 @@ Skills tree) is phases 1–3 of the plan.
 |----------|------|
 | Optional `archived: true` on a resman.yaml vault entry (validated as a boolean); `ConfigManager.set_vault_archived()`; `Vault.archived` in the registry; `POST /api/vaults/<name>/archive`; `archived` in `GET /api/vaults` and `GET /api/landing` | 02, 09 |
 | Sidebar **ARCHIVE** folder (`#archive-section`) under the tree, above the tag filter: folded by default (`resman-archive-open`), archived vaults grouped by category; header archive button toggles the selected vault; Home hides archived vaults (count `· M archived`); Config vault card **Archived** checkbox; browser suite `tests/test_vault_archive_browser.py` | 10 |
+
+### 2026-09-25 — vaultBrief: define a vault before the scaffold
+
+| Addition | File |
+|----------|------|
+| The second resman skill **vault-brief** — `skills/skills/vault-brief/SKILL.md`, `settings.yaml` (`interview` none/short/full, `max_questions`, `owner`), `references/brief-template.md`; writes `wiki/meta/brief.md` after a grilling interview and the sidecar `wiki/hint.json` (`source: "brief"`); operation `rs-vault-brief` (Wiki, optional per-task `seed`); plugin manifest 0.2.0 | 17, `docs/vaultBrief-plan.md` |
+| `modules/new_vault.py` — the new-vault process's composition root: `clean_brief`, `check_interview`, `bootstrap_message(mode="basic" \| "deep")`, `brief_task_prompt`; `plugin_commands.new_vault_bootstrap_prompt` takes `before_command` / `command_note` (defaults unchanged); the *Re-run wiki bootstrap* task pastes the deep message with `interview=none` | 04, 06, 17 |
+| `RunContext.skill_settings` — the reader of any skill's stored settings, handed by `TaskManager._run_context` | 17 |
+| `POST /api/sessions` takes `brief` (≤ 16000 chars, validated) and `interview` (`short` \| `full`) with `bootstrap_new_vault`; `GET /api/skills/new-vault` adds `prompt_deep`, `brief_max_chars`, `interviews`, `markers` | 04, 09, 11 |
+| New Vault form: two tabs, **Basic** (today's, unchanged) and **Deep interview** (brief textarea, browser file input, depth select, localStorage draft, refuses without ttyd before scaffolding, lands on the Ops panel); Skills tab's *New vault process* page shows both messages; browser suite `tests/test_new_vault_browser.py` | 10 |
+| deepList's objective and the wiki-hint prompt read `wiki/meta/brief.md` first when it exists | 17, `docs/deepList-plan.md` |
+
+### 2026-09-26 — Skills tab: a *Helpers* group
+
+| Addition | File |
+|----------|------|
+| A helper skill declares itself with `metadata: {role: helper}` in its SKILL.md frontmatter (`resman_skills.is_helper`); `GET /api/skills/summary` carries `helper` per resman skill; the tree lists helpers under **Helpers** and keeps *Not wired yet* for folders that are neither wired nor helpers; a helper with a registry entry is a warning. `grilling` carries the marker | 09, 10, 17, `skills/README.md` |
+
+### 2026-09-26 — Deep interview: deepList and autoresearch as stages of the one message
+
+| Addition | File |
+|----------|------|
+| `new_vault.Stages` / `check_stages` / `stage_parts` / `deep_list_line`; `bootstrap_message(stages=)` appends, after the suffix, `/resman:deep-list …` (stored `skills.deep-list` settings) and the research of the list's open values (all, or the top N) with `plugin_commands.AUTORESEARCH`, each researched row ticked; `new_vault_bootstrap_prompt(after_suffix=)`; the *Re-run wiki bootstrap* task and old clients keep the message of before | 04, 17, `docs/vaultBrief-plan.md` D12–D15 |
+| `POST /api/sessions` takes `deep_list`, `autoresearch` (booleans; the research needs the list) and `autoresearch_top` (absent or `null` = every open value, else 1–50) with the deep message; `GET /api/skills/new-vault` adds `stages` and `autoresearch_top_max` and renders them in `prompt_deep` | 09, 11 |
+| New Vault form, Deep interview tab laid out as a **pipeline** of five numbered stage blocks (Brief, Interview, Scaffold the wiki, deepList, Autoresearch), the last two with their checkbox in the header, on by default and dimmed when off; the research scope *all open values* or *the top N*; a bad count refused before scaffolding; the Skills tab's *New vault process* page describes the stages; browser suite extended | 10 |
+| deepList's page: the *Filled* list is a ticked checklist (`- [x] …`), any mark in a row's box counts as filled (the operator's or the research stage's), and the skill never unticks; `tests/test_resman_skills.py` pins it | 17, `docs/deepList-plan.md` |
+| Vault categories are case-insensitive: `normalize_category` upper-cases every segment (`Drone`/`drone` → `DRONE`), `ConfigManager.categories` upper-cases and dedupes the ordering list, `add_vault` writes the upper-case form; the SPA's `normalizeCategory` mirrors it for the tree, the Config-tab field, the datalists and the stored collapsed set | 02, 03, 10 |

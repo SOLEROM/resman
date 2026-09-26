@@ -67,9 +67,12 @@ def _validate_cron_string(expr: str) -> None:
 
 
 def normalize_category(value: str) -> str:
-    """Trim whitespace and stray slashes: ' /hw/edge/ ' -> 'hw/edge'."""
+    """Canonical category path: trimmed, no stray slashes, upper case.
+
+    ' /hw/Edge/ ' -> 'HW/EDGE'. Categories are case-insensitive, so 'Drone'
+    and 'drone' land in the same sidebar group, spelled 'DRONE'."""
     return "/".join(
-        s.strip() for s in value.strip().strip("/").split("/") if s.strip()
+        s.strip().upper() for s in value.strip().strip("/").split("/") if s.strip()
     )
 
 
@@ -350,7 +353,8 @@ class ConfigManager:
 
         Categories used by vaults but absent from this list are appended
         alphabetically by the frontend."""
-        return [normalize_category(c) for c in (self._system.get("categories") or [])]
+        normalized = (normalize_category(c) for c in (self._system.get("categories") or []))
+        return list(dict.fromkeys(normalized))
 
     @property
     def inbox(self) -> dict:

@@ -58,10 +58,12 @@ Work through the steps in order. Read before you write.
 
 ### 1. The objective
 
-Derive what this vault is for from: the `Purpose:` and `Mode:` lines of the
-vault's `CLAUDE.md` (the plugin's bootstrap writes them), `wiki/hint.json`
-(`summary`, `tags`) when present, `wiki/overview.md`, and the `focus`
-parameter. Write it as two or three sentences.
+Derive what this vault is for from, in this order: `wiki/meta/brief.md` when
+it exists (its *Purpose*, *Scope* and *Key questions* sections; resman's
+vault-brief skill writes it), the `Purpose:` and `Mode:` lines of the vault's
+`CLAUDE.md` (the plugin's bootstrap writes them), `wiki/hint.json` (`summary`,
+`tags`) when present, `wiki/overview.md`, and the `focus` parameter. Write it
+as two or three sentences.
 
 If the previous `wiki/meta/deep-list.md` has `objective_pinned: true` in its
 frontmatter, keep its *Objective* section verbatim instead.
@@ -88,22 +90,28 @@ If `wiki/meta/deep-list.md` exists, parse it:
 - the *Filled* and *Dismissed* sections;
 - the *Run log*.
 
-Honour the operator's marks in the *Open values* table: a row whose checkbox is
-ticked (`[x]`) or whose status column says `done` counts as **filled**; a row
-whose status says `dismissed` goes to *Dismissed* and is never proposed again.
-Anything in the `exclude` parameter is dismissed too.
+Honour the marks in the *Open values* table: a row whose box carries any mark
+(`[x]`, `[X]`, `[v]`, `[✓]`) or whose `done` column says `done` counts as
+**filled**, whether the operator ticked it or resman's research stage did
+(after a new vault's scaffold, it ticks each row whose autoresearch run has
+filed its pages); a row whose column says `dismissed` goes to *Dismissed* and
+is never proposed again. Anything in the `exclude` parameter is dismissed too.
 
 ### 4. Retire what is filled
 
 For every open value, search `wiki/**/*.md` for pages about it: title,
 aliases, tags, headings, wikilinks. A value is **filled** when at least
 `filled_min_pages` pages of at least `filled_min_words` body words each exist
-that were created or updated after the value's `first_seen`. Move filled values
-to *Filled* with today's date and `[[wikilinks]]` to the pages that filled them.
+that were created or updated after the value's `first_seen`, or when its row
+is ticked (step 3). Move filled values to *Filled* as **ticked** entries with
+today's date and `[[wikilinks]]` to the pages that filled them; for a ticked
+row whose pages the search does not find, link what exists and write *marked
+done* in place of the links.
 
 ### 5. Candidates
 
-Collect at most `candidates_per_run` new candidates from: concepts or entities
+Collect at most `candidates_per_run` new candidates from: the *Key questions*
+of `wiki/meta/brief.md` when it exists; concepts or entities
 mentioned in two or more pages that have no page of their own; thin pages;
 open questions in `overview.md`, `questions/` or `question`-type pages; trends
 and signals with no concept coverage; lint's missing pages; and a decomposition
@@ -159,12 +167,16 @@ settings: "<the parameter tokens this run received>"
 *score*: combined 0–100 and the trend since the previous run (↑ ↓ → or new). *since*: first seen ×runs seen.
 
 Keep the table this narrow: eight columns, one line per value, no per-axis
-scores. The `done` column is the operator's: leave the checkbox unticked;
-they tick it or write `done` / `dismissed` there to steer the next run.
+scores. The `done` column is a checkbox: write `[ ]` for a value still open.
+A tick there (`[x]`, the box Obsidian renders as checked) or the word `done`
+means *researched*: the operator sets it, and so does resman's research stage
+once a value's autoresearch run has filed its pages; `dismissed` retires the
+value for good. Ticked rows move to *Filled* on the next run and keep their
+tick there.
 
 ## Filled
 
-- <date> — **<value>** → [[page]], [[page]]  (newest first; keep the last 50)
+- [x] <date> — **<value>** → [[page]], [[page]]  (newest first; keep the last 50)
 
 ## Dismissed
 
@@ -195,4 +207,6 @@ run as-is. Use Obsidian-flavored markdown; link with `[[Note Name]]`.
   `wiki/index.md` (first run) change. Nothing outside `wiki/`.
 - Do not start the research yourself. Do not fetch the web. Do not ask
   questions: this runs non-interactively.
+- Never untick a box: a mark, whoever set it, stands until the row is retired
+  to *Filled*, where it stays ticked.
 - Frontmatter on the page; Obsidian markdown; `[[wikilinks]]`.

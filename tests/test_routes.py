@@ -341,6 +341,33 @@ def test_sessions_bootstrap_new_vault_validation(tmp_path):
     assert "mutually exclusive" in rv.get_json()["error"]
 
 
+@pytest.mark.parametrize("extra,message", [
+    ({"interview": "none"}, "interview"),
+    ({"interview": "deep"}, "interview"),
+    ({"brief": "x" * 16001}, "at most"),
+    ({"brief": "a\x00b"}, "control"),
+    ({"brief": "===== BEGIN BRIEF =====\nx"}, "marker"),
+    ({"brief": "x", "autoresearch": True}, "deep_list"),
+    ({"brief": "x", "deep_list": True, "autoresearch": True, "autoresearch_top": 0}, "autoresearch_top"),
+    ({"deep_list": True}, "Deep interview"),
+])
+def test_sessions_brief_and_interview_validation(tmp_path, extra, message):
+    """The Deep interview tab's fields (docs/vaultBrief-plan.md): the depth is
+    short or full, the brief is capped, free of control characters and of the
+    marker lines. Neither is accepted without bootstrap_new_vault."""
+    app, ctx, _ = make_test_app(tmp_path)
+    ctx["session_manager"]._available = True
+    client = app.test_client()
+    rv = client.post("/api/sessions",
+                     json={"vault": "alpha", "type": "claude", "bootstrap_new_vault": True, **extra},
+                     headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 400 and message in rv.get_json()["error"]
+    rv = client.post("/api/sessions",
+                     json={"vault": "alpha", "type": "claude", "brief": "no bootstrap"},
+                     headers={"X-Requested-With": "resman"})
+    assert rv.status_code == 400 and "bootstrap_new_vault" in rv.get_json()["error"]
+
+
 def test_get_sessions_empty(tmp_path):
     app, _, _ = make_test_app(tmp_path)
     rv = app.test_client().get("/api/sessions")
@@ -1455,9 +1482,9 @@ def test_list_vaults_surfaces_categories(tmp_path):
     rv = app.test_client().get("/api/vaults")
     assert rv.status_code == 200
     body = rv.get_json()
-    assert body["categories"] == ["work", "hw/edge"]
+    assert body["categories"] == ["WORK", "HW/EDGE"]
     alpha = next(v for v in body["vaults"] if v["name"] == "alpha")
-    assert alpha["category"] == "hw/edge"
+    assert alpha["category"] == "HW/EDGE"
 
 
 def test_register_vault_with_category(tmp_path):
@@ -1470,9 +1497,9 @@ def test_register_vault_with_category(tmp_path):
         headers={"X-Requested-With": "resman"},
     )
     assert rv.status_code == 200
-    assert ctx["config"].get_vault("beta")["category"] == "work/hw"
+    assert ctx["config"].get_vault("beta")["category"] == "WORK/HW"
     reg_vault = ctx["vault_registry"].get("beta")
-    assert reg_vault is not None and reg_vault.category == "work/hw"
+    assert reg_vault is not None and reg_vault.category == "WORK/HW"
 
 
 def test_register_vault_rejects_bad_category(tmp_path):
@@ -1517,10 +1544,10 @@ def test_config_structured_save_resman(tmp_path):
         headers={"X-Requested-With": "resman"},
     )
     assert rv.status_code == 200
-    assert cm.categories == ["work"]
+    assert cm.categories == ["WORK"]
     assert cm.get_vault("alpha")["category"] == "work"
     # config_reloaded must have re-derived the registry
-    assert ctx["vault_registry"].get("alpha").category == "work"
+    assert ctx["vault_registry"].get("alpha").category == "WORK"
 
 
 def test_config_structured_save_rejects_invalid(tmp_path):
@@ -1714,6 +1741,17 @@ def test_skills_summary_without_either_provider(tmp_path):
     assert client.get("/api/skills/file?provider=resman&path=README.md").status_code == 404
     nv = client.get("/api/skills/new-vault").get_json()
     assert nv["plugin_dir"] is None and "/claude-obsidian:wiki" in nv["prompt"]
+    # the Deep interview message, rendered with a sample brief, beside today's
+    assert "/resman:vault-brief" in nv["prompt_deep"] and "===== BEGIN BRIEF =====" in nv["prompt_deep"]
+    assert "/resman:vault-brief" not in nv["prompt"]
+    assert nv["brief_max_chars"] == 16000 and nv["interviews"] == ["short", "full"]
+    # the Deep message is shown with the form's default stages on
+    assert nv["stages"] == {"deep_list": True, "autoresearch": True, "autoresearch_top": None}
+    assert nv["autoresearch_top_max"] == 50
+    assert "/resman:deep-list" in nv["prompt_deep"] and "every open value" in nv["prompt_deep"]
+    assert nv["prompt_deep"].index("/claude-obsidian:wiki") < nv["prompt_deep"].index("/resman:deep-list") \
+        < nv["prompt_deep"].index("/claude-obsidian:autoresearch")
+    assert "/resman:deep-list" not in nv["prompt"]
 
 
 def test_skills_routes_with_both_providers(tmp_path, make_plugin, make_resman_skills):
@@ -1730,7 +1768,7 @@ def test_skills_routes_with_both_providers(tmp_path, make_plugin, make_resman_sk
     assert ob["plugin"]["version"] == "1.6.0"
     assert rs["plugin"] | {"installed": True, "version": "0.1.0", "located_by": "repo"} == rs["plugin"]
     demo = next(k for k in rs["skills"] if k["name"] == "demo")
-    assert (demo["used"], demo["has_settings"], demo["invoke"]) == (False, True, "/resman:demo")
+    assert (demo["used"], demo["helper"], demo["has_settings"], demo["invoke"]) == (False, False, True, "/resman:demo")
     assert rs["docs"] == ["README.md"] and s["warnings"] == []
     # every resman operation's skill is in the (fake, complete) folder
     assert rs["uses"] and all(u["provided"] for u in rs["uses"])

@@ -102,8 +102,23 @@ def test_category_surfaced_on_vault(tmp_path):
     reg = VaultRegistry(cm)
     reg.reload()
     v = reg.get("alpha")
-    assert v.category == "hw/edge"
-    assert v.to_dict()["category"] == "hw/edge"
+    assert v.category == "HW/EDGE"
+    assert v.to_dict()["category"] == "HW/EDGE"
+
+
+def test_category_case_variants_are_one_group(tmp_path):
+    a = make_vault(tmp_path / "vaults", "alpha")
+    b = make_vault(tmp_path / "vaults", "beta")
+    write_system(
+        tmp_path / "config",
+        f"vaults:\n  - name: alpha\n    path: {a}\n    category: Drone\n"
+        f"  - name: beta\n    path: {b}\n    category: drone\n",
+    )
+    cm = ConfigManager(tmp_path / "config", EventBus())
+    cm.load()
+    reg = VaultRegistry(cm)
+    reg.reload()
+    assert reg.get("alpha").category == reg.get("beta").category == "DRONE"
 
 
 def test_category_defaults_to_none(tmp_path):

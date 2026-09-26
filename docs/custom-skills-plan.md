@@ -9,7 +9,13 @@
 > operation. Not yet done: `tools/remoteAgent.sh`
 > still carries its static operation list, the Config tab's cron Operation
 > select is not grouped by provider, and no `claude plugin eval` case exists.
-> A real run of deepList on a vault has not been made yet; it spends usage. The first real skill is defined only after phase 3;
+> A real run of deepList on a vault has not been made yet; it spends usage.
+> Since 2026-09-26 the Deep interview tab offers it as a stage after a new
+> vault's scaffold, with autoresearch on the top values after it.
+> The second skill, **vaultBrief** (`skills/skills/vault-brief/`, operation
+> `rs-vault-brief`, the New Vault form's Deep interview tab; spec
+> `docs/vaultBrief-plan.md`), was built on 2026-09-25 with the same recipe.
+> The first real skill is defined only after phase 3;
 > its spec is `docs/deepList-plan.md` (approved 2026-09-24), which also
 > adds per-skill **settings** (schema in the skill folder, values in
 > `resman.yaml`, form in the Skills tab) to phases 1 and 3 below.

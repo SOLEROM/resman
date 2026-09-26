@@ -7,6 +7,8 @@ description: >
   writes no vault pages and has no operation of its own. Triggers on: grill
   me, grill this plan, grilling, stress-test the plan, interview me about the
   plan, walk the design tree.
+metadata:
+  role: helper
 ---
 
 # grilling: interview the operator until the plan is shared
@@ -28,7 +30,7 @@ the question touches; in a repository it is the codebase.
 - It writes nothing: no page under `wiki/`, no `wiki/log.md` entry, no
   sidecar. The skill that called it does the writing, in its own conventions.
 - It has no `settings.yaml` and no registry entry; it is never a task of its
-  own. The Skills tab lists it under *Not wired yet*, on purpose.
+  own. The Skills tab lists it under *Helpers*, never as a task.
 
 ## When another skill calls it
 

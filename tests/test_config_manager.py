@@ -377,6 +377,21 @@ def test_vault_category_accepted(cfg_dir):
     assert cm.vaults[0]["category"] == "hw/edge"
 
 
+def test_normalize_category_is_case_insensitive():
+    """'Drone', 'drone' and 'DRONE' are one category: always upper case."""
+    from modules.config_manager import normalize_category
+    assert normalize_category("drone") == "DRONE"
+    assert normalize_category("Drone") == "DRONE"
+    assert normalize_category(" /hw/Edge/ ") == "HW/EDGE"
+
+
+def test_categories_ordering_list_is_upper_cased_and_deduped(cfg_dir):
+    write(cfg_dir / "resman.yaml", "vaults: []\ncategories: [drone, Drone, hw/edge]\n")
+    cm = ConfigManager(cfg_dir, EventBus())
+    cm.load()
+    assert cm.categories == ["DRONE", "HW/EDGE"]
+
+
 def test_vault_category_optional(cfg_dir):
     write(cfg_dir / "resman.yaml", """
         vaults:
@@ -443,7 +458,7 @@ def test_categories_list_parsed_and_normalized(cfg_dir):
     """)
     cm = ConfigManager(cfg_dir, EventBus())
     cm.load()
-    assert cm.categories == ["work", "hw/edge", "garage"]
+    assert cm.categories == ["WORK", "HW/EDGE", "GARAGE"]
 
 
 def test_categories_defaults_empty(cfg_dir):
@@ -478,8 +493,8 @@ def test_add_vault_with_category(cfg_dir):
     cm = ConfigManager(cfg_dir, EventBus())
     cm.load()
     cm.add_vault("b", "/tmp/b", category=" /hw/edge/ ")
-    assert cm.get_vault("b")["category"] == "hw/edge"
-    assert "category: hw/edge" in (cfg_dir / "resman.yaml").read_text()
+    assert cm.get_vault("b")["category"] == "HW/EDGE"
+    assert "category: HW/EDGE" in (cfg_dir / "resman.yaml").read_text()
 
 
 def test_add_vault_with_invalid_category_raises(cfg_dir):
@@ -624,7 +639,7 @@ def test_save_skill_settings_merges_into_the_live_file(cfg_dir, tmp_path):
     cm.load()
     cm.save_skill_settings("demo", {"n": 7})
     assert cm.skill_settings("demo") == {"n": 7}
-    assert cm.categories == ["work"]                 # the rest of the file survives
+    assert cm.categories == ["WORK"]                 # the rest of the file survives
     import yaml
     assert yaml.safe_load((cfg_dir / "resman.yaml").read_text())["skills"] == {"demo": {"n": 7}}
     with pytest.raises(ConfigError, match="demo.n"):

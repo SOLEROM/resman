@@ -10,7 +10,10 @@ next task run.
 The Skills tab renders this page as *Custom skill guide*. The design is
 `docs/design/17-skills.md`; the plan that wires the folder into the app is
 `docs/custom-skills-plan.md`. Skills so far: **deep-list** (wired to the
-operation `rs-deep-list`) and **grilling** (a helper, see below).
+operation `rs-deep-list`), **vault-brief** (operation `rs-vault-brief`, and the
+Deep interview tab of the New Vault form runs it before the plugin scaffolds a
+new vault; spec `docs/vaultBrief-plan.md`) and **grilling** (a helper, see
+below).
 
 ## The golden rule
 
@@ -75,10 +78,14 @@ Rules every skill obeys:
 ## Helper skills
 
 A **helper** is a skill the other skills call, never the operator from the
-Tasks tab: it writes nothing under `wiki/` and gets **no registry entry**, so
-the Skills tab lists it under *Not wired yet* for good. Rules 1 and 2 above
-do not apply to it; 3 to 8 do (nothing outside the vault, no side effects,
-no host paths). Say so in its description. The first helper is
+Tasks tab: it writes nothing under `wiki/` and gets **no registry entry**.
+It declares itself with `metadata: {role: helper}` in its frontmatter (the
+Agent Skills `metadata` map), which puts it under *Helpers* in the Skills
+tab; a folder without that marker and without a registry entry is listed
+under *Not wired yet*, and a helper that does get a registry entry is a
+warning. Rules 1 and 2 above do not apply to it; 3 to 8 do (nothing outside
+the vault, no side effects, no host paths). Say so in its description too.
+The first helper is
 **grilling** (`skills/grilling/`): a relentless one-question-at-a-time
 interview about a plan, each question with a recommended answer, which a
 skill runs on its own plan before it acts. A helper has no `settings.yaml`;

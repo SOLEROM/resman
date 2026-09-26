@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
-from . import plugin_commands, resman_skills
+from . import new_vault, plugin_commands, resman_skills
 
 PROVIDERS = {
     "obsidian": "claude-obsidian",
@@ -61,6 +61,10 @@ class RunContext:
     vault_path: str
     claude_exe: str
     settings: dict = field(default_factory=dict)   # skills.<skill> from the yaml
+    # The reader of *any* skill's stored settings (ConfigManager.skill_settings),
+    # for an entry that renders another skill's line than its own: the
+    # wiki-bootstrap re-run carries vault-brief's (docs/vaultBrief-plan.md).
+    skill_settings: Optional[Callable[[str], dict]] = None
 
     @property
     def plugin_dir_args(self) -> list[str]:
@@ -196,9 +200,13 @@ _ENTRIES = (
         key="wiki-bootstrap", label="Re-run wiki bootstrap", group="Wiki",
         provider="obsidian", kind="prompt", skill="wiki",
         desc="Re-run the wiki bootstrap.",
-        note="Non-interactive re-run only; new vaults must use the wizard.",
+        note="Non-interactive re-run only; new vaults must use the wizard. Normalizes "
+             "the brief first (/resman:vault-brief with the interview off, from what "
+             "the vault already says), then the plugin's scaffold takes Purpose, Mode "
+             "and Owner from wiki/meta/brief.md.",
         icon="codicon-rocket", remote=True,
-        build_prompt=lambda p, c: plugin_commands.new_vault_bootstrap_prompt_for(c.resman_root),
+        build_prompt=lambda p, c: new_vault.bootstrap_message(
+            c.resman_root, mode="deep", interview="none", skill_settings=c.skill_settings),
     ),
     Operation(
         key="wiki-hint", label="Generate hint", group="Wiki", provider="obsidian",
@@ -232,6 +240,23 @@ _ENTRIES = (
         icon="codicon-list-ordered", remote=True,
         build_prompt=lambda p, c: resman_skills.skill_prompt(
             "deep-list", resman_skills.args_for(c.resman_root, "deep-list", c.settings, p)),
+    ),
+    Operation(
+        key="rs-vault-brief", label="vaultBrief: define the vault", group="Wiki",
+        provider="resman", kind="prompt", skill="vault-brief",
+        params=(Param("seed", "text", "Seed (optional)",
+                      placeholder="what this vault is for, in a line"),),
+        desc="Interview, then write wiki/meta/brief.md and the vault card's hint.",
+        note="Writes wiki/meta/brief.md (purpose, mode, scope, domains, questions, "
+             "sources, cadence) after a grilling interview at the depth set in "
+             "Skills → resman skills → vault-brief, and the sidecar wiki/hint.json "
+             "(label, summary, tags, source \"brief\") that the Vaults page card reads; "
+             "a hand-written hint is left alone. Attend it to answer the questions "
+             "yourself. The New Vault form's Deep interview tab runs the same skill "
+             "before the plugin scaffolds a new vault.",
+        icon="codicon-comment-discussion", remote=True,
+        build_prompt=lambda p, c: new_vault.brief_task_prompt(
+            c.resman_root, c.settings, p.get("seed", "")),
     ),
     # Custom (ad hoc)
     Operation(

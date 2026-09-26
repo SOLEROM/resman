@@ -150,6 +150,13 @@ def test_prompt_builders(tmp_path):
     assert build("run-prompt", {"prompt": "summarize wiki"}) == "summarize wiki"
 
 
+def test_run_context_skill_settings_reader_defaults_to_none(tmp_path):
+    assert ctx(tmp_path).skill_settings is None
+    c = RunContext(resman_root=tmp_path, vault_path="/v", claude_exe="claude",
+                   skill_settings=lambda s: {"x": 1})
+    assert c.skill_settings("any") == {"x": 1}
+
+
 def test_run_context_carries_the_plugin_dir_only_when_the_folder_exists(tmp_path):
     assert ctx(tmp_path).plugin_dir_args == []
     c = ctx(tmp_path, with_plugin=True)
@@ -218,3 +225,42 @@ def test_deep_list_prompt_precedence_yaml_then_task_focus():
     # a checkout without the skill folder still produces a runnable command
     bare = RunContext(resman_root=Path("/nonexistent"), vault_path="/v", claude_exe="claude")
     assert build({}, bare) == "/resman:deep-list"
+
+
+# ----- rs-vault-brief: the second resman skill (docs/vaultBrief-plan.md) -----
+VAULT_BRIEF_DEFAULT_ARGS = 'interview=short max_questions=25 owner=""'
+
+
+def test_vault_brief_is_a_resman_prompt_operation_with_a_folder():
+    op = operations.REGISTRY["rs-vault-brief"]
+    assert (op.provider, op.kind, op.skill, op.group, op.remote) == ("resman", "prompt", "vault-brief", "Wiki", True)
+    assert [p.key for p in op.params] == ["seed"] and not op.params[0].required
+    assert "wiki/hint.json" in op.note                 # the documented sidecar (D7)
+    assert (REPO / "skills" / "skills" / "vault-brief" / "settings.yaml").is_file()
+
+
+def test_vault_brief_prompt_carries_the_settings_and_the_seed():
+    build = operations.REGISTRY["rs-vault-brief"].build_prompt
+    c = RunContext(resman_root=REPO, vault_path="/v", claude_exe="claude")
+    assert build({}, c) == "/resman:vault-brief " + VAULT_BRIEF_DEFAULT_ARGS
+    p = build({"seed": "edge inference for drones"}, c)
+    assert p.startswith("Define the vault first.") and "edge inference for drones" in p
+    assert p.endswith("/resman:vault-brief " + VAULT_BRIEF_DEFAULT_ARGS)
+    c = RunContext(resman_root=REPO, vault_path="/v", claude_exe="claude",
+                   settings={"interview": "full", "owner": "Ada"})
+    assert build({}, c) == '/resman:vault-brief interview=full max_questions=25 owner="Ada"'
+    with pytest.raises(ValueError, match="printable ASCII"):
+        operations.validate(operations.REGISTRY["rs-vault-brief"], {"seed": "x" * 201})
+
+
+def test_wiki_bootstrap_rerun_normalizes_the_brief_without_an_interview():
+    """The non-interactive re-run carries the vault-brief line with the
+    interview off (D9), from the stored settings of *another* skill than its
+    own, through RunContext.skill_settings."""
+    c = RunContext(resman_root=REPO, vault_path="/v", claude_exe="claude",
+                   skill_settings=lambda s: {"max_questions": 7} if s == "vault-brief" else {})
+    p = operations.REGISTRY["wiki-bootstrap"].build_prompt({}, c)
+    assert '/resman:vault-brief interview=none max_questions=7 owner=""' in p
+    assert "No brief was given" in p and "===== BEGIN BRIEF =====" not in p
+    assert p.index("/resman:vault-brief") < p.index("/claude-obsidian:wiki")
+    assert "giving it the Purpose sentence from wiki/meta/brief.md" in p

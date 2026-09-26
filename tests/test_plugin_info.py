@@ -153,6 +153,7 @@ def test_every_plugin_command_resman_sends_is_listed_in_uses():
     """A new `claude-obsidian:<name>` anywhere in resman needs a PLUGIN_USES entry,
     or the Skills tab could not warn when the plugin drops it."""
     sources = [REPO / "control-plane" / "modules" / "plugin_commands.py",
+               REPO / "control-plane" / "modules" / "new_vault.py",
                REPO / "control-plane" / "modules" / "task_manager.py",
                REPO / "control-plane" / "static" / "js" / "app.js",
                REPO / "tools" / "ingest.sh"]
@@ -207,6 +208,30 @@ def test_bootstrap_prompt_without_the_plugin_says_where_to_look(tmp_path):
     (tmp_path / plugin_commands.NEW_VAULT_SUFFIX_FILE).write_text("cp {plugin_dir}/x y")
     out = plugin_commands.new_vault_bootstrap_prompt_for(tmp_path)
     assert plugin_commands.PLUGIN_DIR_FALLBACK in out and "{plugin_dir}" not in out
+
+
+def test_bootstrap_prompt_takes_parts_before_the_command_and_a_note(tmp_path):
+    """The deep new-vault message (docs/vaultBrief-plan.md) inserts parts
+    between the prefix and the command and replaces the command's trailer;
+    with the defaults the message is today's, byte for byte."""
+    (tmp_path / "tools").mkdir()
+    (tmp_path / plugin_commands.NEW_VAULT_PREFIX_FILE).write_text("PRE")
+    (tmp_path / plugin_commands.NEW_VAULT_SUFFIX_FILE).write_text("SUF {plugin_dir}")
+    plain = plugin_commands.new_vault_bootstrap_prompt_for(tmp_path)
+    assert plain == plugin_commands.new_vault_bootstrap_prompt_for(
+        tmp_path, before_command=(), command_note="", after_suffix=())
+    assert "answer any prompts it asks: /claude-obsidian:wiki" in plain
+    out = plugin_commands.new_vault_bootstrap_prompt_for(
+        tmp_path, before_command=("ONE", "", "TWO"), command_note="with care.")
+    assert out.index("PRE") < out.index("ONE") < out.index("TWO") < out.index("/claude-obsidian:wiki") < out.index("SUF")
+    assert "Now run this slash command exactly: /claude-obsidian:wiki, with care." in out
+    assert "answer any prompts it asks" not in out and "\n\n\n" not in out
+    # the stages after the scaffold (deepList, autoresearch) come after the suffix
+    out = plugin_commands.new_vault_bootstrap_prompt_for(
+        tmp_path, before_command=("ONE",), command_note="with care.", after_suffix=("THREE", "", "FOUR"))
+    assert out.index("SUF") < out.index("THREE") < out.index("FOUR") and out.endswith("FOUR")
+    assert "\n\n\n" not in out
+    assert plugin_commands.autoresearch_prompt("x y") == plugin_commands.AUTORESEARCH + " x y"
 
 
 def test_shipped_prompt_files_pin_no_plugin_version():

@@ -18,8 +18,10 @@ it writes or changes a skill.
   `provider="resman"`, `skill="<name>"`). Adding the folder alone changes
   nothing in the app except a Skills-tab listing under "Not wired yet".
 - **Helper skills** (`grilling`) are called by other skills and write nothing;
-  they never get a registry entry and stay under *Not wired yet* on
-  purpose. The description says it is a helper; no `settings.yaml`.
+  they never get a registry entry. `metadata: {role: helper}` in the
+  frontmatter lists them under *Helpers* in the Skills tab (without it a
+  folder shows under *Not wired yet*). The description says it is a helper;
+  no `settings.yaml`.
 - **Keep descriptions short.** Every skill's description is always-on context
   in every resman session (about 50 tokens each).
 - **Never write a host path** into any file here; `tests/test_no_host_paths.py`

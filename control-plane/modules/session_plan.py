@@ -14,7 +14,7 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 
-from . import plugin_commands, resman_skills
+from . import new_vault, resman_skills
 
 MAX_INITIAL_COMMAND = 200
 SESSION_TYPES = ("claude", "shell")
@@ -82,17 +82,43 @@ def build_session_plan(context: dict, body: dict) -> SessionPlan:
             raise SessionPlanError("initial_command requires type='claude'")
         plan.initial_command = initial_command
 
-    # Optional: wrap /claude-obsidian:wiki with the prefix/suffix instruction
-    # files (tools/newValPrefix.md, tools/newValSuffix.md) and paste the whole
-    # block into the Claude prompt as a single message.
+    # Optional: the new-vault bootstrap message, pasted into the Claude prompt
+    # as a single block (modules/new_vault.py). Alone, `bootstrap_new_vault`
+    # is the Basic tab: prefix, /claude-obsidian:wiki, suffix. With a `brief`
+    # and/or an `interview` depth it is the Deep interview tab: the brief
+    # between markers, /resman:vault-brief at that depth, then the scaffold
+    # told to take the answers from wiki/meta/brief.md, then the stages the
+    # form checked — `deep_list`, `autoresearch` with `autoresearch_top` —
+    # after the suffix (docs/vaultBrief-plan.md). Absent stage fields mean
+    # no stage; a stage on the Basic message is refused.
+    brief = body.get("brief")
+    interview = body.get("interview")
+    stage_fields = {k: body.get(k) for k in ("deep_list", "autoresearch", "autoresearch_top")}
+    deep_given = brief is not None or interview is not None
+    if ((deep_given or any(v is not None for v in stage_fields.values()))
+            and not body.get("bootstrap_new_vault")):
+        raise SessionPlanError(
+            "brief, interview, deep_list and autoresearch require bootstrap_new_vault")
     if body.get("bootstrap_new_vault"):
         if session_type != "claude":
             raise SessionPlanError("bootstrap_new_vault requires type='claude'")
         if plan.initial_command:
             raise SessionPlanError(
                 "bootstrap_new_vault and initial_command are mutually exclusive")
-        plan.initial_text = plugin_commands.new_vault_bootstrap_prompt_for(
-            context["resman_root"])
+        root = context["resman_root"]
+        try:
+            stages = new_vault.check_stages(**stage_fields)
+            if not deep_given:
+                plan.initial_text = new_vault.bootstrap_message(root, mode="basic", stages=stages)
+            else:
+                depth = new_vault.check_interview(
+                    "short" if interview is None else interview,
+                    allowed=new_vault.FORM_INTERVIEWS)
+                plan.initial_text = new_vault.bootstrap_message(
+                    root, mode="deep", brief=brief, interview=depth,
+                    skill_settings=context["config"].skill_settings, stages=stages)
+        except new_vault.BriefError as exc:
+            raise SessionPlanError(str(exc)) from exc
     return plan
 
 

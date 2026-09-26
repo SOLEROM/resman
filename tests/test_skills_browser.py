@@ -27,6 +27,10 @@ def site(tmp_path_factory):
     _make_resman_skills(root)
     (root / "skills" / "skills" / "demo" / "SKILL.md").write_text(
         "---\nname: demo\ndescription: does demo\n---\n# demo\n\nThe demo skill body.\n")
+    aide = root / "skills" / "skills" / "aide"          # a helper: no operation, no settings
+    aide.mkdir()
+    (aide / "SKILL.md").write_text(
+        "---\nname: aide\ndescription: a helper\nmetadata:\n  role: helper\n---\n# aide\n")
     with serve(base, {"wiki/overview.md": "# Overview\n"}, resman_root=root) as (url, vault):
         yield url, base
 
@@ -68,6 +72,24 @@ def test_both_providers_are_in_the_tree_and_the_badge_counts_warnings(page):
     overview = page.text_content("#skills-content")
     assert "resman skills" in overview
     assert "resman:deep-list" in overview and "rs-deep-list task" in overview   # the uses table
+
+
+def tree_groups(page):
+    """Directory label → the labels of the files directly under it."""
+    return page.eval_on_selector_all(
+        "#skills-tree-list .help-dir",
+        "els => Object.fromEntries(els.map(d => [d.querySelector(':scope > .help-label').textContent.trim(),"
+        " Array.from(d.querySelectorAll(':scope > ul > .help-file > .help-label'))"
+        ".map(e => e.textContent.trim())]))")
+
+
+def test_helper_skills_have_their_own_group(page):
+    """A skill whose frontmatter says metadata.role: helper sits under
+    *Helpers*; *Not wired yet* keeps the folders that are simply not a task."""
+    groups = tree_groups(page)
+    assert groups["Helpers"] == ["aide"]
+    assert "demo" in groups["Not wired yet"] and "aide" not in groups["Not wired yet"]
+    assert "aide" not in groups["Wired to an operation"]
 
 
 def test_the_guide_is_the_folder_readme(page):

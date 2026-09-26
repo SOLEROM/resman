@@ -80,7 +80,10 @@ function saveStored(key, value) {
 
 function loadCollapsedCats() {
   try {
-    return new Set(JSON.parse(localStorage.getItem("resman-collapsed-cats") || "[]"));
+    // Upper-cased so paths stored before categories became case-insensitive
+    // still match the groups the server now sends.
+    const stored = JSON.parse(localStorage.getItem("resman-collapsed-cats") || "[]");
+    return new Set(stored.map(normalizeCategory).filter(Boolean));
   } catch (_) { return new Set(); }
 }
 function saveCollapsedCats() {
@@ -226,12 +229,18 @@ function vaultDotTitle(vault) {
 }
 
 // ----- sidebar render -----
-// Category helpers. A vault's `category` is a slash path ("hw/edge") that
+// Category helpers. A vault's `category` is a slash path ("HW/EDGE") that
 // places it inside nested collapsible groups. No category = root level.
+// Categories are case-insensitive and always upper case ("drone" and "Drone"
+// are the group "DRONE"), mirroring normalize_category in config_manager.py.
+function normalizeCategory(value) {
+  return String(value || "").split("/").map((s) => s.trim().toUpperCase())
+    .filter(Boolean).join("/");
+}
+
 function categorySegments(v) {
-  const raw = (v.category || "").trim().replace(/^\/+|\/+$/g, "");
-  if (!raw) return [];
-  return raw.split("/").map((s) => s.trim()).filter(Boolean);
+  const norm = normalizeCategory(v.category);
+  return norm ? norm.split("/") : [];
 }
 
 function buildCategoryTree(vaults) {
@@ -886,6 +895,23 @@ async function ingestUrlForVault(vaultName, opts) {
   }
   await loadTasks();
   showPanel("tasks");
+}
+
+// The New Vault form's bootstrap session. On the legacy ttyd stack this is
+// POST /api/sessions; webterm-glue.js replaces it with the shared terminal's
+// own create call, whose server-side resolver runs the same
+// build_session_plan on the same payload (vault, type, bootstrap_new_vault,
+// brief, interview). Resolves to the session; throws with the server's
+// message when it could not be opened.
+async function spawnBootstrapSession(payload) {
+  const s = await api("/api/sessions", {
+    method: "POST",
+    body: JSON.stringify({ ...payload, theme: currentTheme() }),
+  });
+  state.sessions.push(s);
+  state.activeSessionId = s.id;
+  state.lastSessionByVault[payload.vault] = s.id;
+  return s;
 }
 
 async function spawnSession(vaultName, type) {
@@ -2676,7 +2702,8 @@ function cfgKnownCategories() {
   const fromDoc = (cfgState.working?.resman?.categories || []);
   const fromVaults = (cfgState.working?.resman?.vaults || [])
     .map((v) => v.category).filter(Boolean);
-  return [...new Set([...fromDoc, ...state.categoryOrder, ...allCategoryPaths(), ...fromVaults])]
+  return [...new Set([...fromDoc, ...state.categoryOrder, ...allCategoryPaths(), ...fromVaults]
+    .map(normalizeCategory).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
 }
 
@@ -2969,7 +2996,10 @@ function onCfgInput(e) {
     } else if (field === "archived") {
       // Unchecked drops the key, as the header archive button does.
       if (t.checked) v.archived = true; else delete v.archived;
-    } else if (field === "category" || field === "mount") {
+    } else if (field === "category") {
+      const cat = normalizeCategory(t.value);
+      if (cat) v.category = cat; else delete v.category;
+    } else if (field === "mount") {
       if (t.value.trim()) v[field] = t.value.trim(); else delete v[field];
     } else {
       v[field] = t.value;
@@ -3531,11 +3561,59 @@ function pickFolder(initialPath) {
   });
 }
 
-// Two-step vault creation wizard:
-//   1. POST /api/vaults/scaffold  — runs tools/new-vault.sh to create the
-//      directory tree and `.obsidian/` placeholder.
-//   2. POST /api/vaults           — appends the entry to resman.yaml.
-// "Register existing" mode skips step 1 for a vault that already exists.
+// The server's new_vault.MAX_BRIEF_CHARS and marker lines; tests/test_new_vault.py
+// keeps them equal. The form refuses what the server would refuse *before* the
+// vault is scaffolded or registered, so a bad brief costs nothing.
+const NEW_VAULT_BRIEF_MAX = 16000;
+const NEW_VAULT_BRIEF_MARKERS = ["===== BEGIN BRIEF =====", "===== END BRIEF ====="];
+// Control, format and line-separator characters, tab and newline excepted
+// (the server's rule, Unicode Cc / Cf / Zl / Zp).
+const NEW_VAULT_BRIEF_BAD_CHAR = /(?![\n\t])[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+// The research stage covers every open value of the deep list unless the
+// form limits it to the top N, a whole number up to the server's
+// new_vault.AUTORESEARCH_TOP_MAX (the same test keeps them equal).
+const NEW_VAULT_RESEARCH_TOP_MAX = 50;
+
+// Why the server would refuse the research count, or "" when it would not.
+function researchTopProblem(raw) {
+  const n = Number(raw);
+  if (raw === "" || !Number.isInteger(n) || n < 1 || n > NEW_VAULT_RESEARCH_TOP_MAX) {
+    return `Research the top N: a whole number from 1 to ${NEW_VAULT_RESEARCH_TOP_MAX}.`;
+  }
+  return "";
+}
+
+// Why the server would refuse this brief, or "" when it would not.
+function briefProblem(text) {
+  if (text.length > NEW_VAULT_BRIEF_MAX) {
+    return `The brief is too long: ${text.length} characters, the limit is ${NEW_VAULT_BRIEF_MAX}.`;
+  }
+  const bad = text.match(NEW_VAULT_BRIEF_BAD_CHAR);
+  if (bad) {
+    const cp = bad[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+    return `The brief contains a control or format character (U+${cp} at position ${bad.index}); remove it.`;
+  }
+  const marker = text.split("\n").find((l) => NEW_VAULT_BRIEF_MARKERS.includes(l.trim()));
+  if (marker) return `The brief must not contain the marker line "${marker.trim()}".`;
+  return "";
+}
+
+// Vault creation wizard, two tabs (docs/vaultBrief-plan.md):
+//   Basic — today's process: scaffold (tools/new-vault.sh), register
+//           (POST /api/vaults) and, when "Bootstrap wiki" is checked, a Claude
+//           session pasted the plugin's bootstrap message
+//           (POST /api/sessions with bootstrap_new_vault).
+//   Deep interview — the same scaffold and register, then a session whose
+//           message carries the operator's brief and the vault-brief skill
+//           line at the chosen depth, so the interview runs in the Terminal
+//           tab and the wiki is scaffolded from an agreed brief; then the
+//           stages checked at the end of the tab (both on by default):
+//           deepList for the first ranked list of research values, and the
+//           research of its open values (all, or the top N) with
+//           autoresearch — one pasted message from the brief to a fuller wiki.
+// "Register existing" (scaffold unchecked) skips the scaffold in both tabs.
+// The brief is kept as a draft in localStorage until a session opened with it,
+// so a failed spawn or a missing ttyd never loses a page of text.
 function showNewVaultWizard() {
   // Pre-fill the path input with the configured default root when present,
   // so the user only needs to append the vault folder name. Falls back to
@@ -3553,7 +3631,13 @@ function showNewVaultWizard() {
     ...state.categoryOrder,
     ...allCategoryPaths(),
   ])].sort((a, b) => a.localeCompare(b));
+  let mode = loadStored("resman-new-vault-tab", "basic") === "deep" ? "deep" : "basic";
+  const draft = loadStored("resman-new-vault-brief-draft", "") || "";
   const body = `
+    <div class="provider-switch nv-mode" id="nv-mode" role="radiogroup" aria-label="How to create the vault">
+      <button type="button" role="radio" class="provider-btn" data-mode="basic">Basic</button>
+      <button type="button" role="radio" class="provider-btn" data-mode="deep">Deep interview</button>
+    </div>
     <label>Vault name <span class="muted">— letters, numbers, _ -</span></label>
     <input id="nv-name" autocomplete="off" />
     <label>Vault path <span class="muted">${pathHint}</span></label>
@@ -3575,15 +3659,105 @@ function showNewVaultWizard() {
       Creates path, .obsidian/, inbox/, README.md, and adds _resman/ to
       .gitignore. Uncheck to register an existing vault.
     </p>
-    <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
-      <input type="checkbox" id="nv-bootstrap" checked style="width:auto;margin:0" />
-      Bootstrap wiki — open Claude session and type <code>/claude-obsidian:wiki</code>
-    </label>
-    <p class="muted" style="font-size:11px;margin-top:2px;margin-left:22px">
-      Opens an interactive Claude session in the new vault and types the
-      slash command into it. The bootstrap command may ask questions —
-      answer them in the Terminal tab. Requires ttyd installed locally.
-    </p>
+    <div id="nv-basic" class="nv-tab">
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
+        <input type="checkbox" id="nv-bootstrap" checked style="width:auto;margin:0" />
+        Bootstrap wiki — open Claude session and type <code>/claude-obsidian:wiki</code>
+      </label>
+      <p class="muted" style="font-size:11px;margin-top:2px;margin-left:22px">
+        Opens an interactive Claude session in the new vault and types the
+        slash command into it. The bootstrap command may ask questions —
+        answer them in the Terminal tab.
+      </p>
+    </div>
+    <div id="nv-deep" class="nv-tab" hidden>
+      <p class="muted nv-flow-intro">One Claude session, one pasted message, five stages in a
+        row; the Terminal tab shows them run.</p>
+      <ol class="nv-flow">
+        <li class="nv-stage" data-stage="brief">
+          <div class="nv-stage-head">
+            <span class="nv-stage-num">1</span>
+            <span class="nv-stage-title">Brief</span>
+            <span class="muted">— your summary, optional</span>
+          </div>
+          <div class="nv-stage-body">
+            <label for="nv-brief">What is this vault for?
+              <span class="muted">— a paragraph or a whole document</span></label>
+            <textarea id="nv-brief" rows="8" maxlength="${NEW_VAULT_BRIEF_MAX}"
+              placeholder="Purpose, mode, audience, scope in and out, domains, key questions, sources, entities, cadence, related vaults — as much or as little as you have."></textarea>
+            <div class="nv-brief-row">
+              <label for="nv-brief-file" class="btn secondary btn-sm" style="cursor:pointer"><span class="codicon codicon-file"></span>Load file…</label>
+              <input type="file" id="nv-brief-file" accept=".md,.txt,text/markdown,text/plain" hidden />
+              <span class="muted" style="font-size:11px" id="nv-brief-count"></span>
+            </div>
+          </div>
+        </li>
+        <li class="nv-stage" data-stage="interview">
+          <div class="nv-stage-head">
+            <span class="nv-stage-num">2</span>
+            <span class="nv-stage-title">Interview</span>
+            <span class="muted">— grilling, one question at a time</span>
+          </div>
+          <div class="nv-stage-body">
+            <label for="nv-interview">Depth</label>
+            <select id="nv-interview">
+              <option value="short">short — one question per section the brief leaves open</option>
+              <option value="full">full — walk the whole tree, with follow-ups</option>
+            </select>
+            <p class="muted">Runs in the Terminal tab: each question comes with a recommended
+              answer; the agreed brief is written to <code>wiki/meta/brief.md</code>.</p>
+          </div>
+        </li>
+        <li class="nv-stage" data-stage="scaffold">
+          <div class="nv-stage-head">
+            <span class="nv-stage-num">3</span>
+            <span class="nv-stage-title">Scaffold the wiki</span>
+            <span class="muted">— always</span>
+          </div>
+          <div class="nv-stage-body">
+            <p class="muted">The claude-obsidian plugin builds <code>wiki/</code> from the brief:
+              purpose, mode and owner come from the page, not from questions.</p>
+          </div>
+        </li>
+        <li class="nv-stage" data-stage="deep-list">
+          <div class="nv-stage-head">
+            <span class="nv-stage-num">4</span>
+            <label class="nv-stage-check"><input type="checkbox" id="nv-deep-list" checked />
+              <span class="nv-stage-title">deepList</span></label>
+            <span class="muted">— the first ranked list of research values</span>
+          </div>
+          <div class="nv-stage-body">
+            <p class="muted">Writes <code>wiki/meta/deep-list.md</code> from the brief and the
+              fresh wiki, with the settings from Skills → resman skills → deep-list.</p>
+          </div>
+        </li>
+        <li class="nv-stage" data-stage="research">
+          <div class="nv-stage-head">
+            <span class="nv-stage-num">5</span>
+            <label class="nv-stage-check"><input type="checkbox" id="nv-research" checked />
+              <span class="nv-stage-title">Autoresearch</span></label>
+            <span class="muted">— fill the list, one run at a time</span>
+          </div>
+          <div class="nv-stage-body">
+            <div class="nv-stage-row">
+              <span>Research</span>
+              <select id="nv-research-scope" aria-label="which values to research">
+                <option value="all">all open values of that list</option>
+                <option value="top">the top</option>
+              </select>
+              <input type="number" id="nv-research-top" min="1" max="${NEW_VAULT_RESEARCH_TOP_MAX}"
+                step="1" value="3" aria-label="how many values to research" hidden />
+              <span id="nv-research-top-tail" hidden>values of that list</span>
+            </div>
+            <p class="muted">Each run is a full research pass that writes new pages and spends
+              your Claude usage; every researched value is ticked ✓ on the list page, and the
+              next deepList run retires what was filled.</p>
+          </div>
+        </li>
+      </ol>
+      <p class="muted" style="font-size:11px;margin-top:8px">The brief is kept as a draft in
+        this browser until a session has opened with it.</p>
+    </div>
     <div id="nv-status"
          style="margin-top:14px;padding:8px 10px;border-radius:4px;
                 background:var(--bg-elevated);font-size:12px;color:var(--text-secondary);
@@ -3595,13 +3769,33 @@ function showNewVaultWizard() {
     const category = $("#nv-category").value.trim();
     const tagsInput = $("#nv-tags").value.trim();
     const scaffold = $("#nv-scaffold").checked;
-    const bootstrap = $("#nv-bootstrap").checked;
+    const bootstrap = mode === "basic" && $("#nv-bootstrap").checked;
+    const brief = mode === "deep" ? $("#nv-brief").value : "";
+    const interview = mode === "deep" ? $("#nv-interview").value : null;
+    const stages = mode === "deep" ? readStages() : {};
     const tags = tagsInput
       ? tagsInput.split(",").map((t) => t.trim()).filter(Boolean)
       : [];
 
     if (!name || !path) {
       setWizardStatus("Name and path are required.", "error");
+      return false;
+    }
+    // The Deep tab is the session: refuse before anything is scaffolded or
+    // registered without one.
+    if (mode === "deep" && !state.ttydAvailable) {
+      setWizardStatus(
+        "Deep interview needs the terminal (ttyd on the legacy stack) — or use the Basic tab.",
+        "error",
+      );
+      return false;
+    }
+    const problem = mode === "deep"
+      ? (briefProblem(brief.replace(/\r\n?/g, "\n")) ||
+         ($("#nv-research-scope").value === "top" ? researchTopProblem($("#nv-research-top").value) : ""))
+      : "";
+    if (problem) {
+      setWizardStatus(problem, "error");
       return false;
     }
 
@@ -3631,7 +3825,37 @@ function showNewVaultWizard() {
       return false;
     }
 
-    if (bootstrap) {
+    let openTerminal = false;
+    if (mode === "deep") {
+      setWizardStatus(
+        "Opening Claude session — the interview runs in the Terminal tab…",
+        "info",
+      );
+      try {
+        await spawnBootstrapSession({
+          vault: name, type: "claude", bootstrap_new_vault: true, brief, interview, ...stages,
+        });
+        saveStored("resman-new-vault-brief-draft", "");
+        openTerminal = true;
+        setWizardStatus(
+          "Vault ready. The interview runs in the Terminal tab: answer one " +
+          "question at a time; the wiki is scaffolded from the brief afterwards" +
+          (stages.deep_list ? ", then deepList ranks the research values" : "") +
+          (stages.autoresearch
+            ? " and autoresearch fills " +
+              (stages.autoresearch_top === null ? "every open value" : `the top ${stages.autoresearch_top}`)
+            : "") +
+          ".",
+          "ok",
+        );
+      } catch (err) {
+        setWizardStatus(
+          "Vault registered, but failed to open the Claude session: " + err.message +
+          ". Your brief is kept as a draft in this browser — reopen + New Vault to retry.",
+          "error",
+        );
+      }
+    } else if (bootstrap) {
       if (!state.ttydAvailable) {
         setWizardStatus(
           "Vault registered. ttyd is not installed — install ttyd, open a " +
@@ -3645,17 +3869,7 @@ function showNewVaultWizard() {
           "info",
         );
         try {
-          const sess = await api("/api/sessions", {
-            method: "POST",
-            body: JSON.stringify({
-              vault: name,
-              type: "claude",
-              bootstrap_new_vault: true,
-              theme: currentTheme(),
-            }),
-          });
-          state.sessions.push(sess);
-          state.activeSessionId = sess.id;
+          await spawnBootstrapSession({ vault: name, type: "claude", bootstrap_new_vault: true });
           setWizardStatus(
             "Vault ready. Claude session open in the Terminal tab — " +
             "instructions from tools/newValPrefix.md and tools/newValSuffix.md " +
@@ -3678,9 +3892,92 @@ function showNewVaultWizard() {
     }
 
     await Promise.all([loadVaults(), loadSessions()]);
-    selectVault(name);
+    selectVault(name, openTerminal ? { panel: "ops" } : {});
     return true;
   });
+
+  // The two tabs. The choice is remembered; the fields of the other tab stay
+  // in the DOM (hidden) so switching back loses nothing.
+  function setMode(next) {
+    mode = next === "deep" ? "deep" : "basic";
+    saveStored("resman-new-vault-tab", mode);
+    $$("#nv-mode .provider-btn").forEach((b) => {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    $("#nv-basic").hidden = mode !== "basic";
+    $("#nv-deep").hidden = mode !== "deep";
+  }
+  $$("#nv-mode .provider-btn").forEach((b) =>
+    b.addEventListener("click", () => setMode(b.dataset.mode)));
+  setMode(mode);
+
+  // The stages after the scaffold. The research runs on the deep list, so
+  // without the list it is off and disabled; its scope (all open values, or
+  // the top N) follows the research, and the count shows only for "the top".
+  const deepListEl = $("#nv-deep-list");
+  const researchEl = $("#nv-research");
+  const scopeEl = $("#nv-research-scope");
+  const researchTopEl = $("#nv-research-top");
+  const topTailEl = $("#nv-research-top-tail");
+  function syncStages() {
+    const research = deepListEl.checked && researchEl.checked;
+    researchEl.disabled = !deepListEl.checked;
+    scopeEl.disabled = !research;
+    researchTopEl.disabled = !research;
+    const top = scopeEl.value === "top";
+    researchTopEl.hidden = !top;
+    topTailEl.hidden = !top;
+    // a stage that will not run is dimmed in the flow
+    deepListEl.closest(".nv-stage").classList.toggle("off", !deepListEl.checked);
+    researchEl.closest(".nv-stage").classList.toggle("off", !research);
+  }
+  function readStages() {
+    const deep_list = deepListEl.checked;
+    const autoresearch = deep_list && researchEl.checked;
+    const autoresearch_top = scopeEl.value === "top" ? Number(researchTopEl.value) : null;
+    return { deep_list, autoresearch, autoresearch_top };
+  }
+  deepListEl.addEventListener("change", syncStages);
+  researchEl.addEventListener("change", syncStages);
+  scopeEl.addEventListener("change", syncStages);
+  syncStages();
+
+  // The brief: draft in localStorage on every change, a character count,
+  // and a browser-side file input that fills the textarea (no host path
+  // ever reaches the server for this).
+  const briefEl = $("#nv-brief");
+  const countEl = $("#nv-brief-count");
+  function onBriefInput() {
+    const n = briefEl.value.length;
+    countEl.textContent = n ? `${n} / ${NEW_VAULT_BRIEF_MAX} characters` : "";
+    saveStored("resman-new-vault-brief-draft", briefEl.value);
+  }
+  briefEl.value = draft;
+  onBriefInput();
+  briefEl.addEventListener("input", onBriefInput);
+  const fileInput = $("#nv-brief-file");
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files && fileInput.files[0];
+    fileInput.value = "";
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const loaded = String(reader.result || "").replace(/^\ufeff/, "").replace(/\r\n?/g, "\n");
+      const problem = briefProblem(loaded);
+      if (problem) {
+        setWizardStatus(`${f.name}: ${problem}`, "error");
+        return;
+      }
+      briefEl.value = loaded;
+      onBriefInput();
+      setWizardStatus(`Loaded ${f.name} (${loaded.length} characters) into the brief.`, "info");
+    };
+    reader.onerror = () => setWizardStatus("Could not read " + f.name + ".", "error");
+    reader.readAsText(f);
+  });
+
   // Wire the Browse button after showModal renders the body. The picker
   // opens stacked above the wizard via a higher z-index so the wizard is
   // not destroyed — picking returns control here.

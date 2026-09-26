@@ -62,10 +62,12 @@ function skillsDir(label, leaves, { warn = false, title = "" } = {}) {
 }
 
 // The sub-tree of one provider: what resman sends (plus what it sends but
-// the provider lacks), the rest of its skills, its commands, its docs.
+// the provider lacks), its helpers (skills the other skills call; never a
+// task), the rest of its skills, its commands, its docs.
 function providerLeaves(p) {
   const used = p.skills.filter((k) => k.used);
-  const other = p.skills.filter((k) => !k.used);
+  const helpers = p.skills.filter((k) => !k.used && k.helper);
+  const other = p.skills.filter((k) => !k.used && !k.helper);
   const missing = p.uses.filter((u) => !u.provided);
   const file = (k) => skillsLeaf(`${p.id}:${k.path}`, k.name,
     { title: k.description || k.path });
@@ -77,6 +79,8 @@ function providerLeaves(p) {
       ...missing.map((u) => skillsLeaf(`missing:${p.id}:${u.name}`, u.name,
         { title: `missing from ${p.label}`, warn: true })),
     ]),
+    skillsDir("Helpers", helpers.map(file),
+      { title: "called by the other skills on their own plan; never a task" }),
     skillsDir(rest, other.map(file)),
     skillsDir("Commands", p.commands.map((c) => skillsLeaf(`${p.id}:${c.path}`, "/" + c.name,
       { title: c.description || c.path }))),
@@ -280,11 +284,29 @@ async function loadSkillsNewVault() {
   const folder = data.plugin_dir
     ? `<code>${esc(data.plugin_dir)}</code>`
     : `<span class="pill warn">plugin not found</span> — the message tells Claude where to look`;
+  const stages = data.stages || {};
   box.innerHTML = renderWikiMarkdown(data.doc || "", { wikilinks: false }) + `
-    <h2>The message resman pastes now</h2>
+    <h2>The message resman pastes now (Basic)</h2>
     <p class="muted">Built from <code>${esc(data.prefix_file)}</code>, the bootstrap
       command and <code>${esc(data.suffix_file)}</code>; plugin folder: ${folder}.</p>
-    <pre class="skills-prompt">${esc(data.prompt || "")}</pre>`;
+    <pre class="skills-prompt">${esc(data.prompt || "")}</pre>
+    <h2>The Deep interview message</h2>
+    <p class="muted">The <strong>Deep interview</strong> tab of the New Vault form pastes
+      this instead: your brief between the markers (up to ${esc(String(data.brief_max_chars || ""))}
+      characters), the <code>/resman:vault-brief</code> line at the chosen depth
+      (${esc((data.interviews || []).join(" / "))}; other settings from
+      Skills → resman skills → vault-brief), then the plugin's scaffold told to take
+      Purpose, Mode and Owner from <code>wiki/meta/brief.md</code>, then the stages
+      checked at the end of the tab, shown here with the form's defaults:
+      <code>/resman:deep-list</code> for the first ranked list of research values
+      and the research of ${stages.autoresearch_top == null
+        ? "all its open values"
+        : `its top ${esc(String(stages.autoresearch_top))} values`} with autoresearch
+      (the form can limit it to the top N, up to ${esc(String(data.autoresearch_top_max || ""))}),
+      one run after another in the same session, each researched row ticked on the
+      list page. The <em>Re-run wiki bootstrap</em> task pastes the same with the
+      interview off and no stages.</p>
+    <pre class="skills-prompt">${esc(data.prompt_deep || "")}</pre>`;
 }
 
 async function loadSkillsFile(provider, rel) {

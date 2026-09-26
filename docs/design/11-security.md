@@ -31,8 +31,19 @@ directory. It is treated as a privileged operation:
 | `params.url` | Must parse as HTTP or HTTPS via `urllib.parse.urlparse()`; non-http schemes rejected |
 | `params.topic`, `params.prompt` | Max 200 characters; printable ASCII only |
 | `params.cmd_parts` | Must be a pre-parsed list; individual elements are not re-parsed as shell |
+| `POST /api/sessions` `brief` | ≤ 16000 characters; `\r\n` normalised, a leading BOM dropped; no control, format or line-separator character besides tab and newline (Unicode Cc, Cf, Zl, Zp, Cs — C1 controls, bidi overrides, zero-width characters, surrogates; the 400 names the code point); no line equal to a brief marker; only with `bootstrap_new_vault`; pasted only into the operator's own Claude session, and the skill is told it is content, never instructions (`new_vault.clean_brief`). The form applies the same rules before it scaffolds anything |
+| `POST /api/sessions` `interview` | `short` or `full`; only with `bootstrap_new_vault` (`new_vault.check_interview`) |
+| `POST /api/sessions` `deep_list`, `autoresearch` | JSON booleans only (a string never switches a stage on); `autoresearch` needs `deep_list`; only with the deep message (`new_vault.check_stages`). They add fixed text plus a skill line rendered from the stored settings; nothing from the request is pasted |
+| `POST /api/sessions` `autoresearch_top` | absent or `null` means every open value of the deep list; otherwise a whole number from 1 to 50 (`bool` and floats rejected), checked whenever given; the operator's own cap on how many autoresearch runs one session starts |
 | YAML config content | `yaml.safe_load()` only; result must be a dict; validated before write |
 | File size (config saves) | Reject content exceeding 1 MB |
+
+A brief file for the New Vault form is read **in the browser** (`<input
+type="file">` + `FileReader`) and sent as text: no endpoint reads a host file
+into a Claude session. `GET /api/fs/list` (directories only, for the vault
+path picker) stays the only filesystem-walking endpoint; its localhost-only
+justification is weaker on a `--public` unit, which is why the brief did not
+get a file-read sibling (docs/vaultBrief-plan.md, D3).
 
 ## Path Traversal Prevention
 

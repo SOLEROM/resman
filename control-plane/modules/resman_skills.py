@@ -342,15 +342,30 @@ def validate_skills_section(resman_root: Path | str, section: Any) -> list[str]:
 DOC_NAMES = ("README.md", "CLAUDE.md")
 
 
+HELPER_ROLE = "helper"
+
+
+def is_helper(frontmatter: dict) -> bool:
+    """A helper skill declares itself with ``metadata: {role: helper}`` in its
+    SKILL.md frontmatter (the Agent Skills ``metadata`` map): other skills
+    call it on their own plan, it writes nothing and never gets a registry
+    entry. The Skills tab lists helpers under *Helpers*, not *Not wired yet*."""
+    meta = frontmatter.get("metadata") if isinstance(frontmatter, dict) else None
+    if not isinstance(meta, dict):
+        return False
+    role = meta.get("role")
+    return isinstance(role, str) and role.strip().lower() == HELPER_ROLE
+
+
 def summary(resman_root: Path | str, uses: Optional[dict] = None,
             stored_skills: Optional[list] = None) -> dict:
     """The resman provider in the shape of ``plugin_info.summary()``: the
-    folder as ``plugin``, its ``skills`` (with ``used``, ``has_settings`` and
-    the ``invoke`` line), ``commands``, ``docs``, the registry's ``uses`` of
-    it, and ``warnings`` (the Skills badge). ``uses`` is skill name → where
-    resman runs it (from the registry's resman operations); ``stored_skills``
-    the names under ``skills:`` in resman.yaml, so a setting for a skill the
-    folder lacks is reported."""
+    folder as ``plugin``, its ``skills`` (with ``used``, ``helper``,
+    ``has_settings`` and the ``invoke`` line), ``commands``, ``docs``, the
+    registry's ``uses`` of it, and ``warnings`` (the Skills badge). ``uses``
+    is skill name → where resman runs it (from the registry's resman
+    operations); ``stored_skills`` the names under ``skills:`` in resman.yaml,
+    so a setting for a skill the folder lacks is reported."""
     from . import plugin_info  # plugin_info imports plugin_commands only
 
     uses = dict(uses or {})
@@ -370,18 +385,24 @@ def summary(resman_root: Path | str, uses: Optional[dict] = None,
     skills, warnings = [], []
     for s in desc["skills"]:
         name = s["name"]
-        fm_name = plugin_info.frontmatter(root / s["path"]).get("name")
+        fm = plugin_info.frontmatter(root / s["path"])
+        fm_name = fm.get("name")
         if fm_name != name:
             warnings.append(f"{PLUGIN_FOLDER}/skills/{name}/SKILL.md says name: {fm_name!r}; "
                             f"the folder is {name!r}. Claude loads it by the frontmatter name.")
+        helper = is_helper(fm)
+        if helper and name in uses:
+            warnings.append(f"{PLUGIN_FOLDER}/skills/{name}/SKILL.md says it is a helper "
+                            f"(metadata.role), but resman runs it ({uses[name]}); a helper "
+                            f"has no registry entry.")
         has_settings = (skill_dir(resman_root, name) / SETTINGS_FILE).is_file()
         if has_settings:
             try:
                 load_settings_schema(resman_root, name)
             except SettingsError as exc:
                 warnings.append(f"{PLUGIN_FOLDER}/skills/{name}/{SETTINGS_FILE} is unusable: {exc}")
-        skills.append({**s, "used": name in uses, "has_settings": has_settings,
-                       "invoke": skill_prompt(name)})
+        skills.append({**s, "used": name in uses, "helper": helper,
+                       "has_settings": has_settings, "invoke": skill_prompt(name)})
     names = {s["name"] for s in skills}
     use_rows = []
     for name, where in uses.items():

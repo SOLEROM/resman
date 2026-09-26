@@ -1,0 +1,22 @@
+# vault-brief settings — shown as a form on the skill's page in the Skills tab,
+# stored under skills.vault-brief in resman.yaml (or ~/.resman.yaml), rendered
+# as key=value tokens after /resman:vault-brief on every run. The Deep interview
+# tab of the New Vault form overrides `interview` per run; the Re-run wiki
+# bootstrap task forces it to none. Spec: docs/vaultBrief-plan.md. The table in
+# SKILL.md mirrors these defaults.
+- key: interview
+  type: enum
+  default: short
+  choices: [none, short, full]
+  help: "none: ask nothing; short: one question per open section; full: walk the whole tree"
+- key: max_questions
+  type: int
+  default: 25
+  min: 1
+  max: 60
+  help: the cap for a full interview (short is bounded by the sections)
+- key: owner
+  type: text
+  default: ""
+  max_len: 80
+  help: the Owner line the scaffold writes into the vault's CLAUDE.md; empty lets the scaffold decide

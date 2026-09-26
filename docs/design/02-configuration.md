@@ -56,8 +56,11 @@ scan_paths:                    # optional; remove to disable vault discovery
 Per-vault `category` places the vault in the sidebar's collapsible group
 tree; `/` nests (`hw/edge`), depth is capped at 3, and segments must match
 `[a-zA-Z0-9 _.\-]+`. Values are normalized on load (stray slashes and
-whitespace stripped). The optional top-level `categories:` list pins group
-ordering — categories in use but not listed sort alphabetically after it.
+whitespace stripped, upper-cased): categories are case-insensitive, so
+`Drone`, `drone` and `DRONE` are one group, shown as `DRONE`. Registering a
+vault writes the upper-case form; hand-written values keep their spelling in
+the file and are upper-cased when read. The optional top-level `categories:`
+list (also upper-cased, duplicates dropped) pins group ordering — categories in use but not listed sort alphabetically after it.
 
 Per-vault `archived: true` moves the vault from the tree into the sidebar's
 ARCHIVE folder; any other non-boolean value is rejected on load. The header

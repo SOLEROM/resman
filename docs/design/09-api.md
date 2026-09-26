@@ -33,7 +33,7 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | GET | `/api/sessions` | List live terminal sessions and `available` flag (ttyd installed) |
 | GET | `/api/sessions/stats` | Enriched per-session info for the sessions-overview modal: ttyd PID + RSS, every tmux pane PID and its full descendant tree (each with `pid`, `comm`, `ppid`, `rss_kb`), a roll-up `total_rss_kb` per session and globally, plus `orphaned_tmux_sessions` and `tmux_socket`. Backed by `/proc` reads — read-only, no CSRF requirement |
 | POST | `/api/sessions/orphans/kill` | Kill every tmux session matching the resman prefix that is not in the live registry. CSRF-required. Returns `{killed: [name...], failed: [{name, error}...]}` — best-effort, partial success is OK |
-| POST | `/api/sessions` | Spawn terminal session (vault, type: `claude`\|`shell`, optional `initial_command`, optional `bootstrap_new_vault: true`); 503 if ttyd missing |
+| POST | `/api/sessions` | Spawn terminal session (vault, type: `claude`\|`shell`, optional `initial_command`, optional `bootstrap_new_vault: true` with optional `brief`, `interview`, `deep_list`, `autoresearch`, `autoresearch_top` for the Deep interview tab); 503 if ttyd missing |
 | DELETE | `/api/sessions/{id}` | Kill a terminal session (terminate ttyd AND its underlying tmux session — closing the `×` on the tab is treated as a full "done with this terminal" so no orphan tmux accumulates) |
 | GET | `/api/operations` | The operation registry (`modules/operations.py`) minus its builders: per operation `key`, `label`, `group`, `provider` (`obsidian` \| `resman` \| `adhoc`), `kind` (`prompt` \| `shell`), `attendable`, `skill`, `params` (key, type, label, required, max_len, placeholder), `desc`, `note`, `icon`, `confirm`, `remote`; plus `providers: [{id, label}]`. What the Tasks picker renders from phase 2 on ([17-skills.md](17-skills.md)) |
 | GET | `/api/tasks` | List tasks (filters: vault, priority, status, `provider`, limit, offset). Each task carries a derived `provider` |
@@ -54,11 +54,11 @@ not installed, terminal session endpoints return 503; all other endpoints functi
 | POST | `/api/config/structured` | Save one file from a parsed document (body: `{file, data}`). Validated with the same rules as the raw editor, then dumped via `yaml.safe_dump` and written atomically (comments are dropped — the form warns about this). 400 on validation failure without writing |
 | GET | `/api/help/tree` | Walk the `man/` directory tree (root: `<repo>/man` or `app.man_path`) and return nested `.md` files. Used by the **Help** tab. Returns `{root, missing, tree:[…]}` |
 | GET | `/api/help/page?file=…` | Read one help page; default `index.md`. Only `.md` files served. Path-traversal blocked |
-| GET | `/api/skills/summary` | Both skill providers ([17-skills.md](17-skills.md)): `providers: [{id, label, plugin, skills, commands, docs, uses, warnings}, …]` for `obsidian` (`plugin_info.summary()`: version, install path and how it was found, `companion`) and `resman` (`resman_skills.summary()`: the `skills/` folder, `located_by: repo`; each skill has `used`, `has_settings`, `invoke`); top-level `warnings` is the union — what the **Skills** badge counts |
+| GET | `/api/skills/summary` | Both skill providers ([17-skills.md](17-skills.md)): `providers: [{id, label, plugin, skills, commands, docs, uses, warnings}, …]` for `obsidian` (`plugin_info.summary()`: version, install path and how it was found, `companion`) and `resman` (`resman_skills.summary()`: the `skills/` folder, `located_by: repo`; each skill has `used`, `helper` (frontmatter `metadata.role: helper`), `has_settings`, `invoke`); top-level `warnings` is the union — what the **Skills** badge counts |
 | GET | `/api/skills/file?provider=…&path=…` | Raw markdown of one `.md` file inside a provider's folder (`plugin_info.read_file_from`); traversal-safe, 512 KB cap; `provider` defaults to `obsidian`; 404 when that provider is absent |
 | GET | `/api/skills/settings?skill=…` | A resman skill's `settings.yaml` schema (`resman_skills.load_settings_schema`), the stored `skills.<skill>` values, defaults, the effective merge, the rendered `key=value` tokens, and the resman.yaml path fields. 404 for an unknown skill, 400 for one without settings |
 | POST | `/api/skills/settings` | `{skill, values}` → `resman_skills.validate_settings` (400 names `<skill>.<key>`) → `ConfigManager.save_skill_settings` (structured save of the live resman.yaml; `{}` removes the entry). Returns the same payload as the GET plus `ok`. CSRF required |
-| GET | `/api/skills/new-vault` | `man/new-vault.md` plus the exact bootstrap message resman pastes (prefix + `/claude-obsidian:wiki` + suffix) with the installed plugin's folder filled in |
+| GET | `/api/skills/new-vault` | `man/new-vault.md` plus the exact bootstrap messages resman pastes with the installed plugin's folder filled in: `prompt` (Basic: prefix + `/claude-obsidian:wiki` + suffix) and `prompt_deep` (Deep interview, rendered with a placeholder brief and the form's default stages), with `brief_max_chars`, `interviews`, `markers`, `stages` (`{deep_list: true, autoresearch: true, autoresearch_top: null}`, the form's defaults: both on, every open value) and `autoresearch_top_max` (50) |
 
 `/api/window` actions: `start` | `end` | `start_weekly` | `end_weekly`
 
@@ -87,12 +87,35 @@ followed by `Enter`. Used by the new-vault wizard so the plugin-presence
 check runs before bootstrap and the visual `workspace.json` is copied
 after. Missing prefix/suffix files are skipped silently.
 
+`brief` (string, ≤ 16000 characters) and `interview` (`"short"` | `"full"`,
+default `short` when only a brief is given) — the **Deep interview** tab
+(docs/vaultBrief-plan.md). Either one turns the pasted block into the deep
+message: prefix, the brief between `===== BEGIN BRIEF =====` /
+`===== END BRIEF =====`, `/resman:vault-brief interview=<depth> …` with the
+stored `skills.vault-brief` settings, `/claude-obsidian:wiki` told to take
+Purpose, Mode and Owner from `wiki/meta/brief.md`, suffix. 400 when the
+brief is not a string, over the cap, holds a control character or a marker
+line, when the depth is anything else, or when either field comes without
+`bootstrap_new_vault`.
+
+`deep_list` (boolean), `autoresearch` (boolean) and `autoresearch_top`
+(integer 1–50; absent or `null` means every open value) — the **stages after
+the scaffold** (2026-09-26), appended after the suffix of the deep message:
+`/resman:deep-list …` with the stored `skills.deep-list` settings, then the
+research of the open values of `wiki/meta/deep-list.md` (all, or the top
+`autoresearch_top`) with `/claude-obsidian:autoresearch`, one run at a time,
+each researched row ticked on the page. Absent flags mean off. 400 when a
+flag is not a boolean, when `autoresearch` comes without `deep_list`, when
+the count is given but not a whole number in range, when a stage comes with
+the Basic message (`bootstrap_new_vault` without `brief` or `interview`), or
+when any of the three comes without `bootstrap_new_vault`.
+
 ### Two-step vault creation
 
 The browser SPA calls these in order:
 1. `POST /api/vaults/scaffold` (only when "Scaffold the directory" is checked) → runs `tools/new-vault.sh` to materialize the tree
 2. `POST /api/vaults` → appends the vault entry to `resman.yaml` (or the active `~/.resman.yaml` override)
-3. `POST /api/sessions` with `bootstrap_new_vault: true` (only when "Bootstrap wiki" is checked) — paste-bootstraps with prefix/suffix wrappers
+3. `POST /api/sessions` with `bootstrap_new_vault: true` (Basic tab, only when "Bootstrap wiki" is checked) — paste-bootstraps with prefix/suffix wrappers; the Deep interview tab always sends it, plus `brief`, `interview`, `deep_list`, `autoresearch` and `autoresearch_top`, and refuses in the browser when ttyd is unavailable or the count is out of range, before step 1
 
 Each step is independently failable; the wizard reports per-step status.
 
