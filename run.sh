@@ -113,6 +113,27 @@ if ! webterm_ok; then
     || echo "[warn] webterm install failed — the terminal falls back to ttyd this run." >&2
 fi
 
+# ipcapps self-repair (solBench/ipcapps, the bench's app-to-app protocol): the
+# webterm_ok shape — inode test, cwd /, -I. Non-fatal: without it the app starts
+# with no /api/bench/* routes and other apps see it as unavailable.
+ipcapps_ok() {
+  [[ -n "$SOLBENCH_HOME" && -f "$SOLBENCH_HOME/ipcapps/pyproject.toml" ]] || return 0
+  (cd / && "$VENV/bin/python3" -I - "$SOLBENCH_HOME/ipcapps/ipcapps" <<'PY'
+import os, sys
+try:
+    import ipcapps
+except Exception:
+    sys.exit(1)
+sys.exit(0 if os.path.samefile(os.path.dirname(ipcapps.__file__), sys.argv[1]) else 1)
+PY
+  ) 2>/dev/null
+}
+if ! ipcapps_ok; then
+  echo "[setup] installing ipcapps from $SOLBENCH_HOME ..."
+  "$SOLBENCH_HOME/ipcapps/install.sh" "$VENV" >/dev/null \
+    || echo "[warn] ipcapps install failed — no /api/bench/* routes this run." >&2
+fi
+
 if [[ ! -f "$HOME/.resman.yaml" && ! -f config/resman.yaml ]]; then
   echo "No resman.yaml found."
   echo "  Place one at ~/.resman.yaml (per-user override), OR"

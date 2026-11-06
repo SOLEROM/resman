@@ -315,6 +315,9 @@ def build_app(
 
     app.register_blueprint(api_bp)
     app.register_blueprint(highlights_bp)
+    # ipcapps: /api/bench/* (fail-soft; the ledger sits beside tasks.jsonl)
+    from modules.bench_intents import init_bench
+    init_bench(app, ctx, config_dir)
     attach_socketio(socketio, bus)
 
     # Terminal stack: the shared webterm library is the default;
